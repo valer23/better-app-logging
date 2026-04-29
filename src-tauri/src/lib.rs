@@ -87,7 +87,7 @@ pub fn run() {
             }
 
             // Shared log store — bridges push every LogFrame here in
-            // addition to the broadcast; the /search endpoint scans it.
+            // addition to the broadcast.
             let log_store = store::LogStore::new();
 
             // HTTP server (axum) — bind synchronously so the window does

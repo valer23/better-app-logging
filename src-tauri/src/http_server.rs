@@ -11,15 +11,13 @@ use std::sync::mpsc::Sender;
 
 use axum::{
     body::Body,
-    extract::State,
     http::{header, StatusCode},
     response::Response,
-    routing::{get, post},
+    routing::get,
     Json, Router,
 };
-use once_cell::sync::Lazy;
 
-use crate::store::{LogStore, SearchMode};
+use crate::store::LogStore;
 use crate::tooling;
 
 /// Port the Tauri window is configured to load (`tauri.conf.json:13`).
@@ -28,31 +26,17 @@ pub const HTTP_PORT: u16 = 8780;
 /// Embedded viewer HTML — single source of truth lives under `viewer/`.
 const VIEWER_HTML: &str = include_str!("../../viewer/logcat-viewer.html");
 
-/// Inline JS shim appended to the served HTML before `</body>`. Routes
-/// search through the native command via HTTP POST when the in-memory
-/// log array exceeds 5_000 rows. Falls back to the original JS-side
-/// filter for small arrays.
-const SEARCH_SHIM: &str = include_str!("search_shim.js");
-
-static SHIMMED_HTML: Lazy<String> = Lazy::new(|| {
-    let shim = format!("<script>\n{SEARCH_SHIM}\n</script>\n</body>");
-    if VIEWER_HTML.contains("</body>") {
-        VIEWER_HTML.replacen("</body>", &shim, 1)
-    } else {
-        // Fallback: append at end of document.
-        format!("{VIEWER_HTML}\n{shim}")
-    }
-});
-
 /// Bind axum on `127.0.0.1:HTTP_PORT`, signal ready via `ready_tx`, then serve forever.
-pub async fn serve(store: LogStore, ready_tx: Sender<()>) -> Result<(), String> {
+///
+/// `_store` is accepted to keep the call-site signature stable (and so future
+/// state-bearing routes can pick it up without re-threading); none of the
+/// current routes need it.
+pub async fn serve(_store: LogStore, ready_tx: Sender<()>) -> Result<(), String> {
     let app = Router::new()
         .route("/", get(serve_index))
-        .route("/search", post(search_endpoint))
         .route("/devices/android", get(android_devices))
         .route("/devices/ios", get(ios_devices))
-        .route("/ios-driver-status", get(ios_driver_status))
-        .with_state(store);
+        .route("/ios-driver-status", get(ios_driver_status));
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", HTTP_PORT))
         .await
         .map_err(|e| format!("bind 127.0.0.1:{HTTP_PORT}: {e}"))?;
@@ -74,43 +58,8 @@ async fn serve_index() -> Response {
         )
         .header(header::PRAGMA, "no-cache")
         .header(header::EXPIRES, "0")
-        .body(Body::from(SHIMMED_HTML.as_str()))
+        .body(Body::from(VIEWER_HTML))
         .expect("static response")
-}
-
-#[derive(serde::Deserialize)]
-struct SearchReq {
-    query: String,
-    #[serde(default = "default_mode")]
-    mode: SearchMode,
-}
-
-fn default_mode() -> SearchMode {
-    SearchMode::Plain
-}
-
-#[derive(serde::Serialize)]
-struct SearchResp {
-    indices: Vec<u32>,
-    total: usize,
-    elapsed_ms: u64,
-}
-
-async fn search_endpoint(
-    State(store): State<LogStore>,
-    Json(req): Json<SearchReq>,
-) -> Result<Json<SearchResp>, (StatusCode, String)> {
-    let start = std::time::Instant::now();
-    let total = store.len().await;
-    let indices = store
-        .search(req.query, req.mode)
-        .await
-        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
-    Ok(Json(SearchResp {
-        indices,
-        total,
-        elapsed_ms: start.elapsed().as_millis() as u64,
-    }))
 }
 
 // ─── Device discovery ──────────────────────────────────────────────────────
