@@ -54,7 +54,6 @@ dependencies = [
  "axum",
  "chrono",
  "futures-util",
- "http",
  "once_cell",
  "regex",
  "serde",

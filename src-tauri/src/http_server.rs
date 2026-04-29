@@ -11,11 +11,12 @@ use std::sync::mpsc::Sender;
 
 use axum::{
     body::Body,
-    http::{header, StatusCode},
+    http::{header, Method, StatusCode},
     response::Response,
     routing::get,
     Json, Router,
 };
+use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use crate::store::LogStore;
 use crate::tooling;
@@ -32,16 +33,30 @@ const VIEWER_HTML: &str = include_str!("../../viewer/logcat-viewer.html");
 /// state-bearing routes can pick it up without re-threading); none of the
 /// current routes need it.
 pub async fn serve(_store: LogStore, ready_tx: Sender<()>) -> Result<(), String> {
+    // Lock CORS to the two loopback origins the Tauri window can present.
+    // Native (no Origin header, e.g. direct curl / IPC) is not blocked by
+    // CORS — the browser is the enforcer; tower-http only acts when an
+    // Origin header is present.
+    let cors = CorsLayer::new()
+        .allow_origin(AllowOrigin::list([
+            "http://localhost:8780".parse().expect("static origin"),
+            "http://127.0.0.1:8780".parse().expect("static origin"),
+        ]))
+        .allow_methods([Method::GET])
+        .allow_headers([header::CONTENT_TYPE]);
     let app = Router::new()
         .route("/", get(serve_index))
         .route("/devices/android", get(android_devices))
         .route("/devices/ios", get(ios_devices))
-        .route("/ios-driver-status", get(ios_driver_status));
+        .route("/ios-driver-status", get(ios_driver_status))
+        .layer(cors);
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", HTTP_PORT))
         .await
         .map_err(|e| format!("bind 127.0.0.1:{HTTP_PORT}: {e}"))?;
     tracing::info!("http server listening on http://127.0.0.1:{HTTP_PORT}");
-    let _ = ready_tx.send(());
+    if ready_tx.send(()).is_err() {
+        tracing::warn!("http ready receiver already dropped — startup will hang");
+    }
     axum::serve(listener, app)
         .await
         .map_err(|e| format!("axum::serve: {e}"))?;
@@ -123,6 +138,7 @@ async fn ios_devices() -> Json<serde_json::Value> {
         .lines()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+        .filter(|s| valid_udid(s))
         .collect();
     for udid in udids {
         let name = ideviceinfo(&udid, "DeviceName").await.unwrap_or_default();
@@ -159,7 +175,20 @@ async fn ios_driver_status() -> Json<serde_json::Value> {
     }
 }
 
+/// UDID format guard: iOS UDIDs are 25 chars (modern, e.g.
+/// `00008110-001E75E00E9B801E`) or 40 hex chars (legacy). Reject anything
+/// that could carry shell metacharacters or arg-injection payloads before
+/// it reaches `ideviceinfo -u <udid>`.
+fn valid_udid(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 64
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
 async fn ideviceinfo(udid: &str, key: &str) -> Option<String> {
+    if !valid_udid(udid) {
+        return None;
+    }
     let out = tooling::tokio_command("ideviceinfo")
         .args(["-u", udid, "-k", key])
         .output()
