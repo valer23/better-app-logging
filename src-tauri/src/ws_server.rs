@@ -16,7 +16,8 @@ use axum::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         State,
     },
-    response::IntoResponse,
+    http::{header, HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
     routing::any,
     Router,
 };
@@ -47,8 +48,40 @@ pub async fn serve(port: u16, state: WsState) -> Result<(), String> {
     Ok(())
 }
 
-async fn ws_handler(ws: WebSocketUpgrade, State(state): State<WsState>) -> impl IntoResponse {
+/// Allowed `Origin` header values for browser-initiated WS connections.
+///
+/// The Tauri viewer is served at `http://localhost:8780` (or its 127.0.0.1
+/// alias). Native Tauri webview connections do not send an `Origin` header,
+/// so an absent header is also accepted. Any other Origin (e.g. a malicious
+/// page loaded in the user's regular browser) is rejected with HTTP 403 to
+/// prevent log-stream exfiltration.
+const ALLOWED_ORIGINS: &[&str] = &["http://localhost:8780", "http://127.0.0.1:8780"];
+
+fn origin_allowed(headers: &HeaderMap) -> bool {
+    match headers.get(header::ORIGIN) {
+        None => true, // native Tauri webview — no Origin sent
+        Some(value) => match value.to_str() {
+            Ok(s) => ALLOWED_ORIGINS.contains(&s),
+            Err(_) => false, // non-ASCII / invalid header bytes
+        },
+    }
+}
+
+async fn ws_handler(
+    ws: WebSocketUpgrade,
+    headers: HeaderMap,
+    State(state): State<WsState>,
+) -> Response {
+    if !origin_allowed(&headers) {
+        let origin = headers
+            .get(header::ORIGIN)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("<invalid>");
+        tracing::warn!("ws upgrade rejected: disallowed Origin {origin}");
+        return (StatusCode::FORBIDDEN, "forbidden origin").into_response();
+    }
     ws.on_upgrade(move |socket| handle_connection(socket, state))
+        .into_response()
 }
 
 async fn handle_connection(socket: WebSocket, state: WsState) {
