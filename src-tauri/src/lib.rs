@@ -11,7 +11,6 @@ mod frame;
 mod http_server;
 mod parser;
 mod pid_map;
-mod store;
 mod tooling;
 mod ws_server;
 
@@ -24,8 +23,9 @@ const ANDROID_WS_PORT: u16 = 8765;
 pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,applogs_viewer_lib=debug")),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                tracing_subscriber::EnvFilter::new("info,applogs_viewer_lib=debug")
+            }),
         )
         .init();
 
@@ -86,16 +86,11 @@ pub fn run() {
                 tooling::init(bundled);
             }
 
-            // Shared log store — bridges push every LogFrame here in
-            // addition to the broadcast; the /search endpoint scans it.
-            let log_store = store::LogStore::new();
-
             // HTTP server (axum) — bind synchronously so the window does
             // not race the page load.
             let (ready_tx, ready_rx) = std::sync::mpsc::channel::<()>();
-            let http_store = log_store.clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(err) = http_server::serve(http_store, ready_tx).await {
+                if let Err(err) = http_server::serve(ready_tx).await {
                     tracing::error!("http server failed: {err:?}");
                 }
             });
@@ -108,7 +103,7 @@ pub fn run() {
 
             // iOS bridge → broadcast → WS on :8766.
             let (ios_tx, _) = tokio::sync::broadcast::channel::<String>(2048);
-            bridge::ios::spawn(ios_tx.clone(), log_store.clone());
+            bridge::ios::spawn(ios_tx.clone());
             let ios_ws_state = ws_server::WsState {
                 tx: ios_tx,
                 greeting: Arc::new(ios_device_info),
@@ -121,7 +116,7 @@ pub fn run() {
 
             // Android bridge → broadcast → WS on :8765.
             let (android_tx, _) = tokio::sync::broadcast::channel::<String>(4096);
-            bridge::android::spawn(android_tx.clone(), log_store.clone());
+            bridge::android::spawn(android_tx.clone());
             let android_ws_state = ws_server::WsState {
                 tx: android_tx,
                 greeting: Arc::new(adb_devices),
@@ -138,8 +133,7 @@ pub fn run() {
         .expect("error while running AppLogsViewer");
 }
 
-/// Best-effort device info string — mirrors `ios_bridge.py:get_device_info`
-/// (one-shot `ideviceinfo` calls).
+/// Best-effort device info string (one-shot `ideviceinfo -k` calls).
 fn ios_device_info() -> String {
     fn run(arg: &str) -> Option<String> {
         let out = tooling::command("ideviceinfo")
@@ -165,13 +159,10 @@ fn ios_device_info() -> String {
     }
 }
 
-/// `adb devices` output for the connect greeting — mirrors `_adb_devices`
-/// in `launcher.py:65-73`.
+/// `adb devices` output for the connect greeting.
 fn adb_devices() -> String {
     match tooling::command("adb").arg("devices").output() {
-        Ok(out) if out.status.success() => {
-            String::from_utf8_lossy(&out.stdout).trim().to_string()
-        }
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).trim().to_string(),
         Ok(out) => format!("adb error (exit {:?})", out.status.code()),
         Err(_) => "adb not found - install Android platform-tools and add to PATH".to_string(),
     }
@@ -184,11 +175,11 @@ fn adb_devices() -> String {
 /// stripped-down PATH).
 fn ensure_tooling_path() {
     const EXTRA: &[&str] = &[
-        "/opt/homebrew/bin",   // macOS Apple Silicon Homebrew
+        "/opt/homebrew/bin", // macOS Apple Silicon Homebrew
         "/opt/homebrew/sbin",
-        "/usr/local/bin",      // macOS Intel Homebrew + Linux user installs
+        "/usr/local/bin", // macOS Intel Homebrew + Linux user installs
         "/usr/local/sbin",
-        "/opt/local/bin",      // MacPorts
+        "/opt/local/bin", // MacPorts
     ];
     let separator = if cfg!(windows) { ';' } else { ':' };
     let current = std::env::var_os("PATH").unwrap_or_default();
@@ -208,6 +199,17 @@ fn ensure_tooling_path() {
     if added {
         let new_path = parts.join(&separator.to_string());
         tracing::info!("PATH augmented for subprocess lookups: {new_path}");
+        // SAFETY: `set_var` is unsound in multi-threaded processes (and
+        // `unsafe` from Rust 1.81+). `ensure_tooling_path()` is invoked
+        // exactly once from `run()` BEFORE `tauri::Builder::default()`
+        // spins up the Tokio runtime / app threads, and the preceding
+        // `tracing_subscriber::fmt().init()` only registers a global
+        // subscriber (no thread spawn). Therefore at this single call
+        // site the process is still single-threaded and the mutation
+        // is race-free.
+        #[allow(deprecated)]
+        // `set_var` is not yet `unsafe` on stable, but will be — keep
+        // the call compiling on both old and new toolchains.
         std::env::set_var("PATH", new_path);
     }
 }

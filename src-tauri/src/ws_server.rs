@@ -5,9 +5,9 @@
 //! to that broadcast and ships each item to its client. Multiple
 //! clients can connect — each gets an independent `Receiver`.
 //!
-//! Mirrors `launcher.py::ios_handler` / `launcher.py::android_handler`
-//! WS contract: connection sends initial device-info `devices` frame,
-//! then a stream of `log` / `devices` / `error` frames.
+//! WS contract: on connect, sends an initial device-info `devices` frame
+//! (the per-platform greeting), then streams `log` / `devices` / `error`
+//! frames pushed by the bridge.
 
 use std::sync::Arc;
 
@@ -16,7 +16,8 @@ use axum::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         State,
     },
-    response::IntoResponse,
+    http::{header, HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
     routing::any,
     Router,
 };
@@ -30,7 +31,8 @@ use crate::frame::{DevicesFrame, Frame};
 pub struct WsState {
     /// Broadcast channel populated by the platform bridge.
     pub tx: broadcast::Sender<String>,
-    /// Greeting sent on connect (mirrors `launcher.py:170` / `:103`).
+    /// Greeting frame produced lazily and sent once per new connection,
+    /// before any broadcast traffic. Typically a `devices` snapshot.
     pub greeting: Arc<dyn Fn() -> String + Send + Sync>,
 }
 
@@ -47,8 +49,40 @@ pub async fn serve(port: u16, state: WsState) -> Result<(), String> {
     Ok(())
 }
 
-async fn ws_handler(ws: WebSocketUpgrade, State(state): State<WsState>) -> impl IntoResponse {
+/// Allowed `Origin` header values for browser-initiated WS connections.
+///
+/// The Tauri viewer is served at `http://localhost:8780` (or its 127.0.0.1
+/// alias). Native Tauri webview connections do not send an `Origin` header,
+/// so an absent header is also accepted. Any other Origin (e.g. a malicious
+/// page loaded in the user's regular browser) is rejected with HTTP 403 to
+/// prevent log-stream exfiltration.
+const ALLOWED_ORIGINS: &[&str] = &["http://localhost:8780", "http://127.0.0.1:8780"];
+
+fn origin_allowed(headers: &HeaderMap) -> bool {
+    match headers.get(header::ORIGIN) {
+        None => true, // native Tauri webview — no Origin sent
+        Some(value) => match value.to_str() {
+            Ok(s) => ALLOWED_ORIGINS.contains(&s),
+            Err(_) => false, // non-ASCII / invalid header bytes
+        },
+    }
+}
+
+async fn ws_handler(
+    ws: WebSocketUpgrade,
+    headers: HeaderMap,
+    State(state): State<WsState>,
+) -> Response {
+    if !origin_allowed(&headers) {
+        let origin = headers
+            .get(header::ORIGIN)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("<invalid>");
+        tracing::warn!("ws upgrade rejected: disallowed Origin {origin}");
+        return (StatusCode::FORBIDDEN, "forbidden origin").into_response();
+    }
     ws.on_upgrade(move |socket| handle_connection(socket, state))
+        .into_response()
 }
 
 async fn handle_connection(socket: WebSocket, state: WsState) {
@@ -56,10 +90,20 @@ async fn handle_connection(socket: WebSocket, state: WsState) {
     let mut rx = state.tx.subscribe();
 
     // Send greeting `devices` frame on connect — matches Python behaviour.
-    let greeting = (state.greeting)();
+    // The greeting closure shells out to `ideviceinfo` / `adb devices`, which
+    // are blocking syscalls. Run it on the blocking-IO thread pool so the
+    // async runtime worker thread is not parked during process spawn/wait.
+    let greeting_fn = state.greeting.clone();
+    let greeting = match tokio::task::spawn_blocking(move || (greeting_fn)()).await {
+        Ok(s) => s,
+        Err(err) => {
+            tracing::warn!("greeting task failed: {err}");
+            String::new()
+        }
+    };
     let greet_frame = Frame::Devices(DevicesFrame { data: greeting });
     if let Ok(json) = serde_json::to_string(&greet_frame) {
-        if sink.send(Message::Text(json.into())).await.is_err() {
+        if sink.send(Message::Text(json)).await.is_err() {
             return;
         }
     }
@@ -70,7 +114,7 @@ async fn handle_connection(socket: WebSocket, state: WsState) {
             recv = rx.recv() => {
                 match recv {
                     Ok(json) => {
-                        if sink.send(Message::Text(json.into())).await.is_err() {
+                        if sink.send(Message::Text(json)).await.is_err() {
                             break;
                         }
                     }

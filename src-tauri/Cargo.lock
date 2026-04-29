@@ -51,11 +51,9 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 name = "applogs-viewer"
 version = "1.0.0"
 dependencies = [
- "aho-corasick",
  "axum",
  "chrono",
  "futures-util",
- "http",
  "once_cell",
  "regex",
  "serde",

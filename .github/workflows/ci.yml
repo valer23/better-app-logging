@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  stale-refs:
+    name: Stale-ref grep + HTML parse
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: No dangling Python-bridge refs
+        run: |
+          if grep -rn --exclude-dir=target "launcher\.py\|ios_bridge\.py\|adb_bridge\.py" src-tauri/src/ viewer/; then
+            echo "::error::Found dangling Python-bridge references"
+            exit 1
+          fi
+
+      - name: No dead native-search refs
+        run: |
+          if grep -rn --exclude-dir=target "search_shim\|SearchMode\|aho_corasick\|NATIVE_THRESHOLD" src-tauri/src/ src-tauri/Cargo.toml viewer/ src-tauri/README.md; then
+            echo "::error::Found dead native-search references"
+            exit 1
+          fi
+
+      - name: HTML parses
+        run: |
+          python3 -c "from html.parser import HTMLParser; HTMLParser().feed(open('viewer/logcat-viewer.html').read()); print('OK')"
+
+  rust:
+    name: cargo fmt + check + clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Tauri Linux deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: cargo fmt --check
+        working-directory: src-tauri
+        run: cargo fmt --check
+
+      - name: cargo check
+        working-directory: src-tauri
+        run: cargo check --all-targets
+
+      - name: cargo clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings

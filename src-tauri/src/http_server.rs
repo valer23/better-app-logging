@@ -11,15 +11,13 @@ use std::sync::mpsc::Sender;
 
 use axum::{
     body::Body,
-    extract::State,
-    http::{header, StatusCode},
+    http::{header, Method, StatusCode},
     response::Response,
-    routing::{get, post},
+    routing::get,
     Json, Router,
 };
-use once_cell::sync::Lazy;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 
-use crate::store::{LogStore, SearchMode};
 use crate::tooling;
 
 /// Port the Tauri window is configured to load (`tauri.conf.json:13`).
@@ -28,36 +26,32 @@ pub const HTTP_PORT: u16 = 8780;
 /// Embedded viewer HTML — single source of truth lives under `viewer/`.
 const VIEWER_HTML: &str = include_str!("../../viewer/logcat-viewer.html");
 
-/// Inline JS shim appended to the served HTML before `</body>`. Routes
-/// search through the native command via HTTP POST when the in-memory
-/// log array exceeds 5_000 rows. Falls back to the original JS-side
-/// filter for small arrays.
-const SEARCH_SHIM: &str = include_str!("search_shim.js");
-
-static SHIMMED_HTML: Lazy<String> = Lazy::new(|| {
-    let shim = format!("<script>\n{SEARCH_SHIM}\n</script>\n</body>");
-    if VIEWER_HTML.contains("</body>") {
-        VIEWER_HTML.replacen("</body>", &shim, 1)
-    } else {
-        // Fallback: append at end of document.
-        format!("{VIEWER_HTML}\n{shim}")
-    }
-});
-
 /// Bind axum on `127.0.0.1:HTTP_PORT`, signal ready via `ready_tx`, then serve forever.
-pub async fn serve(store: LogStore, ready_tx: Sender<()>) -> Result<(), String> {
+pub async fn serve(ready_tx: Sender<()>) -> Result<(), String> {
+    // Lock CORS to the two loopback origins the Tauri window can present.
+    // Native (no Origin header, e.g. direct curl / IPC) is not blocked by
+    // CORS — the browser is the enforcer; tower-http only acts when an
+    // Origin header is present.
+    let cors = CorsLayer::new()
+        .allow_origin(AllowOrigin::list([
+            "http://localhost:8780".parse().expect("static origin"),
+            "http://127.0.0.1:8780".parse().expect("static origin"),
+        ]))
+        .allow_methods([Method::GET])
+        .allow_headers([header::CONTENT_TYPE]);
     let app = Router::new()
         .route("/", get(serve_index))
-        .route("/search", post(search_endpoint))
         .route("/devices/android", get(android_devices))
         .route("/devices/ios", get(ios_devices))
         .route("/ios-driver-status", get(ios_driver_status))
-        .with_state(store);
+        .layer(cors);
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", HTTP_PORT))
         .await
         .map_err(|e| format!("bind 127.0.0.1:{HTTP_PORT}: {e}"))?;
     tracing::info!("http server listening on http://127.0.0.1:{HTTP_PORT}");
-    let _ = ready_tx.send(());
+    if ready_tx.send(()).is_err() {
+        tracing::warn!("http ready receiver already dropped — startup will hang");
+    }
     axum::serve(listener, app)
         .await
         .map_err(|e| format!("axum::serve: {e}"))?;
@@ -74,43 +68,8 @@ async fn serve_index() -> Response {
         )
         .header(header::PRAGMA, "no-cache")
         .header(header::EXPIRES, "0")
-        .body(Body::from(SHIMMED_HTML.as_str()))
+        .body(Body::from(VIEWER_HTML))
         .expect("static response")
-}
-
-#[derive(serde::Deserialize)]
-struct SearchReq {
-    query: String,
-    #[serde(default = "default_mode")]
-    mode: SearchMode,
-}
-
-fn default_mode() -> SearchMode {
-    SearchMode::Plain
-}
-
-#[derive(serde::Serialize)]
-struct SearchResp {
-    indices: Vec<u32>,
-    total: usize,
-    elapsed_ms: u64,
-}
-
-async fn search_endpoint(
-    State(store): State<LogStore>,
-    Json(req): Json<SearchReq>,
-) -> Result<Json<SearchResp>, (StatusCode, String)> {
-    let start = std::time::Instant::now();
-    let total = store.len().await;
-    let indices = store
-        .search(req.query, req.mode)
-        .await
-        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
-    Ok(Json(SearchResp {
-        indices,
-        total,
-        elapsed_ms: start.elapsed().as_millis() as u64,
-    }))
 }
 
 // ─── Device discovery ──────────────────────────────────────────────────────
@@ -174,10 +133,13 @@ async fn ios_devices() -> Json<serde_json::Value> {
         .lines()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+        .filter(|s| valid_udid(s))
         .collect();
     for udid in udids {
         let name = ideviceinfo(&udid, "DeviceName").await.unwrap_or_default();
-        let version = ideviceinfo(&udid, "ProductVersion").await.unwrap_or_default();
+        let version = ideviceinfo(&udid, "ProductVersion")
+            .await
+            .unwrap_or_default();
         list.push(serde_json::json!({
             "id":      udid,
             "name":    if name.is_empty() { udid.as_str() } else { name.as_str() },
@@ -206,11 +168,22 @@ async fn ios_driver_status() -> Json<serde_json::Value> {
     let res = tokio::time::timeout(std::time::Duration::from_millis(500), connect).await;
     match res {
         Ok(Ok(_)) => Json(serde_json::json!({ "available": true,  "reason": "ok" })),
-        _         => Json(serde_json::json!({ "available": false, "reason": "no_amds" })),
+        _ => Json(serde_json::json!({ "available": false, "reason": "no_amds" })),
     }
 }
 
+/// UDID format guard: iOS UDIDs are 25 chars (modern, e.g.
+/// `00008110-001E75E00E9B801E`) or 40 hex chars (legacy). Reject anything
+/// that could carry shell metacharacters or arg-injection payloads before
+/// it reaches `ideviceinfo -u <udid>`.
+fn valid_udid(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
 async fn ideviceinfo(udid: &str, key: &str) -> Option<String> {
+    if !valid_udid(udid) {
+        return None;
+    }
     let out = tooling::tokio_command("ideviceinfo")
         .args(["-u", udid, "-k", key])
         .output()

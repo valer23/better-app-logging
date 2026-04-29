@@ -1,9 +1,8 @@
 //! Android bridge — spawns `adb logcat -v year,threadtime -T 500`,
 //! parses each line into a `Frame::Log`, broadcasts JSON to WS subscribers.
 //!
-//! Mirrors `launcher.py::android_handler` (lines 99-130). The `app` field
-//! is filled from a PID → package map maintained by `pid_map.rs`
-//! (`adb shell ps -A` polled every 5 s).
+//! The `app` field is filled from a PID → package map maintained by
+//! `pid_map.rs` (`adb shell ps -A` polled every 5 s).
 //!
 //! Auto-respawns on subprocess exit (2 s backoff).
 
@@ -16,17 +15,16 @@ use tokio::sync::broadcast;
 use crate::frame::{ErrorFrame, Frame, LogFrame};
 use crate::parser::{android_level, ANDROID_RE};
 use crate::pid_map::{self, PidMap};
-use crate::store::LogStore;
 use crate::tooling;
 
 /// Spawn the Android bridge worker. Returns immediately; runs forever in a
 /// tokio task on the Tauri runtime.
-pub fn spawn(tx: broadcast::Sender<String>, store: LogStore) {
+pub fn spawn(tx: broadcast::Sender<String>) {
     // PID map task lives independently of the bridge respawn loop.
     let pid_map = pid_map::spawn(Duration::from_secs(5));
     tauri::async_runtime::spawn(async move {
         loop {
-            if let Err(e) = run_once(&tx, &pid_map, &store).await {
+            if let Err(e) = run_once(&tx, &pid_map).await {
                 tracing::warn!("[android] bridge error: {e}");
                 emit_error(&tx, &format!("android bridge error: {e}"));
             }
@@ -35,11 +33,7 @@ pub fn spawn(tx: broadcast::Sender<String>, store: LogStore) {
     });
 }
 
-async fn run_once(
-    tx: &broadcast::Sender<String>,
-    pid_map: &PidMap,
-    store: &LogStore,
-) -> Result<(), String> {
+async fn run_once(tx: &broadcast::Sender<String>, pid_map: &PidMap) -> Result<(), String> {
     tracing::info!("[android] spawning adb logcat -v year,threadtime -T 500");
     let mut child = tooling::tokio_command("adb")
         .args(["logcat", "-v", "year,threadtime", "-T", "500"])
@@ -75,8 +69,14 @@ async fn run_once(
             continue;
         };
         let ts = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
-        let pid: u32 = caps.get(2).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
-        let tid: u32 = caps.get(3).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+        let pid: u32 = caps
+            .get(2)
+            .and_then(|m| m.as_str().parse().ok())
+            .unwrap_or(0);
+        let tid: u32 = caps
+            .get(3)
+            .and_then(|m| m.as_str().parse().ok())
+            .unwrap_or(0);
         let lvl_char = caps
             .get(4)
             .and_then(|m| m.as_str().chars().next())
@@ -84,12 +84,7 @@ async fn run_once(
         let tag = caps.get(5).map(|m| m.as_str().trim()).unwrap_or_default();
         let msg = caps.get(6).map(|m| m.as_str()).unwrap_or_default();
 
-        let app = pid_map
-            .read()
-            .await
-            .get(&pid)
-            .cloned()
-            .unwrap_or_default();
+        let app = pid_map.read().await.get(&pid).cloned().unwrap_or_default();
 
         let log_frame = LogFrame {
             ts: ts.to_string(),
@@ -100,7 +95,6 @@ async fn run_once(
             app,
             msg: msg.to_string(),
         };
-        store.push(log_frame.clone()).await;
         push(tx, &Frame::Log(log_frame));
     }
 
