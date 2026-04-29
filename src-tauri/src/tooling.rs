@@ -25,6 +25,14 @@ pub fn init(dir: Option<PathBuf>) {
 /// Return either the bundled binary path (when present) or the bare name
 /// for system `PATH` resolution. Always succeeds; the caller's
 /// `Command::new` is responsible for surfacing missing-binary errors.
+///
+/// Bundle candidates are canonicalised before being returned: this
+/// resolves any symlinks once, up front, and closes the TOCTOU window
+/// between "does the file exist?" and the eventual `Command::new`. If
+/// canonicalisation fails (file missing, permission denied, broken
+/// symlink) we treat the candidate as absent and fall through — either
+/// to the next candidate or to bare-name `PATH` lookup, whose own
+/// missing-binary error is what the caller will surface.
 pub fn resolve(name: &str) -> String {
     if let Some(Some(dir)) = TOOLING_DIR.get() {
         // Windows requires the .exe suffix when launching by full path —
@@ -32,13 +40,11 @@ pub fn resolve(name: &str) -> String {
         // Try `name.exe` first, then bare `name` for parity with the macOS
         // / Linux drops where binaries have no extension.
         if cfg!(windows) {
-            let exe = dir.join(format!("{name}.exe"));
-            if exe.exists() {
+            if let Ok(exe) = std::fs::canonicalize(dir.join(format!("{name}.exe"))) {
                 return exe.to_string_lossy().into_owned();
             }
         }
-        let candidate = dir.join(name);
-        if candidate.exists() {
+        if let Ok(candidate) = std::fs::canonicalize(dir.join(name)) {
             return candidate.to_string_lossy().into_owned();
         }
     }
