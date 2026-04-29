@@ -138,8 +138,7 @@ pub fn run() {
         .expect("error while running AppLogsViewer");
 }
 
-/// Best-effort device info string — mirrors `ios_bridge.py:get_device_info`
-/// (one-shot `ideviceinfo` calls).
+/// Best-effort device info string (one-shot `ideviceinfo -k` calls).
 fn ios_device_info() -> String {
     fn run(arg: &str) -> Option<String> {
         let out = tooling::command("ideviceinfo")
@@ -165,8 +164,7 @@ fn ios_device_info() -> String {
     }
 }
 
-/// `adb devices` output for the connect greeting — mirrors `_adb_devices`
-/// in `launcher.py:65-73`.
+/// `adb devices` output for the connect greeting.
 fn adb_devices() -> String {
     match tooling::command("adb").arg("devices").output() {
         Ok(out) if out.status.success() => {
@@ -208,6 +206,17 @@ fn ensure_tooling_path() {
     if added {
         let new_path = parts.join(&separator.to_string());
         tracing::info!("PATH augmented for subprocess lookups: {new_path}");
+        // SAFETY: `set_var` is unsound in multi-threaded processes (and
+        // `unsafe` from Rust 1.81+). `ensure_tooling_path()` is invoked
+        // exactly once from `run()` BEFORE `tauri::Builder::default()`
+        // spins up the Tokio runtime / app threads, and the preceding
+        // `tracing_subscriber::fmt().init()` only registers a global
+        // subscriber (no thread spawn). Therefore at this single call
+        // site the process is still single-threaded and the mutation
+        // is race-free.
+        #[allow(deprecated)]
+        // `set_var` is not yet `unsafe` on stable, but will be — keep
+        // the call compiling on both old and new toolchains.
         std::env::set_var("PATH", new_path);
     }
 }

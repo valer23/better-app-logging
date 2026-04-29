@@ -4,9 +4,9 @@
 use once_cell::sync::Lazy;
 use regex::Regex;
 
-/// `idevicesyslog --no-colors` output — port of `launcher.py:182-188`
-/// and `ios_bridge.py:52-60`.
+/// Matches a single line of `idevicesyslog --no-colors` output.
 ///
+/// Format: `<timestamp> <process>[(<subsystem>)][<pid>] [<level>]: <msg>`.
 /// Groups: 1=timestamp ("Apr 28 14:14:39.097636"), 2=process name (allows
 /// spaces, e.g. "Bragi AI Dev"), 3=subsystem (optional, e.g.
 /// "com.brai.bragiai.dev"), 4=pid, 5=level (optional), 6=message.
@@ -17,20 +17,22 @@ pub static IOS_RE: Lazy<Regex> = Lazy::new(|| {
     .expect("IOS_RE compiles")
 });
 
-/// `adb logcat -v year,threadtime` output — port of `launcher.py:59-63`.
+/// Matches a single line of `adb logcat -v year,threadtime` output.
 ///
+/// Format: `<YYYY-MM-DD HH:MM:SS.mmm> <pid> <tid> <V|D|I|W|E|A> <tag>: <msg>`.
 /// Groups: 1=ts, 2=pid, 3=tid, 4=lvl-char, 5=tag, 6=message.
 pub static ANDROID_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+)\s+(\d+)\s+(\d+)\s+([VDIWEA])\s+(.*?)\s*:\s*(.*)$")
         .expect("ANDROID_RE compiles")
 });
 
-/// ANSI escape sequence stripper — port of `launcher.py:181`.
+/// Strips ANSI escape sequences (CSI / single-char escapes) from log text
+/// before regex matching, so colorized device output parses cleanly.
 pub static ANSI_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])").expect("ANSI_RE compiles"));
 
-/// Map iOS log level → canonical level used by the viewer.
-/// Direct port of `launcher.py:138-142`.
+/// Map an iOS log level token (Default/Info/Notice/Debug/Warning/Error/
+/// Critical/Fault) to the canonical level used by the viewer.
 pub fn ios_level(raw: Option<&str>) -> &'static str {
     match raw.unwrap_or("Default") {
         "Default" | "Info" | "Notice" => "INFO",
@@ -42,8 +44,8 @@ pub fn ios_level(raw: Option<&str>) -> &'static str {
     }
 }
 
-/// Map Android level char → canonical level.
-/// Direct port of `launcher.py:57-58`.
+/// Map an Android logcat priority char (V/D/I/W/E/A) to the canonical
+/// level used by the viewer.
 pub fn android_level(c: char) -> &'static str {
     match c {
         'V' => "VERBOSE",

@@ -1,7 +1,7 @@
-//! PID → package-name map for Android. Refreshed every 5 s by running
-//! `adb shell ps -A -o PID=,NAME=` and parsing two-column output.
-//!
-//! Direct port of `launcher.py:_android_pid_map_loop` (lines 82-97).
+//! PID → package-name map for Android. Maintains the map by polling
+//! `adb shell ps -A -o PID=,NAME=` on a fixed interval and parsing the
+//! two-column output. Empty results (device unplugged, shell failure)
+//! preserve the last known good map; spawn errors are logged and tolerated.
 
 use std::collections::HashMap;
 use std::process::Stdio;

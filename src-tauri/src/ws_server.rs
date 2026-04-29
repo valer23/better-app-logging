@@ -5,9 +5,9 @@
 //! to that broadcast and ships each item to its client. Multiple
 //! clients can connect — each gets an independent `Receiver`.
 //!
-//! Mirrors `launcher.py::ios_handler` / `launcher.py::android_handler`
-//! WS contract: connection sends initial device-info `devices` frame,
-//! then a stream of `log` / `devices` / `error` frames.
+//! WS contract: on connect, sends an initial device-info `devices` frame
+//! (the per-platform greeting), then streams `log` / `devices` / `error`
+//! frames pushed by the bridge.
 
 use std::sync::Arc;
 
@@ -31,7 +31,8 @@ use crate::frame::{DevicesFrame, Frame};
 pub struct WsState {
     /// Broadcast channel populated by the platform bridge.
     pub tx: broadcast::Sender<String>,
-    /// Greeting sent on connect (mirrors `launcher.py:170` / `:103`).
+    /// Greeting frame produced lazily and sent once per new connection,
+    /// before any broadcast traffic. Typically a `devices` snapshot.
     pub greeting: Arc<dyn Fn() -> String + Send + Sync>,
 }
 
@@ -89,7 +90,17 @@ async fn handle_connection(socket: WebSocket, state: WsState) {
     let mut rx = state.tx.subscribe();
 
     // Send greeting `devices` frame on connect — matches Python behaviour.
-    let greeting = (state.greeting)();
+    // The greeting closure shells out to `ideviceinfo` / `adb devices`, which
+    // are blocking syscalls. Run it on the blocking-IO thread pool so the
+    // async runtime worker thread is not parked during process spawn/wait.
+    let greeting_fn = state.greeting.clone();
+    let greeting = match tokio::task::spawn_blocking(move || (greeting_fn)()).await {
+        Ok(s) => s,
+        Err(err) => {
+            tracing::warn!("greeting task failed: {err}");
+            String::new()
+        }
+    };
     let greet_frame = Frame::Devices(DevicesFrame { data: greeting });
     if let Ok(json) = serde_json::to_string(&greet_frame) {
         if sink.send(Message::Text(json.into())).await.is_err() {
