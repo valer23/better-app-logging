@@ -103,7 +103,7 @@ async fn handle_connection(socket: WebSocket, state: WsState) {
     };
     let greet_frame = Frame::Devices(DevicesFrame { data: greeting });
     if let Ok(json) = serde_json::to_string(&greet_frame) {
-        if sink.send(Message::Text(json.into())).await.is_err() {
+        if sink.send(Message::Text(json)).await.is_err() {
             return;
         }
     }
@@ -114,7 +114,7 @@ async fn handle_connection(socket: WebSocket, state: WsState) {
             recv = rx.recv() => {
                 match recv {
                     Ok(json) => {
-                        if sink.send(Message::Text(json.into())).await.is_err() {
+                        if sink.send(Message::Text(json)).await.is_err() {
                             break;
                         }
                     }
