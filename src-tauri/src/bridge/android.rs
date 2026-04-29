@@ -15,17 +15,16 @@ use tokio::sync::broadcast;
 use crate::frame::{ErrorFrame, Frame, LogFrame};
 use crate::parser::{android_level, ANDROID_RE};
 use crate::pid_map::{self, PidMap};
-use crate::store::LogStore;
 use crate::tooling;
 
 /// Spawn the Android bridge worker. Returns immediately; runs forever in a
 /// tokio task on the Tauri runtime.
-pub fn spawn(tx: broadcast::Sender<String>, store: LogStore) {
+pub fn spawn(tx: broadcast::Sender<String>) {
     // PID map task lives independently of the bridge respawn loop.
     let pid_map = pid_map::spawn(Duration::from_secs(5));
     tauri::async_runtime::spawn(async move {
         loop {
-            if let Err(e) = run_once(&tx, &pid_map, &store).await {
+            if let Err(e) = run_once(&tx, &pid_map).await {
                 tracing::warn!("[android] bridge error: {e}");
                 emit_error(&tx, &format!("android bridge error: {e}"));
             }
@@ -37,7 +36,6 @@ pub fn spawn(tx: broadcast::Sender<String>, store: LogStore) {
 async fn run_once(
     tx: &broadcast::Sender<String>,
     pid_map: &PidMap,
-    store: &LogStore,
 ) -> Result<(), String> {
     tracing::info!("[android] spawning adb logcat -v year,threadtime -T 500");
     let mut child = tooling::tokio_command("adb")
@@ -99,8 +97,7 @@ async fn run_once(
             app,
             msg: msg.to_string(),
         };
-        push(tx, &Frame::Log(log_frame.clone()));
-        store.push(log_frame).await;
+        push(tx, &Frame::Log(log_frame));
     }
 
     let status = child.wait().await.map_err(|e| e.to_string())?;

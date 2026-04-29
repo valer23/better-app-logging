@@ -12,14 +12,13 @@ use tokio::sync::broadcast;
 
 use crate::frame::{DevicesFrame, ErrorFrame, Frame, LogFrame};
 use crate::parser::{ios_level, ANSI_RE, IOS_RE};
-use crate::store::LogStore;
 use crate::tooling;
 
 /// Spawn the iOS bridge worker. Returns immediately; runs forever in a tokio task.
-pub fn spawn(tx: broadcast::Sender<String>, store: LogStore) {
+pub fn spawn(tx: broadcast::Sender<String>) {
     tauri::async_runtime::spawn(async move {
         loop {
-            if let Err(e) = run_once(&tx, &store).await {
+            if let Err(e) = run_once(&tx).await {
                 tracing::warn!("[ios] bridge error: {e}");
                 emit_error(&tx, &format!("ios bridge error: {e}"));
             }
@@ -29,7 +28,7 @@ pub fn spawn(tx: broadcast::Sender<String>, store: LogStore) {
     });
 }
 
-async fn run_once(tx: &broadcast::Sender<String>, store: &LogStore) -> Result<(), String> {
+async fn run_once(tx: &broadcast::Sender<String>) -> Result<(), String> {
     tracing::info!("[ios] spawning idevicesyslog --no-colors");
     let mut child = tooling::tokio_command("idevicesyslog")
         .arg("--no-colors")
@@ -96,8 +95,7 @@ async fn run_once(tx: &broadcast::Sender<String>, store: &LogStore) -> Result<()
             app,
             msg: msg.to_string(),
         };
-        push(tx, &Frame::Log(log_frame.clone()));
-        store.push(log_frame).await;
+        push(tx, &Frame::Log(log_frame));
     }
 
     let status = child.wait().await.map_err(|e| e.to_string())?;

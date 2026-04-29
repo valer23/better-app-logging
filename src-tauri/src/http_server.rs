@@ -18,7 +18,6 @@ use axum::{
 };
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
-use crate::store::LogStore;
 use crate::tooling;
 
 /// Port the Tauri window is configured to load (`tauri.conf.json:13`).
@@ -28,11 +27,7 @@ pub const HTTP_PORT: u16 = 8780;
 const VIEWER_HTML: &str = include_str!("../../viewer/logcat-viewer.html");
 
 /// Bind axum on `127.0.0.1:HTTP_PORT`, signal ready via `ready_tx`, then serve forever.
-///
-/// `_store` is accepted to keep the call-site signature stable (and so future
-/// state-bearing routes can pick it up without re-threading); none of the
-/// current routes need it.
-pub async fn serve(_store: LogStore, ready_tx: Sender<()>) -> Result<(), String> {
+pub async fn serve(ready_tx: Sender<()>) -> Result<(), String> {
     // Lock CORS to the two loopback origins the Tauri window can present.
     // Native (no Origin header, e.g. direct curl / IPC) is not blocked by
     // CORS — the browser is the enforcer; tower-http only acts when an

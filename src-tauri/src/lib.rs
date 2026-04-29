@@ -11,7 +11,6 @@ mod frame;
 mod http_server;
 mod parser;
 mod pid_map;
-mod store;
 mod tooling;
 mod ws_server;
 
@@ -86,16 +85,11 @@ pub fn run() {
                 tooling::init(bundled);
             }
 
-            // Shared log store — bridges push every LogFrame here in
-            // addition to the broadcast.
-            let log_store = store::LogStore::new();
-
             // HTTP server (axum) — bind synchronously so the window does
             // not race the page load.
             let (ready_tx, ready_rx) = std::sync::mpsc::channel::<()>();
-            let http_store = log_store.clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(err) = http_server::serve(http_store, ready_tx).await {
+                if let Err(err) = http_server::serve(ready_tx).await {
                     tracing::error!("http server failed: {err:?}");
                 }
             });
@@ -108,7 +102,7 @@ pub fn run() {
 
             // iOS bridge → broadcast → WS on :8766.
             let (ios_tx, _) = tokio::sync::broadcast::channel::<String>(2048);
-            bridge::ios::spawn(ios_tx.clone(), log_store.clone());
+            bridge::ios::spawn(ios_tx.clone());
             let ios_ws_state = ws_server::WsState {
                 tx: ios_tx,
                 greeting: Arc::new(ios_device_info),
@@ -121,7 +115,7 @@ pub fn run() {
 
             // Android bridge → broadcast → WS on :8765.
             let (android_tx, _) = tokio::sync::broadcast::channel::<String>(4096);
-            bridge::android::spawn(android_tx.clone(), log_store.clone());
+            bridge::android::spawn(android_tx.clone());
             let android_ws_state = ws_server::WsState {
                 tx: android_tx,
                 greeting: Arc::new(adb_devices),
