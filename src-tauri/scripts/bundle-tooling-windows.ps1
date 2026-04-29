@@ -33,6 +33,75 @@ New-Item -ItemType Directory -Path $staging | Out-Null
 # GitHub's API requires TLS 1.2 on PowerShell 5.1 (older default is TLS 1.0/1.1).
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
+# ─── Pinned download artifacts ────────────────────────────────────────────────
+# Supply-chain hardening (issue H3): every network download is verified against
+# a SHA-256 known to this script. A mismatch aborts the build LOUDLY instead of
+# silently shipping a tampered binary inside the installer.
+#
+# How to bump a pinned version:
+#   1. Update the URL / tag below.
+#   2. Run the script once with $env:APPLOGS_BUNDLER_TRUST_ON_FIRST_USE='1' to
+#      compute and print the new SHA-256 (the script will refuse to copy any
+#      files; it only records the hash).
+#   3. Paste the printed hash into the corresponding *Sha256 constant below
+#      and commit alongside the URL/tag bump in the same commit so reviewers
+#      can inspect both halves of the change together.
+#   4. Cross-check the hash against an independent source (vendor's release
+#      page, GitHub release web UI, second machine on a different network)
+#      before merging. The whole point is that a single host being MITM'd
+#      cannot poison the pin.
+
+# Google does not publish a checksum for platform-tools-latest-windows.zip,
+# so we pin to the versioned URL (which Google serves as an immutable artifact
+# alongside the rolling 'latest' alias) and verify against a hash recorded in
+# this repo. Bump both together; see header comment for procedure.
+$script:AdbZipUrl    = 'https://dl.google.com/android/repository/platform-tools_r35.0.2-windows.zip'
+$script:AdbZipSha256 = '0000000000000000000000000000000000000000000000000000000000000000'  # set on first pin via APPLOGS_BUNDLER_TRUST_ON_FIRST_USE
+
+# Pin to a concrete release tag (NOT 'latest') so the asset URL is stable and
+# the recorded SHA-256 below means something. Bump the tag + hash together.
+$script:ImdReleaseTag   = 'v2024.10.07-DCFAA63'
+$script:ImdAssetPattern = '^libimobile-suite-.*_w64\.zip$'
+$script:ImdZipSha256    = '0000000000000000000000000000000000000000000000000000000000000000'  # set on first pin via APPLOGS_BUNDLER_TRUST_ON_FIRST_USE
+
+function Assert-Sha256 {
+    # Verifies that $Path hashes to $Expected (case-insensitive). Three modes:
+    #   - Expected is a real 64-hex-char hash → strict compare, throw on mismatch.
+    #   - Expected is the all-zero placeholder AND the env var
+    #     APPLOGS_BUNDLER_TRUST_ON_FIRST_USE='1' is set → print the actual hash
+    #     and throw (so the operator can paste it into the script and re-run).
+    #   - Anything else → throw immediately. We never silently accept an
+    #     unverified download.
+    param(
+        [Parameter(Mandatory = $true)] [string]$Path,
+        [Parameter(Mandatory = $true)] [string]$Expected,
+        [Parameter(Mandatory = $true)] [string]$Label
+    )
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "[$Label] cannot verify SHA-256: file not found at $Path"
+    }
+    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
+    $expectedNorm  = $Expected.ToLowerInvariant()
+    $isPlaceholder = ($expectedNorm -eq ('0' * 64))
+
+    if ($isPlaceholder) {
+        if ($env:APPLOGS_BUNDLER_TRUST_ON_FIRST_USE -eq '1') {
+            Write-Host ""
+            Write-Warning ("[$Label] TRUST-ON-FIRST-USE: computed SHA-256 = {0}" -f $actual)
+            Write-Warning ("[$Label] Cross-check against an independent source, then paste this")
+            Write-Warning ("[$Label] value into bundle-tooling-windows.ps1 and re-run.")
+            Write-Host ""
+            throw "[$Label] pinned hash not yet recorded; aborting so build cannot ship an unverified artifact"
+        }
+        throw "[$Label] pinned SHA-256 is the placeholder zeros; refusing to use unverified download. Set APPLOGS_BUNDLER_TRUST_ON_FIRST_USE=1, run once to print the hash, paste it into the script, then re-run."
+    }
+
+    if ($actual -ne $expectedNorm) {
+        throw ("[$Label] SHA-256 MISMATCH - refusing to use download.`n  expected: {0}`n  actual:   {1}`n  file:     {2}`nSomeone may be tampering with the download (CDN compromise / MITM). Do NOT bypass this check; investigate first." -f $expectedNorm, $actual, $Path)
+    }
+    Write-Host ("[$Label] SHA-256 OK ({0})" -f $actual)
+}
+
 function Test-DirHasFiles {
     param([string]$Dir, [string[]]$Required)
     if (-not $Dir -or -not (Test-Path $Dir)) { return $false }
@@ -97,11 +166,13 @@ function Resolve-ImdSource {
 
 function Get-AdbViaDownload {
     param([string]$Staging)
-    $url = 'https://dl.google.com/android/repository/platform-tools-latest-windows.zip'
+    $url = $script:AdbZipUrl
     $zip = Join-Path $Staging 'platform-tools.zip'
     $dir = Join-Path $Staging 'platform-tools-extracted'
-    Write-Host "[adb] downloading platform-tools from Google..."
+    Write-Host ("[adb] downloading {0}..." -f $url)
     Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+    # SHA-256 verification (issue H3): refuses to extract a tampered/MITM'd zip.
+    Assert-Sha256 -Path $zip -Expected $script:AdbZipSha256 -Label 'adb'
     Expand-Archive -LiteralPath $zip -DestinationPath $dir -Force
     return (Join-Path $dir 'platform-tools')
 }
@@ -112,21 +183,28 @@ function Get-ImdViaDownload {
     # and ships a single flat-layout `libimobile-suite-latest_w64.zip`
     # asset per release (tag format `v<date>-<sha>`). This is the same
     # build linked from libimobiledevice.org's Downloads page.
-    Write-Host "[imd] querying GitHub for latest jrjr/libimobiledevice-windows release..."
-    $api     = 'https://api.github.com/repos/jrjr/libimobiledevice-windows/releases/latest'
+    #
+    # We pin to a specific release tag (NOT 'releases/latest') so that the
+    # asset URL resolves to a SHA-256 we have recorded. Bumping the tag
+    # without bumping the hash will fail the Assert-Sha256 check loudly.
+    $tag     = $script:ImdReleaseTag
+    $api     = "https://api.github.com/repos/jrjr/libimobiledevice-windows/releases/tags/$tag"
     $headers = @{ 'User-Agent' = 'applogs-viewer-bundler' }
+    Write-Host ("[imd] querying GitHub for jrjr/libimobiledevice-windows release {0}..." -f $tag)
     $release = Invoke-RestMethod -Uri $api -Headers $headers
     $asset = $release.assets |
-        Where-Object { $_.name -match '^libimobile-suite-.*_w64\.zip$' } |
+        Where-Object { $_.name -match $script:ImdAssetPattern } |
         Select-Object -First 1
     if (-not $asset) {
         $assetNames = ($release.assets | ForEach-Object { $_.name }) -join ', '
-        throw "no libimobile-suite-*_w64.zip asset in release $($release.tag_name); assets were: $assetNames"
+        throw "no asset matching $($script:ImdAssetPattern) in release $($release.tag_name); assets were: $assetNames"
     }
     $zip = Join-Path $Staging 'libimobile-suite-w64.zip'
     $dir = Join-Path $Staging 'libimobile-suite-extracted'
     Write-Host ("[imd] downloading {0} from release {1}..." -f $asset.name, $release.tag_name)
     Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -Headers $headers -UseBasicParsing
+    # SHA-256 verification (issue H3): refuses to extract a tampered/MITM'd zip.
+    Assert-Sha256 -Path $zip -Expected $script:ImdZipSha256 -Label 'imd'
     Expand-Archive -LiteralPath $zip -DestinationPath $dir -Force
     return $dir
 }
