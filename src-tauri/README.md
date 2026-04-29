@@ -1,17 +1,18 @@
-# AppLogsViewer (Tauri v2)
+# AppLogsViewer — build & development guide
 
-Native cross-platform desktop app — Tauri v2 (Rust) host that streams Android
-(`adb logcat`) and iOS (`idevicesyslog`) device logs into a unified web viewer.
+[![CI](https://github.com/valer23/better-app-logging/actions/workflows/ci.yml/badge.svg)](https://github.com/valer23/better-app-logging/actions/workflows/ci.yml)
+
+Build instructions and developer notes for the Tauri v2 (Rust) host. For an
+end-user overview — what the tool does, how to install the prebuilt artifact,
+how to use it — see the [root README](../README.md).
 
 > The HTML/CSS/JS viewer (`viewer/logcat-viewer.html`) is embedded at compile
 > time via `include_str!`, served over a localhost axum server, and rendered
 > inside the Tauri WebView window. Single source of truth.
 
-## Status
-
-All milestones M1–M7 ✅ — Tauri shell, iOS bridge, Android bridge + PID→package map,
-native search shim path, single-instance plugin, release bundling, docs synced.
-Released unsigned (right-click → Open on macOS, SmartScreen → Run anyway on Windows).
+Distributions ship **unsigned** (right-click → Open on macOS, SmartScreen → Run
+anyway on Windows). To enable Developer ID / EV signing, see
+[Code signing](#code-signing) below.
 
 ## Prerequisites
 
