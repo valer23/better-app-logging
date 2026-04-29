@@ -137,7 +137,9 @@ async fn ios_devices() -> Json<serde_json::Value> {
         .collect();
     for udid in udids {
         let name = ideviceinfo(&udid, "DeviceName").await.unwrap_or_default();
-        let version = ideviceinfo(&udid, "ProductVersion").await.unwrap_or_default();
+        let version = ideviceinfo(&udid, "ProductVersion")
+            .await
+            .unwrap_or_default();
         list.push(serde_json::json!({
             "id":      udid,
             "name":    if name.is_empty() { udid.as_str() } else { name.as_str() },
@@ -166,7 +168,7 @@ async fn ios_driver_status() -> Json<serde_json::Value> {
     let res = tokio::time::timeout(std::time::Duration::from_millis(500), connect).await;
     match res {
         Ok(Ok(_)) => Json(serde_json::json!({ "available": true,  "reason": "ok" })),
-        _         => Json(serde_json::json!({ "available": false, "reason": "no_amds" })),
+        _ => Json(serde_json::json!({ "available": false, "reason": "no_amds" })),
     }
 }
 
@@ -175,9 +177,7 @@ async fn ios_driver_status() -> Json<serde_json::Value> {
 /// that could carry shell metacharacters or arg-injection payloads before
 /// it reaches `ideviceinfo -u <udid>`.
 fn valid_udid(s: &str) -> bool {
-    !s.is_empty()
-        && s.len() <= 64
-        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
 async fn ideviceinfo(udid: &str, key: &str) -> Option<String> {

@@ -85,7 +85,8 @@ mod tests {
 
     #[test]
     fn ios_re_spaced_process() {
-        let line = "Apr 28 15:00:00.000000 Bragi AI Dev(com.brai.bragiai.dev)[1234] <Info>: app log";
+        let line =
+            "Apr 28 15:00:00.000000 Bragi AI Dev(com.brai.bragiai.dev)[1234] <Info>: app log";
         let c = IOS_RE.captures(line).expect("match");
         assert_eq!(&c[2], "Bragi AI Dev");
         assert_eq!(&c[3], "com.brai.bragiai.dev");

@@ -23,8 +23,9 @@ const ANDROID_WS_PORT: u16 = 8765;
 pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,applogs_viewer_lib=debug")),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                tracing_subscriber::EnvFilter::new("info,applogs_viewer_lib=debug")
+            }),
         )
         .init();
 
@@ -161,9 +162,7 @@ fn ios_device_info() -> String {
 /// `adb devices` output for the connect greeting.
 fn adb_devices() -> String {
     match tooling::command("adb").arg("devices").output() {
-        Ok(out) if out.status.success() => {
-            String::from_utf8_lossy(&out.stdout).trim().to_string()
-        }
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).trim().to_string(),
         Ok(out) => format!("adb error (exit {:?})", out.status.code()),
         Err(_) => "adb not found - install Android platform-tools and add to PATH".to_string(),
     }
@@ -176,11 +175,11 @@ fn adb_devices() -> String {
 /// stripped-down PATH).
 fn ensure_tooling_path() {
     const EXTRA: &[&str] = &[
-        "/opt/homebrew/bin",   // macOS Apple Silicon Homebrew
+        "/opt/homebrew/bin", // macOS Apple Silicon Homebrew
         "/opt/homebrew/sbin",
-        "/usr/local/bin",      // macOS Intel Homebrew + Linux user installs
+        "/usr/local/bin", // macOS Intel Homebrew + Linux user installs
         "/usr/local/sbin",
-        "/opt/local/bin",      // MacPorts
+        "/opt/local/bin", // MacPorts
     ];
     let separator = if cfg!(windows) { ';' } else { ':' };
     let current = std::env::var_os("PATH").unwrap_or_default();

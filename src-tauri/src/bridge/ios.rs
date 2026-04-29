@@ -66,7 +66,12 @@ async fn run_once(tx: &broadcast::Sender<String>) -> Result<(), String> {
         // Lifecycle markers: idevicesyslog emits e.g. [connected:UDID].
         if line.starts_with('[') && line.ends_with(']') {
             let inner = &line[1..line.len() - 1];
-            push(tx, &Frame::Devices(DevicesFrame { data: inner.to_string() }));
+            push(
+                tx,
+                &Frame::Devices(DevicesFrame {
+                    data: inner.to_string(),
+                }),
+            );
             continue;
         }
 
@@ -76,7 +81,10 @@ async fn run_once(tx: &broadcast::Sender<String>) -> Result<(), String> {
         let ts_raw = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
         let process = caps.get(2).map(|m| m.as_str()).unwrap_or_default();
         let subsystem = caps.get(3).map(|m| m.as_str());
-        let pid: u32 = caps.get(4).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+        let pid: u32 = caps
+            .get(4)
+            .and_then(|m| m.as_str().parse().ok())
+            .unwrap_or(0);
         let level = caps.get(5).map(|m| m.as_str());
         let msg = caps.get(6).map(|m| m.as_str()).unwrap_or_default();
 
@@ -112,5 +120,10 @@ fn push(tx: &broadcast::Sender<String>, frame: &Frame) {
 }
 
 fn emit_error(tx: &broadcast::Sender<String>, text: &str) {
-    push(tx, &Frame::Error(ErrorFrame { data: text.to_string() }));
+    push(
+        tx,
+        &Frame::Error(ErrorFrame {
+            data: text.to_string(),
+        }),
+    );
 }

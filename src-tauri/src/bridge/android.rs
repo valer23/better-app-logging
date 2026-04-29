@@ -33,10 +33,7 @@ pub fn spawn(tx: broadcast::Sender<String>) {
     });
 }
 
-async fn run_once(
-    tx: &broadcast::Sender<String>,
-    pid_map: &PidMap,
-) -> Result<(), String> {
+async fn run_once(tx: &broadcast::Sender<String>, pid_map: &PidMap) -> Result<(), String> {
     tracing::info!("[android] spawning adb logcat -v year,threadtime -T 500");
     let mut child = tooling::tokio_command("adb")
         .args(["logcat", "-v", "year,threadtime", "-T", "500"])
@@ -72,8 +69,14 @@ async fn run_once(
             continue;
         };
         let ts = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
-        let pid: u32 = caps.get(2).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
-        let tid: u32 = caps.get(3).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+        let pid: u32 = caps
+            .get(2)
+            .and_then(|m| m.as_str().parse().ok())
+            .unwrap_or(0);
+        let tid: u32 = caps
+            .get(3)
+            .and_then(|m| m.as_str().parse().ok())
+            .unwrap_or(0);
         let lvl_char = caps
             .get(4)
             .and_then(|m| m.as_str().chars().next())
@@ -81,12 +84,7 @@ async fn run_once(
         let tag = caps.get(5).map(|m| m.as_str().trim()).unwrap_or_default();
         let msg = caps.get(6).map(|m| m.as_str()).unwrap_or_default();
 
-        let app = pid_map
-            .read()
-            .await
-            .get(&pid)
-            .cloned()
-            .unwrap_or_default();
+        let app = pid_map.read().await.get(&pid).cloned().unwrap_or_default();
 
         let log_frame = LogFrame {
             ts: ts.to_string(),

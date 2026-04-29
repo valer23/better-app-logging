@@ -52,7 +52,9 @@ async fn refresh_once() -> Result<HashMap<u32, String>, String> {
     let mut map = HashMap::new();
     for line in text.lines() {
         let mut parts = line.split_whitespace();
-        let Some(pid_str) = parts.next() else { continue };
+        let Some(pid_str) = parts.next() else {
+            continue;
+        };
         let Some(name) = parts.next() else { continue };
         if let Ok(pid) = pid_str.parse::<u32>() {
             map.insert(pid, name.to_string());
