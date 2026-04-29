@@ -1,0 +1,49 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "AppLogsViewer",
+  "version": "1.0.0",
+  "identifier": "com.bragi.applogs-viewer",
+  "build": {
+    "frontendDist": "./dist",
+    "devUrl": "http://localhost:8780"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "AppLogsViewer",
+        "url": "http://localhost:8780",
+        "width": 1400,
+        "height": 900,
+        "minWidth": 900,
+        "minHeight": 600,
+        "resizable": true,
+        "decorations": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg", "nsis"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "Live log viewer for Android and iOS devices",
+    "longDescription": "AppLogsViewer streams live device logs from adb logcat (Android) and idevicesyslog (iOS) into a unified native window with search, filter, and export.",
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": false
+      }
+    }
+  }
+}

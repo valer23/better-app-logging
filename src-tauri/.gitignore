@@ -1,0 +1,17 @@
+# Rust build artifacts
+/target/
+
+# Tauri-generated bindings
+/gen/
+
+# Vendored 3rd-party tooling (adb + libimobiledevice). Regenerated on demand
+# via `bash scripts/bundle-tooling-macos.sh`. Big binaries — keep out of git.
+/vendor/
+
+# OS junk (root .gitignore covers .DS_Store + .idea, but keep local for clarity)
+Thumbs.db
+
+# Editor
+*.swp
+*.swo
+.vscode/

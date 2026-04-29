@@ -1,0 +1,1467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Device Log Viewer</title>
+<script>
+  // Apply persisted theme before first paint to avoid a flash on refresh.
+  // Default = dark (no `data-theme` attribute matches the `:root` rule);
+  // light is opt-in and only kicks in after the user explicitly toggles.
+  (function() {
+    try {
+      var t = localStorage.getItem('applogs-viewer.theme');
+      if (t === 'light') document.documentElement.dataset.theme = 'light';
+    } catch (_) {}
+    try {
+      // Restore log-table zoom before first paint so existing rows render
+      // at the user's preferred size with no resize flash.
+      var z = parseFloat(localStorage.getItem('applogs-viewer.logFontSize'));
+      if (z >= 8 && z <= 20) {
+        document.documentElement.style.setProperty('--log-font-size', z + 'px');
+      }
+    } catch (_) {}
+  })();
+</script>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%23161b22' stroke='%2330363d' stroke-width='1'/><circle cx='8' cy='9' r='2' fill='%2356d364'/><rect x='13' y='8' width='13' height='2' rx='1' fill='%233ddc84' opacity='.55'/><circle cx='8' cy='16' r='2' fill='%2379c0ff'/><rect x='13' y='15' width='11' height='2' rx='1' fill='%2379c0ff' opacity='.55'/><circle cx='8' cy='23' r='2' fill='%23ff7b72'/><rect x='13' y='22' width='9' height='2' rx='1' fill='%23ff7b72' opacity='.55'/></svg>">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+
+  :root {
+    --bg:       #0d1117;
+    --surface:  #161b22;
+    --surface2: #1c2128;
+    --border:   #21262d;
+    --text:     #e6edf3;
+    --muted:    #7d8590;
+    --accent:   #58a6ff;
+    --green:    #56d364;
+    --yellow:   #e3b341;
+    --red:      #ff7b72;
+    --d: #79c0ff; --i: #56d364; --w: #e3b341; --e: #ff7b72; --a: #f78166;
+    --android:  #3ddc84;
+    --ios:      #a8b3c1;
+    --row-hover: #1c2128;
+  }
+  :root[data-theme="light"] {
+    --bg:       #ffffff;
+    --surface:  #f6f8fa;
+    --surface2: #eaeef2;
+    --border:   #d0d7de;
+    --text:     #1f2328;
+    --muted:    #59636e;
+    --accent:   #0969da;
+    --green:    #1a7f37;
+    --yellow:   #9a6700;
+    --red:      #cf222e;
+    --d: #0969da; --i: #1a7f37; --w: #9a6700; --e: #cf222e; --a: #b35900;
+    --android:  #1a7f37;
+    --ios:      #57606a;
+    --row-hover: #f6f8fa;
+  }
+  .topbar-spacer { flex: 1; }
+  /* Animated theme toggle — track + sliding thumb with sun/moon glyphs.
+     Thumb uses var(--text) so it has high contrast in both palettes
+     (light thumb on dark track, dark thumb on light track). */
+  /* Zoom controls — scale the log table content via --log-font-size.
+     Only affects the table; UI chrome (buttons, tabs) stays at native
+     pixel size so the controls remain usable on small laptops. */
+  .zoom-group { display: inline-flex; align-items: center; gap: 0; margin-right: 10px; border: 1px solid var(--border); border-radius: 5px; overflow: hidden; }
+  .zoom-btn { background: transparent; border: 0; color: var(--muted); font-family: 'IBM Plex Sans', sans-serif; font-size: 11px; font-weight: 600; padding: 4px 9px; cursor: pointer; transition: color .15s, background .15s; }
+  .zoom-btn:hover { color: var(--text); background: var(--surface2); }
+  .zoom-btn + .zoom-btn { border-left: 1px solid var(--border); }
+
+  .theme-switch { position: relative; display: inline-flex; align-items: center; align-self: center; cursor: pointer; user-select: none; }
+  .theme-switch input { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
+  .theme-switch-track { position: relative; width: 60px; height: 28px; background: var(--surface2); border: 1px solid var(--muted); border-radius: 999px; display: inline-flex; align-items: center; justify-content: space-between; padding: 0 8px; box-sizing: border-box; transition: background .2s, border-color .2s; }
+  .theme-switch:hover .theme-switch-track { border-color: var(--accent); }
+  .theme-switch-icon { font-size: 12px; line-height: 1; pointer-events: none; opacity: .9; }
+  .theme-switch-icon.sun  { color: var(--yellow); }
+  .theme-switch-icon.moon { color: var(--accent); }
+  .theme-switch-thumb { position: absolute; top: 2px; left: 2px; width: 22px; height: 22px; background: var(--text); border: 1px solid var(--muted); border-radius: 50%; transition: transform .25s cubic-bezier(.4, 0, .2, 1), background .2s, border-color .2s; box-shadow: 0 2px 4px rgba(0, 0, 0, .45); }
+  /* Dark = unchecked, thumb on the right (over moon). Light = checked, thumb on the left (over sun). */
+  .theme-switch-track .theme-switch-thumb { transform: translateX(30px); }
+  .theme-switch input:checked + .theme-switch-track .theme-switch-thumb { transform: translateX(0); }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'IBM Plex Sans', sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+  /* ── Top bar ── */
+  #topbar { background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: stretch; padding: 0 16px; flex-shrink: 0; }
+  .logo { font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; color: var(--accent); letter-spacing: 0.05em; display: flex; align-items: center; gap: 8px; padding-right: 16px; border-right: 1px solid var(--border); margin-right: 4px; }
+  .logo span { color: var(--muted); }
+  .logo svg { display: block; flex-shrink: 0; }
+  .logo-mark { width: 22px; height: 22px; }
+  .mode-tab { font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; font-weight: 600; padding: 0 14px; border: none; background: transparent; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; transition: color .15s, border-color .15s; display: flex; align-items: center; gap: 6px; }
+  .mode-tab:hover { color: var(--text); }
+  .mode-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* ── Filter bar ── */
+  #filterbar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 8px 16px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex-shrink: 0; }
+  input[type="text"] { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 12px; padding: 5px 10px; outline: none; transition: border-color .15s; }
+  input[type="text"]:focus { border-color: var(--accent); }
+  #search { width: 280px; } #tagFilter { width: 220px; } #pidFilter { width: 220px; }
+
+  .toggle-group { display: flex; gap: 4px; }
+  .lvl-btn { font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 700; padding: 4px 7px; border-radius: 4px; border: 1px solid transparent; cursor: pointer; opacity: .35; transition: opacity .15s; background: transparent; }
+  .lvl-btn.active { opacity: 1; }
+
+  .search-mod { font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 700; padding: 4px 7px; border-radius: 4px; border: 1px solid var(--border); cursor: pointer; background: transparent; color: var(--muted); transition: color .15s, border-color .15s, background .15s; }
+  .search-mod:hover { color: var(--text); border-color: var(--muted); }
+  .search-mod.active { color: var(--accent); border-color: var(--accent); background: #58a6ff15; }
+  .search-mod.error { color: var(--red); border-color: var(--red); background: #ff7b7215; }
+  .lvl-btn[data-lvl="VERBOSE"] { color: #aaa; border-color: #aaa; }
+  .lvl-btn[data-lvl="DEBUG"]   { color: var(--d); border-color: var(--d); }
+  .lvl-btn[data-lvl="INFO"]    { color: var(--i); border-color: var(--i); }
+  .lvl-btn[data-lvl="WARN"]    { color: var(--w); border-color: var(--w); }
+  .lvl-btn[data-lvl="ERROR"]   { color: var(--e); border-color: var(--e); }
+  .lvl-btn[data-lvl="ASSERT"]  { color: var(--a); border-color: var(--a); }
+
+  .plat-btn { font-family: 'IBM Plex Sans', sans-serif; font-size: 11px; font-weight: 600; padding: 4px 8px; border-radius: 4px; border: 1px solid transparent; cursor: pointer; opacity: .35; transition: opacity .15s, color .15s, border-color .15s; background: transparent; }
+  .plat-btn.active { opacity: 1; }
+  .plat-btn[data-plat="android"]        { color: var(--android); border-color: var(--android); }
+  .plat-btn[data-plat="android"].active { color: var(--green);   border-color: var(--green);   }
+  .plat-btn[data-plat="ios"]            { color: var(--ios);     border-color: var(--ios);     }
+  .plat-btn[data-plat="ios"].active     { color: var(--green);   border-color: var(--green);   }
+
+  .sep { width: 1px; height: 20px; background: var(--border); flex-shrink: 0; }
+  .bar-spacer { flex: 1; }
+
+  .icon-btn { background: transparent; border: 1px solid var(--border); border-radius: 5px; color: var(--muted); font-size: 12px; padding: 4px 10px; cursor: pointer; display: flex; align-items: center; gap: 5px; transition: color .15s, border-color .15s; white-space: nowrap; font-family: 'IBM Plex Sans', sans-serif; }
+  .icon-btn:hover  { color: var(--text); border-color: var(--muted); }
+  .icon-btn.active { color: var(--green); border-color: var(--green); }
+  .icon-btn.danger { color: var(--red); border-color: var(--red); }
+  .icon-btn.paused { color: var(--yellow); border-color: var(--yellow); }
+
+  .stats { font-size: 11px; color: var(--muted); font-family: 'JetBrains Mono', monospace; white-space: nowrap; }
+
+  /* ── Drop Zone ── */
+  #dropzone { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; border: 2px dashed var(--border); margin: 24px; border-radius: 12px; cursor: pointer; transition: border-color .2s, background .2s; }
+  #dropzone:hover, #dropzone.drag-over { border-color: var(--accent); background: #161b2288; }
+  #dropzone .drop-icon { font-size: 48px; }
+  #dropzone h2 { font-size: 18px; font-weight: 600; }
+  #dropzone p  { font-size: 13px; color: var(--muted); text-align: center; line-height: 1.6; }
+  #dropzone label { background: var(--accent); color: #0d1117; font-weight: 600; font-size: 13px; padding: 8px 20px; border-radius: 6px; cursor: pointer; }
+  #fileInput { display: none; }
+
+  /* ── Live panel ── */
+  #livePanel { flex: 1; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 24px; }
+  #livePanel.visible { display: flex; }
+
+  .live-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; width: 100%; max-width: 880px; align-items: stretch; justify-items: stretch; margin: 0 auto; }
+  @media (max-width: 700px) { .live-cards { grid-template-columns: 1fr; } }
+
+  .connect-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 22px 24px; display: flex; flex-direction: column; gap: 14px; }
+  .connect-card.android { border-top: 2px solid var(--android); }
+  .connect-card.ios     { border-top: 2px solid var(--ios); }
+
+  /* AMDS-missing banner — Windows-only, surfaced when /ios-driver-status
+     reports the Apple Mobile Device Service unreachable on :27015.
+     Uses semantic CSS vars so the banner tracks the active theme. */
+  .ios-driver-warning { display: none; background: var(--surface2); border: 1px solid var(--yellow); color: var(--text); border-radius: 8px; padding: 10px 12px; font-size: 12px; line-height: 1.5; }
+  .ios-driver-warning.visible { display: block; }
+  .ios-driver-warning .title { font-weight: 600; margin-bottom: 4px; color: var(--yellow); }
+  .ios-driver-warning .actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .ios-driver-warning a, .ios-driver-warning button { font-family: 'IBM Plex Sans', sans-serif; font-size: 11px; font-weight: 600; text-decoration: none; padding: 5px 10px; border-radius: 5px; cursor: pointer; border: 1px solid var(--yellow); background: transparent; color: var(--yellow); transition: background .15s, color .15s; }
+  .ios-driver-warning a:hover, .ios-driver-warning button:hover { background: var(--yellow); color: var(--bg); }
+
+  .card-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+  .card-title  { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .card-desc   { font-size: 12px; color: var(--muted); line-height: 1.5; min-height: 34px; }
+  .card-desc code { font-family: 'JetBrains Mono', monospace; font-size: 11px; background: var(--bg); border: 1px solid var(--border); border-radius: 3px; padding: 1px 5px; color: #79c0ff; }
+
+  .connect-row { display: flex; gap: 6px; align-items: center; }
+  .connect-row input { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 12px; padding: 7px 10px; outline: none; transition: border-color .15s; min-width: 0; }
+  .connect-row input:focus { border-color: var(--accent); }
+  /* Custom device dropdown — themed to match the rest of the UI and forced
+     to open below the trigger (the native <select> popup is OS-controlled
+     and ignores the page theme entirely). */
+  .device-picker { position: relative; flex: 1; min-width: 0; }
+  .device-trigger { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; padding: 7px 10px; cursor: pointer; text-align: left; display: flex; justify-content: space-between; align-items: center; gap: 8px; transition: border-color .15s, background .15s; }
+  .device-trigger:hover:not(:disabled) { border-color: var(--muted); }
+  .device-trigger.open { border-color: var(--accent); }
+  .device-trigger:disabled { opacity: .55; cursor: not-allowed; }
+  .device-trigger .device-trigger-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .device-trigger .device-trigger-caret { font-size: 10px; color: var(--muted); flex-shrink: 0; transition: transform .15s; }
+  .device-trigger.open .device-trigger-caret { transform: rotate(180deg); }
+  .device-menu { position: absolute; top: calc(100% + 4px); left: 0; right: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 8px 24px rgba(0, 0, 0, .55); z-index: 100; max-height: 240px; overflow-y: auto; display: none; padding: 4px; }
+  .device-menu.open { display: block; }
+  .device-menu-item { padding: 7px 10px; cursor: pointer; font-size: 12px; color: var(--text); border-radius: 4px; transition: background .1s; }
+  .device-menu-item:hover { background: var(--surface2); }
+  .device-menu-item.selected { background: #1a3a5e; color: var(--accent); }
+  .device-menu-empty { padding: 10px; color: var(--muted); font-size: 12px; font-style: italic; cursor: default; }
+
+  .btn-primary   { background: var(--accent); color: #0d1117; font-weight: 700; font-size: 12px; padding: 7px 14px; border-radius: 6px; border: none; cursor: pointer; white-space: nowrap; font-family: 'IBM Plex Sans', sans-serif; transition: opacity .15s; }
+  .btn-primary:hover { opacity: .85; } .btn-primary:disabled { opacity: .4; cursor: not-allowed; }
+  .btn-primary.danger { background: var(--red); color: #fff; }
+  .btn-secondary { background: transparent; color: var(--muted); font-size: 12px; font-weight: 600; padding: 7px 12px; border-radius: 6px; border: 1px solid var(--border); cursor: pointer; white-space: nowrap; font-family: 'IBM Plex Sans', sans-serif; transition: color .15s, border-color .15s; }
+  .btn-secondary:hover { color: var(--text); border-color: var(--muted); }
+
+  .status-pill { display: inline-flex; align-items: center; gap: 5px; font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 20px; border: 1px solid; }
+  .status-pill.disconnected { color: var(--muted);  border-color: var(--border); }
+  .status-pill.connecting   { color: var(--yellow); border-color: var(--yellow); background: #e3b34110; }
+  .status-pill.connected    { color: var(--green);  border-color: var(--green);  background: #56d36415; }
+  .status-pill.error        { color: var(--red);    border-color: var(--red);    background: #ff7b7215; }
+  .status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .status-pill.connecting .status-dot { animation: blink 1s ease-in-out infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
+
+  .device-badge { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--muted); line-height: 1.6; display: none; white-space: pre; }
+  .device-badge.visible { display: block; }
+
+  /* ── Live status bar (shown above log table in live mode) ── */
+  #liveBar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 6px 16px; display: none; align-items: center; gap: 16px; flex-shrink: 0; flex-wrap: wrap; }
+  #liveBar.visible { display: flex; }
+  .live-bar-item { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .live-bar-platform { font-weight: 600; font-size: 12px; display: flex; align-items: center; gap: 5px; }
+
+  /* ── Setup modal ── */
+  .modal-overlay { position: fixed; inset: 0; background: #000000cc; z-index: 100; display: none; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
+  .modal-overlay.visible { display: flex; }
+  .modal { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 28px; width: 640px; max-width: 90vw; max-height: 85vh; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+  .modal h2 { font-size: 15px; font-weight: 600; }
+  .modal p  { font-size: 12px; color: var(--muted); line-height: 1.6; }
+  .modal code { font-family: 'JetBrains Mono', monospace; font-size: 11px; background: var(--bg); border: 1px solid var(--border); border-radius: 3px; padding: 1px 5px; color: #79c0ff; }
+  .modal-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+  .modal-tab { font-size: 13px; font-weight: 600; padding: 8px 16px; background: transparent; border: none; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .modal-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .modal-content { display: none; flex-direction: column; gap: 14px; }
+  .modal-content.active { display: flex; }
+  .steps { display: flex; flex-direction: column; gap: 10px; }
+  .step  { display: flex; gap: 10px; align-items: flex-start; }
+  .step-num { background: var(--accent); color: #0d1117; font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 700; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 2px; }
+  .step p { font-size: 12px; color: var(--text); line-height: 1.6; }
+  .code-block { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #79c0ff; white-space: pre; overflow-x: auto; position: relative; }
+  .copy-btn { position: absolute; top: 6px; right: 6px; background: var(--surface2); border: 1px solid var(--border); border-radius: 4px; color: var(--muted); font-size: 10px; padding: 2px 7px; cursor: pointer; font-family: 'IBM Plex Sans', sans-serif; }
+  .copy-btn:hover { color: var(--text); }
+  .modal-footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px; border-top: 1px solid var(--border); }
+
+  /* ── Log table ── */
+  #logWrapper { flex: 1; overflow: hidden; display: none; flex-direction: column; }
+  #logWrapper.visible { display: flex; }
+  #logTable { flex: 1; overflow-y: auto; overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  /* `--log-font-size` is set on `:root` by the zoom buttons / keyboard
+     shortcut and persisted in localStorage; the header keeps a fixed
+     small size so column titles stay readable at any body zoom. */
+  table { table-layout: fixed; border-collapse: separate; border-spacing: 0; font-family: 'JetBrains Mono', monospace; font-size: var(--log-font-size, 12px); min-width: 960px; width: 100%; }
+  /* Sticky header — declared on thead, tr, AND th for cross-browser reliability. */
+  thead    { position: sticky; top: 0; z-index: 5; }
+  thead tr { position: sticky; top: 0; }
+  thead th { position: sticky; top: 0; background: var(--surface); border-bottom: 1px solid var(--border); padding: 6px 10px; text-align: left; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; white-space: nowrap; z-index: 5; overflow: hidden; user-select: none; box-shadow: 0 1px 0 var(--border); }
+  tbody td { border-bottom: 1px solid var(--border); }
+  mark { background: var(--yellow); color: #0d1117; padding: 0 2px; border-radius: 2px; font-weight: 700; }
+  .col-resize-handle { position: absolute; right: 0; top: 0; bottom: 0; width: 5px; cursor: col-resize; z-index: 2; }
+  .col-resize-handle::after { content: ''; position: absolute; right: 1px; top: 20%; bottom: 20%; width: 2px; background: var(--border); border-radius: 1px; transition: background .15s; }
+  .col-resize-handle:hover::after, .col-resize-handle.dragging::after { background: var(--accent); }
+  tbody tr { border-bottom: 1px solid var(--border); transition: background .05s; cursor: pointer; }
+  tbody tr:hover { background: var(--row-hover); }
+  tbody tr.selected { background: #58a6ff22; box-shadow: inset 3px 0 0 var(--accent); }
+  tbody tr.selected:hover { background: #58a6ff33; }
+  td { padding: 3px 10px; vertical-align: top; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  td.msg { white-space: pre-wrap; word-break: break-all; }
+
+  .plat-badge { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 3px; font-size: 9px; font-weight: 700; font-family: 'IBM Plex Sans', sans-serif; flex-shrink: 0; }
+  .plat-badge.android { background: #3ddc8420; color: var(--android); border: 1px solid #3ddc8440; }
+  .plat-badge.ios     { background: #a8b3c120; color: var(--ios);     border: 1px solid #a8b3c140; }
+  td.plat-cell { text-align: center; padding: 3px 4px; }
+
+  .ts  { color: #8b949e; }
+  .pid { color: #6e7681; }
+  .tag { color: #79c0ff; font-weight: 500; }
+  .app { color: #6e7681; }
+  .lvl-badge { display: inline-block; width: 14px; text-align: center; font-weight: 700; border-radius: 2px; }
+  .V .lvl-badge { color: #888; } .D .lvl-badge { color: var(--d); } .I .lvl-badge { color: var(--i); }
+  .W .lvl-badge { color: var(--w); } .E .lvl-badge, .A .lvl-badge { color: var(--e); }
+  .W td.msg { color: var(--w); } .E td.msg, .A td.msg { color: var(--e); }
+
+  @keyframes fadeIn { from { opacity:0; background: #58a6ff08; } to { opacity:1; } }
+  tr.new-row { animation: fadeIn .25s ease; }
+
+  /* ── Export dropdown ── */
+  .export-wrap { position: relative; }
+  .export-menu {
+    display: none;
+    position: absolute; top: calc(100% + 6px); right: 0;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 6px; min-width: 240px;
+    box-shadow: 0 8px 32px #00000060; z-index: 50;
+    flex-direction: column; gap: 2px;
+  }
+  .export-menu.open { display: flex; }
+  .export-menu-header { font-size: 10px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; padding: 4px 8px 6px; }
+  .export-opt {
+    display: flex; align-items: center; gap: 10px;
+    background: transparent; border: none; border-radius: 6px;
+    padding: 8px 10px; cursor: pointer; text-align: left;
+    transition: background .1s; width: 100%;
+    font-family: 'IBM Plex Sans', sans-serif; color: var(--text);
+  }
+  .export-opt:hover { background: var(--surface2); }
+  .export-opt strong { font-size: 13px; display: block; margin-bottom: 1px; }
+  .export-icon { font-size: 18px; flex-shrink: 0; }
+  .export-desc { font-size: 11px; color: var(--muted); }
+  .export-scope { border-top: 1px solid var(--border); margin-top: 4px; padding: 8px 10px 4px; display: flex; flex-direction: column; gap: 5px; }
+  .export-scope label { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .export-scope input[type="radio"] { accent-color: var(--accent); cursor: pointer; }
+
+  /* ── Loading ── */
+  #loading { display: none; align-items: center; justify-content: center; gap: 12px; flex: 1; font-size: 14px; color: var(--muted); }
+  #loading.visible { display: flex; }
+  .spinner { width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .6s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="logo">
+    <svg class="logo-mark" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <rect width="32" height="32" rx="6" fill="var(--surface)" stroke="var(--border)" stroke-width="1"/>
+      <circle cx="8" cy="9" r="2" fill="var(--green)"/>
+      <rect x="13" y="8" width="13" height="2" rx="1" fill="var(--green)" opacity=".55"/>
+      <circle cx="8" cy="16" r="2" fill="var(--d)"/>
+      <rect x="13" y="15" width="11" height="2" rx="1" fill="var(--d)" opacity=".55"/>
+      <circle cx="8" cy="23" r="2" fill="var(--e)"/>
+      <rect x="13" y="22" width="9" height="2" rx="1" fill="var(--e)" opacity=".55"/>
+    </svg>
+    log<span>/viewer</span>
+  </div>
+  <button class="mode-tab"        id="tabFile" onclick="switchMode('file')">📂 File Import</button>
+  <button class="mode-tab active" id="tabLive" onclick="switchMode('live')">📱 Live Devices</button>
+  <div class="topbar-spacer"></div>
+  <div class="zoom-group">
+    <button class="zoom-btn" onclick="setLogZoom(-1)" title="Zoom out (Ctrl+-)">A−</button>
+    <button class="zoom-btn" onclick="setLogZoom(0)"  title="Reset zoom (Ctrl+0)">A</button>
+    <button class="zoom-btn" onclick="setLogZoom(1)"  title="Zoom in (Ctrl++)">A+</button>
+  </div>
+  <label class="theme-switch" title="Toggle light / dark theme">
+    <input type="checkbox" id="themeToggle" onchange="toggleTheme()">
+    <span class="theme-switch-track">
+      <span class="theme-switch-icon sun">☀</span>
+      <span class="theme-switch-icon moon">🌙</span>
+      <span class="theme-switch-thumb"></span>
+    </span>
+  </label>
+</div>
+
+<div id="filterbar">
+  <input type="text" id="search"    placeholder="🔍 Search message…" oninput="applyFilters()">
+  <button class="search-mod" id="searchCaseBtn"  onclick="toggleSearchMod('case')"  title="Case-sensitive search">Aa</button>
+  <button class="search-mod" id="searchRegexBtn" onclick="toggleSearchMod('regex')" title="Regex search">.*</button>
+  <input type="text" id="tagFilter" placeholder="Tag / Process…"      oninput="applyFilters()">
+  <input type="text" id="pidFilter" placeholder="PID / App…"          oninput="applyFilters()">
+  <div class="sep"></div>
+  <div class="toggle-group" id="levelToggles"></div>
+  <div class="sep"></div>
+  <div class="toggle-group" id="platToggles"></div>
+  <div class="bar-spacer"></div>
+  <button class="icon-btn active" id="autoScrollBtn" onclick="toggleAutoScroll()" style="display:none">↓ Auto-scroll</button>
+  <button class="icon-btn"        id="pauseBtn"      onclick="togglePause()"      style="display:none">⏸ Pause</button>
+  <button class="icon-btn danger" id="clearBtn"      onclick="clearLogs()"        style="display:none">🗑 Clear</button>
+  <div class="sep"></div>
+  <!-- Export button + dropdown (always visible when logs are loaded) -->
+  <div class="export-wrap" id="exportWrap" style="display:none; position:relative;">
+    <button class="icon-btn" id="exportBtn" onclick="toggleExportMenu()" style="color:var(--accent);border-color:var(--accent)">💾 Export</button>
+    <div class="export-menu" id="exportMenu">
+      <div class="export-menu-header">Export <span id="exportCount"></span></div>
+      <button class="export-opt" onclick="doExport('txt')">
+        <span class="export-icon">📄</span>
+        <div><strong>Plain Text</strong><div class="export-desc">Terminal-style, easy to share</div></div>
+      </button>
+      <button class="export-opt" onclick="doExport('csv')">
+        <span class="export-icon">📊</span>
+        <div><strong>CSV</strong><div class="export-desc">Open in Excel / Numbers</div></div>
+      </button>
+      <button class="export-opt" onclick="doExport('json')">
+        <span class="export-icon">🗂</span>
+        <div><strong>JSON</strong><div class="export-desc">Re-import into this viewer</div></div>
+      </button>
+      <div class="export-scope">
+        <label><input type="radio" name="exportScope" value="filtered" checked> Filtered view (<span id="exportFilteredCount"></span>)</label>
+        <label><input type="radio" name="exportScope" value="all"> All logs (<span id="exportAllCount"></span>)</label>
+      </div>
+    </div>
+  </div>
+  <div class="stats" id="stats"></div>
+</div>
+
+<!-- File mode -->
+<div id="dropzone">
+  <div class="drop-icon">📂</div>
+  <h2>Drop a log file here</h2>
+  <p>Android: JSON <code style="font-family:monospace;font-size:12px;background:#1c2128;padding:1px 5px;border-radius:3px">.logcat</code> export from Android Studio<br>iOS: text log from <code style="font-family:monospace;font-size:12px;background:#1c2128;padding:1px 5px;border-radius:3px">idevicesyslog -o FILE</code></p>
+  <label for="fileInput">Browse file</label>
+  <input type="file" id="fileInput" accept=".logcat,.json,.log,.txt">
+</div>
+
+<!-- Live mode panel -->
+<div id="livePanel">
+  <div class="live-cards">
+
+    <!-- Android -->
+    <div class="connect-card android">
+      <div class="card-header">
+        <div class="card-title">🤖 Android ADB</div>
+        <span class="status-pill disconnected" id="androidStatus">
+          <span class="status-dot"></span><span id="androidStatusText">Disconnected</span>
+        </span>
+      </div>
+      <p class="card-desc">Streams <code>adb logcat</code> from a connected Android device.</p>
+      <div class="connect-row">
+        <div class="device-picker" id="androidDevicePicker">
+          <button class="device-trigger" id="androidDeviceTrigger" onclick="toggleDevicePicker('android')" disabled>
+            <span class="device-trigger-label" id="androidDeviceLabel">No device detected</span>
+            <span class="device-trigger-caret">▾</span>
+          </button>
+          <div class="device-menu" id="androidDeviceMenu"></div>
+          <input type="hidden" id="androidDeviceSelect" value="">
+        </div>
+        <button class="btn-secondary" onclick="loadAndroidDevices()" title="Refresh device list">↻</button>
+        <button class="btn-primary" id="androidBtn" onclick="connectAndroid()">Connect</button>
+        <button class="btn-secondary" onclick="showSetup('android')">⚙</button>
+      </div>
+      <div class="device-badge" id="androidDevice"></div>
+    </div>
+
+    <!-- iOS -->
+    <div class="connect-card ios">
+      <div class="card-header">
+        <div class="card-title">🍎 iOS syslog</div>
+        <span class="status-pill disconnected" id="iosStatus">
+          <span class="status-dot"></span><span id="iosStatusText">Disconnected</span>
+        </span>
+      </div>
+      <!-- Surfaced when Apple Mobile Device Service is unreachable on Windows
+           (libimobiledevice talks to AMDS on :27015 — without it iOS USB
+           detection fails). Hidden on macOS / Linux and on Windows hosts
+           that already have iTunes / Apple Devices installed. -->
+      <div class="ios-driver-warning" id="iosDriverWarning">
+        <div class="title">⚠ Apple's USB driver isn't installed</div>
+        <div>iOS device detection won't work until you install <strong>Apple Devices</strong> (or iTunes) — they ship the kernel driver and Windows service that <code>idevicesyslog</code> connects to.</div>
+        <div class="actions">
+          <a href="https://apps.microsoft.com/detail/9NP83LWLPZ9K" target="_blank" rel="noopener">Install Apple Devices</a>
+          <button type="button" onclick="checkIosDriverStatus()">Retry</button>
+        </div>
+      </div>
+      <p class="card-desc">Streams <code>idevicesyslog</code> from a connected iOS device.</p>
+      <div class="connect-row">
+        <div class="device-picker" id="iosDevicePicker">
+          <button class="device-trigger" id="iosDeviceTrigger" onclick="toggleDevicePicker('ios')" disabled>
+            <span class="device-trigger-label" id="iosDeviceLabel">No device detected</span>
+            <span class="device-trigger-caret">▾</span>
+          </button>
+          <div class="device-menu" id="iosDeviceMenu"></div>
+          <input type="hidden" id="iosDeviceSelect" value="">
+        </div>
+        <button class="btn-secondary" onclick="loadIosDevices()" title="Refresh device list">↻</button>
+        <button class="btn-primary" id="iosBtn" onclick="connectIos()">Connect</button>
+        <button class="btn-secondary" onclick="showSetup('ios')">⚙</button>
+      </div>
+      <div class="device-badge" id="iosDevice"></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Live status bar (shown above log table when live) -->
+<div id="liveBar">
+  <div class="live-bar-item">
+    <div class="live-bar-platform">🤖 Android</div>
+    <span class="status-pill disconnected" id="liveBarAndroid">
+      <span class="status-dot"></span><span id="liveBarAndroidText">Disconnected</span>
+    </span>
+    <button class="btn-secondary" id="liveBarAndroidBtn" onclick="toggleAndroid()" style="font-size:11px;padding:3px 8px">Connect</button>
+  </div>
+  <div class="sep" style="height:16px"></div>
+  <div class="live-bar-item">
+    <div class="live-bar-platform">🍎 iOS</div>
+    <span class="status-pill disconnected" id="liveBarIos">
+      <span class="status-dot"></span><span id="liveBarIosText">Disconnected</span>
+    </span>
+    <button class="btn-secondary" id="liveBarIosBtn" onclick="toggleIos()" style="font-size:11px;padding:3px 8px">Connect</button>
+  </div>
+</div>
+
+<!-- Loading -->
+<div id="loading"><div class="spinner"></div><span id="loadingText">Parsing…</span></div>
+
+<!-- Log table -->
+<div id="logWrapper">
+  <div id="logTable">
+    <table id="logTableEl">
+      <colgroup id="colgroup">
+        <col style="width:28px">
+        <col style="width:190px">
+        <col style="width:100px">
+        <col style="width:150px">
+        <col style="width:180px">
+        <col style="width:38px">
+        <col>
+      </colgroup>
+      <thead>
+        <tr id="headerRow">
+          <th title="Platform"></th>
+          <th>Timestamp</th>
+          <th>PID-TID</th>
+          <th>Tag</th>
+          <th>App / Device</th>
+          <th>Lvl</th>
+          <th>Message</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Setup modal -->
+<div class="modal-overlay" id="setupModal">
+  <div class="modal">
+    <h2>⚙ Bridge Setup</h2>
+    <div class="modal-tabs">
+      <button class="modal-tab active" id="tabAndroidSetup" onclick="switchSetupTab('android')">🤖 Android</button>
+      <button class="modal-tab"        id="tabIosSetup"     onclick="switchSetupTab('ios')">🍎 iOS</button>
+    </div>
+
+    <!-- Android setup -->
+    <div class="modal-content active" id="setupAndroid">
+      <p>Runs <code>adb logcat</code> on your machine and streams to the browser over WebSocket.</p>
+      <div class="steps">
+        <div class="step"><div class="step-num">1</div><p>Ensure <code>adb</code> is in your PATH and USB debugging is enabled. Test: <code>adb devices</code></p></div>
+        <div class="step"><div class="step-num">2</div><p>Create a venv and install dependency:</p></div>
+      </div>
+      <div class="code-block" id="aInstall">python3 -m venv ~/logcat-venv
+source ~/logcat-venv/bin/activate
+pip install websockets<button class="copy-btn" onclick="copyBlock('aInstall')">Copy</button></div>
+      <div class="steps">
+        <div class="step"><div class="step-num">3</div><p>Download <strong>adb_bridge.py</strong> and run it:</p></div>
+      </div>
+      <div class="code-block" id="aRun">~/logcat-venv/bin/python adb_bridge.py
+# Options: --port 8765  --serial DEVICE_SERIAL<button class="copy-btn" onclick="copyBlock('aRun')">Copy</button></div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="downloadScript('android')">⬇ Download adb_bridge.py</button>
+        <button class="btn-primary" onclick="hideSetup()">Got it</button>
+      </div>
+    </div>
+
+    <!-- iOS setup -->
+    <div class="modal-content" id="setupIos">
+      <p>Runs <code>idevicesyslog</code> on your machine and streams to the browser over WebSocket.</p>
+      <div class="steps">
+        <div class="step"><div class="step-num">1</div><p>Install <code>libimobiledevice</code> if not already: <code>brew install libimobiledevice</code>. Test: <code>idevicesyslog --version</code></p></div>
+        <div class="step"><div class="step-num">2</div><p>Connect your iOS device via USB and trust the computer when prompted.</p></div>
+        <div class="step"><div class="step-num">3</div><p>Install dependency and run the bridge:</p></div>
+      </div>
+      <div class="code-block" id="iInstall">source ~/logcat-venv/bin/activate   # reuse same venv
+pip install websockets               # if not already installed<button class="copy-btn" onclick="copyBlock('iInstall')">Copy</button></div>
+      <div class="code-block" id="iRun">~/logcat-venv/bin/python ios_bridge.py
+# Options: --port 8766  --udid DEVICE_UDID<button class="copy-btn" onclick="copyBlock('iRun')">Copy</button></div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="downloadScript('ios')">⬇ Download ios_bridge.py</button>
+        <button class="btn-primary" onclick="hideSetup()">Got it</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Constants ──
+const LEVELS     = ['VERBOSE','DEBUG','INFO','WARN','ERROR','ASSERT'];
+const LEVEL_CHAR = {VERBOSE:'V',DEBUG:'D',INFO:'I',WARN:'W',ERROR:'E',ASSERT:'A'};
+const enabledLevels   = new Set(LEVELS);
+const enabledPlatforms = new Set(['android','ios']);
+
+// ── State ──
+let currentMode = 'live';
+let allMessages = [], filtered = [];
+let wsAndroid = null, wsIos = null;
+let androidLive = false, iosLive = false;
+let livePaused = false, autoScroll = true;
+let pendingBatch = [], batchTimer = null;
+const PAGE = 500;
+let renderedEnd = 0;
+
+// ── Level toggles ──
+LEVELS.forEach(lvl => {
+  const btn = document.createElement('button');
+  btn.className = 'lvl-btn active'; btn.dataset.lvl = lvl;
+  btn.textContent = LEVEL_CHAR[lvl]; btn.title = lvl;
+  btn.onclick = () => { enabledLevels.has(lvl) ? enabledLevels.delete(lvl) : enabledLevels.add(lvl); btn.classList.toggle('active', enabledLevels.has(lvl)); applyFilters(); };
+  document.getElementById('levelToggles').appendChild(btn);
+});
+
+// ── Platform toggles ──
+[['android','🤖 Android'],['ios','🍎 iOS']].forEach(([plat, label]) => {
+  const btn = document.createElement('button');
+  btn.className = 'plat-btn active'; btn.dataset.plat = plat; btn.textContent = label;
+  btn.onclick = () => { enabledPlatforms.has(plat) ? enabledPlatforms.delete(plat) : enabledPlatforms.add(plat); btn.classList.toggle('active', enabledPlatforms.has(plat)); applyFilters(); };
+  document.getElementById('platToggles').appendChild(btn);
+});
+
+// ── Mode switching ──
+function switchMode(mode) {
+  currentMode = mode;
+  document.getElementById('tabFile').classList.toggle('active', mode === 'file');
+  document.getElementById('tabLive').classList.toggle('active', mode === 'live');
+  ['autoScrollBtn','pauseBtn','clearBtn'].forEach(id => document.getElementById(id).style.display = mode === 'live' ? '' : 'none');
+  if (mode === 'file') {
+    document.getElementById('liveBar').classList.remove('visible');
+    showOnly(allMessages.length ? 'logWrapper' : 'dropzone');
+  } else {
+    refreshLiveView();
+    // Populate device dropdowns from native /devices/* endpoints.
+    loadAndroidDevices();
+    loadIosDevices();
+  }
+}
+
+function _deviceLabel(d) {
+  const name = d.name || d.id || 'unknown';
+  let extra = '';
+  if (d.version)                                   extra = ` (iOS ${d.version})`;
+  else if (d.id && d.id !== name)                  extra = ` (${d.id})`;          // Android: append serial
+  else if (d.status && d.status !== 'device')      extra = ` [${d.status}]`;
+  return name + extra;
+}
+
+function toggleDevicePicker(platform) {
+  const trigger = document.getElementById(platform === 'android' ? 'androidDeviceTrigger' : 'iosDeviceTrigger');
+  const menu    = document.getElementById(platform === 'android' ? 'androidDeviceMenu'    : 'iosDeviceMenu');
+  if (!trigger || !menu || trigger.disabled) return;
+  const opening = !menu.classList.contains('open');
+  // Close any open picker first.
+  document.querySelectorAll('.device-menu.open').forEach(m => m.classList.remove('open'));
+  document.querySelectorAll('.device-trigger.open').forEach(t => t.classList.remove('open'));
+  if (opening) { menu.classList.add('open'); trigger.classList.add('open'); }
+}
+
+document.addEventListener('click', e => {
+  if (e.target.closest('.device-picker')) return;
+  document.querySelectorAll('.device-menu.open').forEach(m => m.classList.remove('open'));
+  document.querySelectorAll('.device-trigger.open').forEach(t => t.classList.remove('open'));
+});
+
+async function loadDevices(platform) {
+  const input   = document.getElementById(platform === 'android' ? 'androidDeviceSelect'  : 'iosDeviceSelect');
+  const trigger = document.getElementById(platform === 'android' ? 'androidDeviceTrigger' : 'iosDeviceTrigger');
+  const label   = document.getElementById(platform === 'android' ? 'androidDeviceLabel'   : 'iosDeviceLabel');
+  const menu    = document.getElementById(platform === 'android' ? 'androidDeviceMenu'    : 'iosDeviceMenu');
+  if (!input || !trigger || !label || !menu) return;
+  const prev = input.value;
+  try {
+    const res = await fetch(`/devices/${platform}`);
+    if (!res.ok) throw new Error(`status ${res.status}`);
+    const data = await res.json();
+    const list = (data && data.devices) || [];
+    menu.innerHTML = '';
+    if (!list.length) {
+      input.value = '';
+      label.textContent = 'No device detected';
+      const empty = document.createElement('div');
+      empty.className = 'device-menu-empty';
+      empty.textContent = 'No device detected';
+      menu.appendChild(empty);
+      trigger.disabled = true;
+      return;
+    }
+    trigger.disabled = false;
+    list.forEach(d => {
+      const item = document.createElement('div');
+      item.className = 'device-menu-item';
+      item.dataset.value = d.id || '';
+      item.textContent = _deviceLabel(d);
+      item.onclick = () => {
+        input.value = d.id || '';
+        label.textContent = item.textContent;
+        Array.from(menu.children).forEach(c => c.classList.remove('selected'));
+        item.classList.add('selected');
+        menu.classList.remove('open');
+        trigger.classList.remove('open');
+      };
+      menu.appendChild(item);
+    });
+    // Pick previous selection if still present, else first device.
+    const restored = list.find(d => d.id === prev) || list[0];
+    input.value = restored.id || '';
+    label.textContent = _deviceLabel(restored);
+    Array.from(menu.children).forEach(c => c.classList.toggle('selected', c.dataset.value === input.value));
+  } catch (e) {
+    console.warn(`[loadDevices ${platform}]`, e);
+    input.value = '';
+    label.textContent = 'Device discovery unavailable';
+    menu.innerHTML = '<div class="device-menu-empty">Device discovery unavailable</div>';
+    trigger.disabled = true;
+  }
+}
+
+function loadAndroidDevices() { return loadDevices('android'); }
+function loadIosDevices()      { checkIosDriverStatus(); return loadDevices('ios'); }
+
+/**
+ * Probe the Rust backend's /ios-driver-status endpoint and toggle the
+ * AMDS-missing banner above the iOS card. The endpoint always returns
+ * `available: true` on macOS / Linux, so the banner never shows there.
+ */
+async function checkIosDriverStatus() {
+  const banner = document.getElementById('iosDriverWarning');
+  if (!banner) return;
+  try {
+    const r = await fetch('/ios-driver-status');
+    const j = await r.json();
+    banner.classList.toggle('visible', j && j.available === false);
+  } catch (e) {
+    // Endpoint missing (older backend) — fail open, hide the banner.
+    banner.classList.remove('visible');
+  }
+}
+
+function refreshLiveView() {
+  if (currentMode !== 'live') return;
+  const anyConnected = androidLive || iosLive;
+  document.getElementById('liveBar').classList.toggle('visible', anyConnected);
+  showOnly(anyConnected ? 'logWrapper' : 'livePanel');
+  updateLiveBar();
+}
+
+function showOnly(id) {
+  ['dropzone','livePanel','loading','logWrapper'].forEach(i => {
+    const el = document.getElementById(i);
+    const show = i === id;
+    el.style.display = show ? '' : 'none';
+    el.classList.toggle('visible', show);
+  });
+}
+
+// ── Column resize ──
+function initResizeHandles() {
+  const ths = document.querySelectorAll('#headerRow th');
+  const cols = document.querySelectorAll('#colgroup col');
+  ths.forEach((th, i) => {
+    if (i === ths.length - 1) return;
+    // NOTE: do NOT set `th.style.position = 'relative'` — it overrides CSS
+    // `position: sticky`. Sticky already establishes a positioning context
+    // for the absolute-positioned `.col-resize-handle` child.
+    const h = document.createElement('div'); h.className = 'col-resize-handle'; th.appendChild(h);
+    let startX, startW;
+    h.addEventListener('mousedown', e => {
+      e.preventDefault(); startX = e.clientX; startW = th.offsetWidth; h.classList.add('dragging');
+      document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none';
+      const move = e => { cols[i].style.width = Math.max(20, startW + e.clientX - startX) + 'px'; };
+      const up = () => { h.classList.remove('dragging'); document.body.style.cursor = document.body.style.userSelect = ''; document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
+      document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+    });
+  });
+}
+// ── Theme ──
+function _syncThemeButton() {
+  const cb = document.getElementById('themeToggle');
+  if (!cb) return;
+  const light = document.documentElement.dataset.theme === 'light';
+  cb.checked = light;
+}
+function toggleTheme() {
+  const html = document.documentElement;
+  const next = html.dataset.theme === 'light' ? 'dark' : 'light';
+  if (next === 'light') html.dataset.theme = 'light';
+  else delete html.dataset.theme;
+  try { localStorage.setItem('applogs-viewer.theme', next); } catch (_) {}
+  _syncThemeButton();
+}
+_syncThemeButton();
+
+// ── Log-table zoom ──
+// Scales only the body of the log table via the --log-font-size CSS
+// variable; chrome (toolbar, tabs) stays at native pixel size so the UI
+// remains usable on small laptop screens. Persisted in localStorage.
+const LOG_FONT_DEFAULT = 12;
+const LOG_FONT_MIN     = 8;
+const LOG_FONT_MAX     = 20;
+
+function _currentLogFontPx() {
+  const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--log-font-size'));
+  return v >= LOG_FONT_MIN ? v : LOG_FONT_DEFAULT;
+}
+
+// delta: -1 = smaller, +1 = larger, 0 = reset to default.
+function setLogZoom(delta) {
+  const next = delta === 0
+    ? LOG_FONT_DEFAULT
+    : Math.min(LOG_FONT_MAX, Math.max(LOG_FONT_MIN, _currentLogFontPx() + delta));
+  document.documentElement.style.setProperty('--log-font-size', next + 'px');
+  try { localStorage.setItem('applogs-viewer.logFontSize', next); } catch (_) {}
+}
+
+// Ctrl+= / Ctrl++ → bigger, Ctrl+- → smaller, Ctrl+0 → reset.
+// Ctrl++ requires Shift, so the actual key code we see is "=".
+window.addEventListener('keydown', (e) => {
+  if (!(e.ctrlKey || e.metaKey)) return;
+  if      (e.key === '=' || e.key === '+') { e.preventDefault(); setLogZoom(+1); }
+  else if (e.key === '-' || e.key === '_') { e.preventDefault(); setLogZoom(-1); }
+  else if (e.key === '0')                  { e.preventDefault(); setLogZoom(0);  }
+});
+
+initResizeHandles();
+
+// Row selection — click toggles selection, persists across filter changes
+// (handler in applyFilters scrolls the selected row back into view).
+document.getElementById('tbody').addEventListener('click', e => {
+  const tr = e.target.closest('tr');
+  if (!tr || !tr._message) return;
+  const tbody = tr.parentElement;
+  if (selectedMessage === tr._message) {
+    selectedMessage = null;
+    tr.classList.remove('selected');
+    return;
+  }
+  // Clear any previously-selected row in the DOM.
+  const prev = tbody.querySelector('tr.selected');
+  if (prev) prev.classList.remove('selected');
+  selectedMessage = tr._message;
+  tr.classList.add('selected');
+  // Stop auto-scroll so the view stays put around the selection.
+  if (autoScroll) {
+    autoScroll = false;
+    document.getElementById('autoScrollBtn').classList.toggle('active', false);
+  }
+});
+
+// Open on the Live Devices tab — most common starting point for new sessions.
+switchMode('live');
+
+// ── File import ──
+const dropzone = document.getElementById('dropzone');
+dropzone.addEventListener('dragover',  e => { e.preventDefault(); dropzone.classList.add('drag-over'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
+dropzone.addEventListener('drop',      e => { e.preventDefault(); dropzone.classList.remove('drag-over'); handleFile(e.dataTransfer.files[0]); });
+document.getElementById('fileInput').addEventListener('change', e => handleFile(e.target.files[0]));
+dropzone.addEventListener('click', e => { if (!['LABEL','INPUT'].includes(e.target.tagName)) document.getElementById('fileInput').click(); });
+
+function handleFile(file) {
+  if (!file) return;
+  showOnly('loading');
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const text = ev.target.result;
+    try {
+      // Try Android JSON first
+      if (text.trimStart().startsWith('{')) {
+        document.getElementById('loadingText').textContent = 'Parsing Android JSON…';
+        const json = JSON.parse(text);
+        allMessages = (json.logcatMessages || []).map(m => ({
+          ts: formatTs(m.header.timestamp), pid: m.header.pid, tid: m.header.tid,
+          tag: m.header.tag || '', app: m.header.applicationId || m.header.processName || '',
+          lvl: m.header.logLevel || 'VERBOSE', msg: m.message || '', platform: 'android'
+        }));
+      } else {
+        // Try iOS syslog text format
+        document.getElementById('loadingText').textContent = 'Parsing iOS syslog…';
+        allMessages = parseIosText(text);
+      }
+      document.getElementById('loadingText').textContent = `Rendering ${allMessages.length.toLocaleString()} lines…`;
+      setTimeout(() => { applyFilters(); showOnly('logWrapper'); updateExportVisibility(); }, 50);
+    } catch(err) {
+      alert('Failed to parse file: ' + err.message);
+      showOnly('dropzone');
+    }
+  };
+  reader.readAsText(file);
+}
+
+// Actual idevicesyslog --no-colors format (no hostname per line):
+//   Apr 28 14:14:39.097636 ProcessName(Subsystem)[PID] <Level>: message
+const IOS_LOG_RE = /^(\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s+([\w.\-\/()]+)\[(\d+)\](?:\s*<(\w+)>)?:\s*(.*)$/;
+const IOS_LEVEL_MAP = { Default:'INFO', Info:'INFO', Debug:'DEBUG', Notice:'INFO', Warning:'WARN', Error:'ERROR', Critical:'ERROR', Fault:'ASSERT' };
+
+function parseIosText(text) {
+  const year = new Date().getFullYear();
+  const msgs = [];
+  for (const raw of text.split('\n')) {
+    const line = raw.replace(/\x1B\[[0-9;]*m/g, '').trim();
+    if (!line || line.startsWith('[')) continue;
+    const m = IOS_LOG_RE.exec(line);
+    if (!m) continue;
+    const [, ts, process, pid, level, msg] = m;
+    msgs.push({ ts: `${year} ${ts}`, pid: parseInt(pid), tid: 0, tag: process, app: '', lvl: IOS_LEVEL_MAP[level] || 'INFO', msg, platform: 'ios' });
+  }
+  return msgs;
+}
+
+function formatTs(ts) {
+  if (!ts) return '';
+  const d = new Date((ts.seconds * 1000) + Math.floor((ts.nanos || 0) / 1e6));
+  const p = (n, w=2) => String(n).padStart(w, '0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(),3)}`;
+}
+
+// ── WebSocket: Android ──
+function connectAndroid() {
+  const sel = document.getElementById('androidDeviceSelect');
+  if (!sel || !sel.value) { setStatus('android','error','No device'); setTimeout(() => setStatus('android','disconnected','Disconnected'), 1500); return; }
+  setStatus('android', 'connecting', 'Connecting…');
+  document.getElementById('androidBtn').disabled = true;
+  wsAndroid = new WebSocket('ws://localhost:8765');
+  wsAndroid.onopen = () => { androidLive = true; setStatus('android','connected','Connected'); setConnectBtn('android', true); refreshLiveView(); };
+  wsAndroid.onmessage = e => handleWsMsg(e, 'android');
+  wsAndroid.onerror   = () => { setStatus('android','error','Error'); resetConnectBtn('android'); androidLive = false; };
+  wsAndroid.onclose   = () => { if (androidLive) setStatus('android','disconnected','Disconnected'); resetConnectBtn('android'); androidLive = false; refreshLiveView(); };
+}
+function disconnectAndroid() {
+  if (wsAndroid) {
+    // User-initiated close: silence onerror/onclose so we do not flash an
+    // "Error" pill from the browser's abnormal-close event.
+    wsAndroid.onerror = null;
+    wsAndroid.onclose = null;
+    wsAndroid.close();
+    wsAndroid = null;
+  }
+  resetConnectBtn('android');
+  androidLive = false;
+  setStatus('android','disconnected','Disconnected');
+  refreshLiveView();
+}
+function toggleAndroid() { androidLive ? disconnectAndroid() : connectAndroid(); }
+
+// ── WebSocket: iOS ──
+function connectIos() {
+  const sel = document.getElementById('iosDeviceSelect');
+  if (!sel || !sel.value) { setStatus('ios','error','No device'); setTimeout(() => setStatus('ios','disconnected','Disconnected'), 1500); return; }
+  setStatus('ios', 'connecting', 'Connecting…');
+  document.getElementById('iosBtn').disabled = true;
+  wsIos = new WebSocket('ws://localhost:8766');
+  wsIos.onopen = () => { iosLive = true; setStatus('ios','connected','Connected'); setConnectBtn('ios', true); refreshLiveView(); };
+  wsIos.onmessage = e => handleWsMsg(e, 'ios');
+  wsIos.onerror   = () => { setStatus('ios','error','Error'); resetConnectBtn('ios'); iosLive = false; };
+  wsIos.onclose   = () => { if (iosLive) setStatus('ios','disconnected','Disconnected'); resetConnectBtn('ios'); iosLive = false; refreshLiveView(); };
+}
+function disconnectIos() {
+  if (wsIos) {
+    wsIos.onerror = null;
+    wsIos.onclose = null;
+    wsIos.close();
+    wsIos = null;
+  }
+  resetConnectBtn('ios');
+  iosLive = false;
+  setStatus('ios','disconnected','Disconnected');
+  refreshLiveView();
+}
+function toggleIos() { iosLive ? disconnectIos() : connectIos(); }
+
+function handleWsMsg(e, platform) {
+  try {
+    const data = JSON.parse(e.data);
+    if (data.type === 'devices') {
+      const id = platform === 'android' ? 'androidDevice' : 'iosDevice';
+      const badge = document.getElementById(id);
+      badge.textContent = data.data.trim(); badge.classList.add('visible');
+      return;
+    }
+    if (data.type === 'log') {
+      data.platform = platform;
+      // Always queue — pause only stops the drain, so resume flushes the
+      // backlog instead of losing frames.
+      pendingBatch.push(data);
+      if (!livePaused && !batchTimer) {
+        // 150ms throttle — accumulates bigger batches so fewer, cheaper DOM updates
+        batchTimer = setTimeout(flushBatch, 150);
+      }
+    }
+  } catch {}
+}
+
+const LIVE_DOM_CAP   = 6000;  // max rows in DOM at once
+const MAX_PER_FLUSH  = 1500;  // max messages processed per flush cycle
+
+function flushBatch() {
+  batchTimer = null;
+  if (livePaused) return;          // hold backlog until resume
+  if (!pendingBatch.length) return;
+
+  // ── Process at most MAX_PER_FLUSH; schedule next tick if more remain ──
+  const toProcess = pendingBatch.splice(0, MAX_PER_FLUSH);
+  if (pendingBatch.length > 0)
+    batchTimer = setTimeout(flushBatch, 150);
+
+  const tbody = document.getElementById('tbody');
+  const frag  = document.createDocumentFragment();
+
+  toProcess.forEach(data => {
+    const m = { ts: data.ts, pid: data.pid, tid: data.tid, tag: data.tag,
+                app: data.app||'', lvl: data.lvl, msg: data.msg, platform: data.platform };
+    allMessages.push(m);
+    // No fade-in animation on live rows — at high volume every row would be
+    // opacity:0 and the table appears blank
+    if (passesFilter(m)) { filtered.push(m); frag.appendChild(buildRow(m, false)); }
+  });
+
+  tbody.appendChild(frag);
+
+  // ── Efficient DOM trim: remove a range in one operation (not row-by-row) ──
+  if (tbody.rows.length > LIVE_DOM_CAP) {
+    const toRemove = tbody.rows.length - LIVE_DOM_CAP;
+    const range = document.createRange();
+    range.setStartBefore(tbody.rows[0]);
+    range.setEndBefore(tbody.rows[toRemove]);
+    range.deleteContents();
+  }
+
+  renderedEnd = filtered.length;
+  updateStats(); updateExportVisibility();
+  if (autoScroll) { const t = document.getElementById('logTable'); t.scrollTop = t.scrollHeight; }
+}
+
+// ── Live controls ──
+function setStatus(platform, state, text) {
+  const ids = platform === 'android'
+    ? { pill: 'androidStatus', txt: 'androidStatusText' }
+    : { pill: 'iosStatus',     txt: 'iosStatusText'     };
+  document.getElementById(ids.pill).className = 'status-pill ' + state;
+  document.getElementById(ids.txt).textContent = text;
+  updateLiveBar();
+}
+
+function updateLiveBar() {
+  // Android bar
+  const aState = androidLive ? 'connected' : 'disconnected';
+  const aText  = androidLive ? 'Connected'  : 'Disconnected';
+  document.getElementById('liveBarAndroid').className = 'status-pill ' + aState;
+  document.getElementById('liveBarAndroidText').textContent = aText;
+  document.getElementById('liveBarAndroidBtn').textContent = androidLive ? 'Disconnect' : 'Connect';
+  // iOS bar
+  const iState = iosLive ? 'connected' : 'disconnected';
+  const iText  = iosLive ? 'Connected'  : 'Disconnected';
+  document.getElementById('liveBarIos').className = 'status-pill ' + iState;
+  document.getElementById('liveBarIosText').textContent = iText;
+  document.getElementById('liveBarIosBtn').textContent = iosLive ? 'Disconnect' : 'Connect';
+}
+
+function setConnectBtn(platform, connected) {
+  const btn = document.getElementById(platform === 'android' ? 'androidBtn' : 'iosBtn');
+  btn.textContent = connected ? 'Disconnect' : 'Connect';
+  btn.disabled = false;
+  btn.classList.toggle('danger', connected);
+  btn.onclick = connected ? (platform === 'android' ? disconnectAndroid : disconnectIos) : (platform === 'android' ? connectAndroid : connectIos);
+}
+
+function resetConnectBtn(platform) {
+  const btn = document.getElementById(platform === 'android' ? 'androidBtn' : 'iosBtn');
+  btn.textContent = 'Connect'; btn.disabled = false; btn.classList.remove('danger');
+  btn.onclick = platform === 'android' ? connectAndroid : connectIos;
+}
+
+function toggleAutoScroll() { autoScroll = !autoScroll; document.getElementById('autoScrollBtn').classList.toggle('active', autoScroll); }
+function togglePause() {
+  livePaused = !livePaused;
+  const btn = document.getElementById('pauseBtn');
+  btn.textContent = livePaused ? '▶ Resume' : '⏸ Pause'; btn.classList.toggle('paused', livePaused);
+  // On resume, drain whatever queued during the pause.
+  if (!livePaused && pendingBatch.length > 0 && !batchTimer) {
+    batchTimer = setTimeout(flushBatch, 0);
+  }
+}
+function clearLogs() { allMessages = []; filtered = []; document.getElementById('tbody').innerHTML = ''; updateStats(); updateExportVisibility(); }
+
+// ── Export ──
+function toggleExportMenu() {
+  const menu = document.getElementById('exportMenu');
+  const open = menu.classList.toggle('open');
+  if (open) {
+    document.getElementById('exportFilteredCount').textContent = filtered.length.toLocaleString() + ' lines';
+    document.getElementById('exportAllCount').textContent = allMessages.length.toLocaleString() + ' lines';
+  }
+}
+document.addEventListener('click', e => {
+  const wrap = document.getElementById('exportWrap');
+  if (wrap && !wrap.contains(e.target)) document.getElementById('exportMenu').classList.remove('open');
+});
+
+function getExportData() {
+  return document.querySelector('input[name="exportScope"]:checked').value === 'filtered' ? filtered : allMessages;
+}
+
+function doExport(fmt) {
+  document.getElementById('exportMenu').classList.remove('open');
+  const data = getExportData();
+  const ts   = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const name = `device_logs_${ts}`;
+  const LVL  = { VERBOSE:'V', DEBUG:'D', INFO:'I', WARN:'W', ERROR:'E', ASSERT:'A' };
+
+  if (fmt === 'txt') {
+    const lines = data.map(m =>
+      `${m.ts}  ${(m.platform==='ios'?'🍎':'🤖')}  ` +
+      `${String(m.pid).padStart(6)}-${String(m.tid||0).padStart(6)}  ` +
+      `${(LVL[m.lvl]||'?')}  ${m.tag.padEnd(32)}  ${m.app.padEnd(28)}  ${m.msg}`
+    );
+    download(name + '.txt', lines.join('\n'), 'text/plain');
+
+  } else if (fmt === 'csv') {
+    const header = 'timestamp,platform,pid,tid,level,tag,app,message';
+    const rows = data.map(m =>
+      [m.ts, m.platform, m.pid, m.tid||0, m.lvl,
+       csvCell(m.tag), csvCell(m.app), csvCell(m.msg)].join(',')
+    );
+    download(name + '.csv', [header, ...rows].join('\n'), 'text/csv');
+
+  } else if (fmt === 'json') {
+    const out = {
+      exportedAt: new Date().toISOString(),
+      source: 'device-log-viewer',
+      totalLines: data.length,
+      messages: data.map(m => ({
+        platform: m.platform, timestamp: m.ts,
+        pid: m.pid, tid: m.tid||0,
+        level: m.lvl, tag: m.tag, app: m.app, message: m.msg
+      }))
+    };
+    download(name + '.json', JSON.stringify(out, null, 2), 'application/json');
+  }
+}
+
+function csvCell(v) {
+  const s = String(v);
+  return (s.includes(',') || s.includes('"') || s.includes('\n'))
+    ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+function download(filename, content, type) {
+  const blob = new Blob([content], { type });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = filename; a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function updateExportVisibility() {
+  document.getElementById('exportWrap').style.display = allMessages.length ? '' : 'none';
+}
+
+// ── Filtering ──
+let searchCaseSensitive = false;
+let searchRegexMode     = false;
+let searchRegex         = null; // compiled regex for current query (null when invalid or plain mode)
+
+function toggleSearchMod(kind) {
+  if (kind === 'case')  { searchCaseSensitive = !searchCaseSensitive; document.getElementById('searchCaseBtn').classList.toggle('active', searchCaseSensitive); }
+  if (kind === 'regex') { searchRegexMode     = !searchRegexMode;     document.getElementById('searchRegexBtn').classList.toggle('active', searchRegexMode); }
+  applyFilters();
+}
+
+function _compileSearchRegex(query) {
+  // Returns RegExp or null. Sets `error` class on regex button when invalid.
+  if (!query) return null;
+  const flags = searchCaseSensitive ? 'g' : 'gi';
+  const btn = document.getElementById('searchRegexBtn');
+  try {
+    let re;
+    if (searchRegexMode) {
+      re = new RegExp(query, flags);
+    } else {
+      const escQ = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      re = new RegExp(escQ, flags);
+    }
+    if (btn) btn.classList.remove('error');
+    return re;
+  } catch (e) {
+    if (btn && searchRegexMode) btn.classList.add('error');
+    return null;
+  }
+}
+
+function msgMatches(msg, query) {
+  if (!query) return true;
+  if (searchRegex) {
+    searchRegex.lastIndex = 0;
+    return searchRegex.test(msg);
+  }
+  // searchRegex compilation failed (invalid user regex) — match nothing.
+  return false;
+}
+
+function passesFilter(m) {
+  if (!enabledLevels.has(m.lvl) || !enabledPlatforms.has(m.platform)) return false;
+  const s = currentSearch;
+  const t = document.getElementById('tagFilter').value;
+  const p = document.getElementById('pidFilter').value;
+  // Tag/PID filters stay simple case-insensitive substrings — matches typical log-tool UX.
+  const tLow = t.toLowerCase();
+  const pLow = p.toLowerCase();
+  if (s && !msgMatches(m.msg, s))                                          return false;
+  if (t && !m.tag.toLowerCase().includes(tLow))                            return false;
+  if (p && !String(m.pid).includes(p) && !m.app.toLowerCase().includes(pLow)) return false;
+  return true;
+}
+
+function applyFilters() {
+  currentSearch = document.getElementById('search').value;
+  searchRegex   = _compileSearchRegex(currentSearch);
+  filtered = allMessages.filter(passesFilter); updateStats();
+  renderedEnd = 0; document.getElementById('tbody').innerHTML = '';
+  renderChunk(0);
+
+  // Preserve user's clicked row across filter changes: render forward chunks
+  // until the selected message is in the DOM, then center it.
+  if (selectedMessage) {
+    const idx = filtered.indexOf(selectedMessage);
+    if (idx >= 0) {
+      // Bound how far we'll render to keep this responsive at high message counts.
+      const RENDER_CAP = 30000;
+      while (renderedEnd <= idx && renderedEnd < filtered.length && renderedEnd < RENDER_CAP) {
+        renderChunk(renderedEnd);
+      }
+      // Defer scroll until layout settles.
+      requestAnimationFrame(() => {
+        const tbody = document.getElementById('tbody');
+        for (const tr of tbody.rows) {
+          if (tr._message === selectedMessage) {
+            tr.scrollIntoView({ block: 'center', behavior: 'auto' });
+            return;
+          }
+        }
+      });
+      return; // skip the default scrollTop=0 below
+    }
+  }
+  document.getElementById('logTable').scrollTop = 0; // explicit reset only on full re-render
+}
+
+function updateStats() { document.getElementById('stats').textContent = `${filtered.length.toLocaleString()} / ${allMessages.length.toLocaleString()} lines`; }
+
+const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+// Highlight occurrences of `query` inside an already-untrusted string.
+// Escapes HTML first, then wraps matches in <mark> using the same compiled
+// regex as `passesFilter` (honors case + regex toggles).
+let currentSearch = '';
+function highlight(s, q) {
+  const e = esc(s);
+  if (!q || !searchRegex) return e;
+  // Use a fresh stateful regex so we can iterate matches against the escaped
+  // string. Cloning preserves source + flags including the `g` flag.
+  const re = new RegExp(searchRegex.source, searchRegex.flags);
+  return e.replace(re, m => `<mark>${m}</mark>`);
+}
+
+let selectedMessage = null;
+
+function buildRow(m, isNew) {
+  const lc   = LEVEL_CHAR[m.lvl] || 'V';
+  const plat = m.platform === 'ios' ? '<span class="plat-badge ios">i</span>' : '<span class="plat-badge android">A</span>';
+  const tr   = document.createElement('tr');
+  tr.className = lc + (isNew ? ' new-row' : '') + (m === selectedMessage ? ' selected' : '');
+  tr._message = m; // keep reference so click handler + scroll-to-selection work after re-render
+  tr.innerHTML =
+    `<td class="plat-cell">${plat}</td>` +
+    `<td class="ts">${esc(m.ts)}</td>` +
+    `<td class="pid">${m.pid}${m.tid ? '-'+m.tid : ''}</td>` +
+    `<td class="tag">${esc(m.tag)}</td>` +
+    `<td class="app">${esc(m.app)}</td>` +
+    `<td><span class="lvl-badge">${lc}</span></td>` +
+    `<td class="msg">${highlight(m.msg, currentSearch)}</td>`;
+  return tr;
+}
+
+function renderChunk(start) {
+  const end = Math.min(start + PAGE, filtered.length);
+  const frag = document.createDocumentFragment();
+  for (let i = start; i < end; i++) frag.appendChild(buildRow(filtered[i], false));
+  document.getElementById('tbody').appendChild(frag);
+  renderedEnd = end;
+  // NOTE: scroll reset intentionally removed — applyFilters handles it explicitly
+}
+
+document.getElementById('logTable').addEventListener('scroll', function() {
+  if (this.scrollTop + this.clientHeight >= this.scrollHeight - 200 && renderedEnd < filtered.length) renderChunk(renderedEnd);
+});
+
+// ── Setup modal ──
+function showSetup(platform) { document.getElementById('setupModal').classList.add('visible'); switchSetupTab(platform); }
+function hideSetup()         { document.getElementById('setupModal').classList.remove('visible'); }
+function switchSetupTab(t) {
+  ['android','ios'].forEach(p => {
+    document.getElementById('tabAndroidSetup'.replace('android', p === 'android' ? 'android' : 'ios')).classList.toggle('active', p === t);
+    document.getElementById('setup' + p.charAt(0).toUpperCase() + p.slice(1)).classList.toggle('active', p === t);
+  });
+  // fix the IDs manually
+  document.getElementById('tabAndroidSetup').classList.toggle('active', t === 'android');
+  document.getElementById('tabIosSetup').classList.toggle('active', t === 'ios');
+  document.getElementById('setupAndroid').classList.toggle('active', t === 'android');
+  document.getElementById('setupIos').classList.toggle('active', t === 'ios');
+}
+document.getElementById('setupModal').addEventListener('click', e => { if (e.target === document.getElementById('setupModal')) hideSetup(); });
+
+function copyBlock(id) {
+  const el = document.getElementById(id);
+  const text = el.childNodes[0].textContent.trim();
+  navigator.clipboard.writeText(text).then(() => { const b = el.querySelector('.copy-btn'); const o = b.textContent; b.textContent = '✓ Copied'; setTimeout(() => b.textContent = o, 1500); });
+}
+
+// ── Script downloads ──
+function downloadScript(platform) {
+  const content = platform === 'android' ? getAdbBridgeScript() : getIosBridgeScript();
+  const name    = platform === 'android' ? 'adb_bridge.py' : 'ios_bridge.py';
+  const blob = new Blob([content], { type: 'text/plain' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); URL.revokeObjectURL(a.href);
+}
+
+function getAdbBridgeScript() {
+return `#!/usr/bin/env python3
+"""
+adb_bridge.py - WebSocket bridge for log/viewer (Android)
+Requirements: pip install websockets
+Usage: python adb_bridge.py [--port 8765] [--serial DEVICE_SERIAL]
+"""
+import asyncio, subprocess, json, re, argparse, sys, time
+from functools import partial
+try:
+    import websockets
+except ImportError:
+    print("Run: pip install websockets"); sys.exit(1)
+
+# Preserve UTF-8 (emoji, Unicode) in WebSocket frames.
+dumps = partial(json.dumps, ensure_ascii=False)
+
+LEVEL_MAP = {'V':'VERBOSE','D':'DEBUG','I':'INFO','W':'WARN','E':'ERROR','A':'ASSERT'}
+LOG_RE = re.compile(r'^(\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d+)\\s+(\\d+)\\s+(\\d+)\\s+([VDIWEA])\\s+(.*?)\\s*:\\s*(.*)$')
+
+# PID -> package cache, refreshed via 'adb shell ps' every 5s on miss.
+_PID_MAP, _PID_LAST, _PID_INT = {}, 0.0, 5.0
+def _refresh_pid_map(serial=None):
+    global _PID_MAP, _PID_LAST
+    cmd = ['adb'] + (['-s', serial] if serial else []) + ['shell','ps','-A','-o','PID=,NAME=']
+    try: out = subprocess.run(cmd, capture_output=True, text=True, timeout=4).stdout
+    except Exception: _PID_LAST = time.monotonic(); return
+    new = {}
+    for line in out.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) == 2 and parts[0].isdigit(): new[parts[0]] = parts[1]
+    if new: _PID_MAP = new
+    _PID_LAST = time.monotonic()
+def _resolve_app(pid_str, serial=None):
+    if pid_str in _PID_MAP: return _PID_MAP[pid_str]
+    if time.monotonic() - _PID_LAST >= _PID_INT: _refresh_pid_map(serial)
+    return _PID_MAP.get(pid_str, '')
+
+def get_devices():
+    try: return subprocess.run(['adb','devices'], capture_output=True, text=True, timeout=5).stdout.strip()
+    except FileNotFoundError: return "adb not found - check your PATH"
+
+async def handler(ws, args):
+    print(f"[adb] client connected")
+    await ws.send(dumps({'type':'devices','data':get_devices()}))
+    cmd = ['adb'] + (['-s', args.serial] if args.serial else []) + ['logcat','-v','year,threadtime','-T','500']
+    print(f"[adb] {' '.join(cmd)}")
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+    try:
+        for raw in proc.stdout:
+            m = LOG_RE.match(raw.rstrip())
+            if not m: continue
+            ts, pid, tid, lvl, tag, msg = m.groups()
+            try: await ws.send(dumps({'type':'log','ts':ts,'pid':int(pid),'tid':int(tid),'lvl':LEVEL_MAP.get(lvl,'VERBOSE'),'tag':tag.strip(),'app':_resolve_app(pid, args.serial),'msg':msg}))
+            except websockets.exceptions.ConnectionClosed: break
+    finally: proc.terminate(); print("[adb] client disconnected")
+
+async def main(args):
+    print(f"[adb] ws://localhost:{args.port}  Ctrl-C to stop")
+    async with websockets.serve(lambda ws: handler(ws, args), 'localhost', args.port):
+        await asyncio.Future()
+
+if __name__ == '__main__':
+    p = argparse.ArgumentParser()
+    p.add_argument('--port', type=int, default=8765)
+    p.add_argument('--serial', type=str, default=None)
+    try: asyncio.run(main(p.parse_args()))
+    except KeyboardInterrupt: print("\\n[adb] stopped.")
+`;
+}
+
+function getIosBridgeScript() {
+return `#!/usr/bin/env python3
+"""
+ios_bridge.py - WebSocket bridge for log/viewer (iOS)
+Requirements: pip install websockets  +  brew install libimobiledevice
+Usage: python ios_bridge.py [--port 8766] [--udid DEVICE_UDID]
+"""
+import asyncio, subprocess, json, re, argparse, sys
+from datetime import datetime
+from functools import partial
+try:
+    import websockets
+except ImportError:
+    print("Run: pip install websockets"); sys.exit(1)
+
+# Preserve UTF-8 (emoji, Unicode) in WebSocket frames.
+dumps = partial(json.dumps, ensure_ascii=False)
+
+LEVEL_MAP = {'Default':'INFO','Info':'INFO','Debug':'DEBUG','Notice':'INFO','Warning':'WARN','Error':'ERROR','Critical':'ERROR','Fault':'ASSERT'}
+ANSI_RE   = re.compile(r'\\x1B(?:[@-Z\\\\-_]|\\[[0-?]*[ -/]*[@-~])')
+# Apr 28 14:14:39.097636 ProcessName(Subsystem)[PID] <Level>: message
+LOG_RE = re.compile(r'^(\\w{3}\\s+\\d{1,2}\\s+\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?)\\s+(.+?)(?:\\(([^)]*)\\))?\\[(\\d+)\\](?:\\s*<(\\w+)>)?:\\s*(.*)$')
+
+def get_device_info(udid=None):
+    try:
+        cmd = ['ideviceinfo'] + (['-u', udid] if udid else []) + ['-k','DeviceName']
+        name = subprocess.run(cmd, capture_output=True, text=True, timeout=5).stdout.strip()
+        cmd2 = ['ideviceinfo'] + (['-u', udid] if udid else []) + ['-k','ProductType','-k','ProductVersion']
+        info = subprocess.run(cmd2, capture_output=True, text=True, timeout=5).stdout.strip()
+        return f"{name}\\n{info}" if name else "iOS device connected"
+    except: return "iOS device (ideviceinfo unavailable)"
+
+async def _drain_stderr(stderr, ws):
+    while True:
+        line = await stderr.readline()
+        if not line: return
+        text = line.decode('utf-8', errors='replace').rstrip()
+        if not text: continue
+        print(f"[ios][stderr] {text}")
+        try: await ws.send(dumps({'type':'error','data':text}))
+        except websockets.exceptions.ConnectionClosed: return
+
+async def handler(ws, args):
+    print(f"[ios] client connected")
+    await ws.send(dumps({'type':'devices','data':get_device_info(args.udid)}))
+    cmd = ['idevicesyslog','--no-colors'] + (['-u', args.udid] if args.udid else [])
+    print(f"[ios] {' '.join(cmd)}")
+    try:
+        proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    except FileNotFoundError:
+        await ws.send(dumps({'type':'devices','data':'idevicesyslog not found - brew install libimobiledevice'})); return
+    stderr_task = asyncio.create_task(_drain_stderr(proc.stderr, ws))
+    year = datetime.now().year
+    try:
+        while True:
+            raw = await proc.stdout.readline()
+            if not raw: break
+            line = ANSI_RE.sub('', raw.decode('utf-8', errors='replace').rstrip('\\n'))
+            if not line: continue
+            if line.startswith('[') and line.endswith(']'):
+                try: await ws.send(dumps({'type':'devices','data':line[1:-1]}))
+                except websockets.exceptions.ConnectionClosed: break
+                continue
+            m = LOG_RE.match(line)
+            if not m: continue
+            ts, process, subsystem, pid, level, msg = m.groups()
+            tag = f'{process}({subsystem})' if subsystem else process
+            try: await ws.send(dumps({'type':'log','ts':f'{year} {ts}','pid':int(pid),'tid':0,'lvl':LEVEL_MAP.get(level or 'Default','INFO'),'tag':tag,'app':subsystem or '','msg':msg}))
+            except websockets.exceptions.ConnectionClosed: break
+    finally:
+        stderr_task.cancel()
+        if proc.returncode is None:
+            proc.terminate()
+            try: await asyncio.wait_for(proc.wait(), timeout=2)
+            except asyncio.TimeoutError: proc.kill(); await proc.wait()
+        print("[ios] client disconnected")
+
+async def main(args):
+    print(f"[ios] ws://localhost:{args.port}  Ctrl-C to stop")
+    async with websockets.serve(lambda ws: handler(ws, args), 'localhost', args.port):
+        await asyncio.Future()
+
+if __name__ == '__main__':
+    p = argparse.ArgumentParser()
+    p.add_argument('--port', type=int, default=8766)
+    p.add_argument('--udid', type=str, default=None)
+    try: asyncio.run(main(p.parse_args()))
+    except KeyboardInterrupt: print("\\n[ios] stopped.")
+`;
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capabilities for the main AppLogsViewer window. The frontend talks to the Rust host exclusively over HTTP/WebSocket (axum on :8780, :8765, :8766) — no Tauri IPC commands. Subprocess spawning (adb, idevicesyslog) runs host-side via tokio::process::Command, so no shell plugin or permission is needed.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    "core:webview:default",
+    "core:event:default"
+  ]
+}
