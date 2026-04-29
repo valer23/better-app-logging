@@ -208,9 +208,7 @@ src-tauri/
     ├── frame.rs                # serde structs (LogFrame, DevicesFrame, ErrorFrame)
     ├── parser.rs               # IOS_RE / ANDROID_RE / level maps
     ├── pid_map.rs              # Android PID→package mapping
-    ├── store.rs                # in-memory log store + native search
     ├── tooling.rs              # vendor-tooling resolution
-    ├── search_shim.js          # JS shim appended to served HTML
     └── bridge/                 # ios.rs, android.rs, mod.rs
 ```
 
