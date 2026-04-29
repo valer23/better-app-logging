@@ -79,11 +79,12 @@ Avoid suggestions that:
 
 [ignore]
 # Don't burn tokens reviewing build outputs, vendored binaries, or generated bindings.
+# Cargo.lock is intentionally NOT ignored — committed lockfile + no dependency-audit
+# step in CI means we want Qodo to flag unexpected resolution shifts.
 glob = [
   "src-tauri/target/**",
   "src-tauri/vendor/**",
   "src-tauri/gen/**",
-  "src-tauri/Cargo.lock",
   "src-tauri/icons/**",
   "**/*.png",
   "**/*.ico",
