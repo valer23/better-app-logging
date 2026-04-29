@@ -1,0 +1,102 @@
+# Qodo Merge (PR-Agent) configuration.
+# Docs: https://qodo-merge-docs.qodo.ai/usage-guide/configuration_options/
+#
+# Stacked on top of: GitHub Actions CI (.github/workflows/ci.yml),
+# GitGuardian, and on-demand code-reviewer subagents.
+
+[config]
+# Use the strongest reasoning model available; fall back gracefully.
+model = "gpt-5"
+fallback_models = ["gpt-4.1", "claude-3-7-sonnet-20250219"]
+# Verbose 0 = terse output. We prefer concise PR comments.
+verbosity_level = 0
+# Publish reviews as PR comments (default).
+publish_output = true
+# Skip the marketing footer Qodo appends to every comment.
+ai_disclaimer_title = ""
+ai_disclaimer = ""
+
+[pr_reviewer]
+# Auto-review when a PR is opened or marked ready for review.
+require_score_review = true
+require_tests_review = true
+require_estimate_effort_to_review = true
+require_can_be_split_review = true
+require_security_review = true
+# Don't auto-add labels (we manage them manually).
+enable_review_labels_security = false
+enable_review_labels_effort = false
+# Focus the review checklist on what actually matters here.
+extra_instructions = """
+Repo conventions:
+- Rust 2021 edition, fmt + clippy enforced via CI (.github/workflows/ci.yml).
+- Single-binary Tauri v2 host (src-tauri/) + standalone HTML viewer (viewer/).
+- No separate frontend build step — viewer is embedded via include_str! at compile time.
+- Bundled adb + libimobiledevice tooling — never add a runtime dependency on system PATH for these.
+- Loopback-only network binds (127.0.0.1) on ports 8780/8765/8766. Never expose to non-loopback.
+- WebSocket Origin allowlist + CORS allowlist must stay tight.
+
+Flag with HIGH severity:
+- Any non-loopback bind, broadened Origin/CORS allowlist, or removed CSP.
+- Subprocess args built from user input without validation (UDID, search query, etc.).
+- innerHTML / outerHTML writes of log-derived (device-controlled) content.
+- Reintroduced LogStore writes without consumers — H8 ripped that out, do not bring it back.
+- Blocking I/O inside async (std::process::Command::output, fs reads) outside spawn_blocking.
+- Comment rot — references to deleted files (launcher.py, ios_bridge.py, search_shim.js, store.rs).
+
+Skip nitpicks on: doc comments, README copy edits, formatting (handled by cargo fmt CI).
+"""
+
+[pr_description]
+publish_description_as_comment = false
+add_original_user_description = true
+keep_original_user_title = true
+generate_ai_title = false
+extra_instructions = """
+PR descriptions in this repo follow the pattern from PR #1 / #2:
+- Short Summary
+- Bulleted Changes (per file or per topic)
+- Test plan as a checklist
+Don't rewrite well-formed descriptions. Only fill in missing sections.
+"""
+
+[pr_code_suggestions]
+# Suggestions are valuable but never auto-applied here.
+commitable_code_suggestions = false
+num_code_suggestions_per_chunk = 3
+extra_instructions = """
+Prefer suggestions that:
+- Tighten security boundaries (validation, allowlist, CSP).
+- Remove dead code or stale doc comments.
+- Replace blocking calls inside async with spawn_blocking.
+- Add ring-buffer caps on unbounded in-memory growth.
+
+Avoid suggestions that:
+- Reintroduce the native-search path (search_shim, /search route, store::search/scan).
+- Loosen CORS, Origin, or CSP allowlists.
+- Replace cargo fmt-blessed formatting with stylistic alternatives.
+"""
+
+[ignore]
+# Don't burn tokens reviewing build outputs, vendored binaries, or generated bindings.
+glob = [
+  "src-tauri/target/**",
+  "src-tauri/vendor/**",
+  "src-tauri/gen/**",
+  "src-tauri/Cargo.lock",
+  "src-tauri/icons/**",
+  "**/*.png",
+  "**/*.ico",
+  "**/*.icns",
+  "**/*.dmg",
+  "**/*.exe",
+]
+
+[github_app]
+# Auto-actions on PR events. Add 'review' so every PR gets one without manual /review.
+pr_commands = [
+  "/describe",
+  "/review",
+]
+# Run /improve only on demand (cost-conscious; we already have CI + Claude reviewers).
+push_commands = []
