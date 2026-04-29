@@ -10,6 +10,19 @@
 #
 # Run on a Homebrew-equipped Apple Silicon Mac before `bash build-tauri.sh`.
 # Re-run whenever you bump libimobiledevice / android-platform-tools versions.
+#
+# Code signing:
+#   By default the bundled binaries are re-signed ad-hoc (`-`), which is
+#   adequate for local/dev builds but is flagged by Gatekeeper on systems
+#   with strict notarization policy and raises red flags in enterprise
+#   environments. To produce a Developer ID-signed drop, export:
+#
+#     export APPLE_SIGNING_IDENTITY="Developer ID Application: Bragi GmbH (XXXXXXXXXX)"
+#
+#   before running this script. When set, the script signs with the hardened
+#   runtime (`--options runtime`) and a secure timestamp (`--timestamp`),
+#   which are required for notarization. See `src-tauri/README.md#code-signing`
+#   for the full signing/notarization workflow.
 
 set -euo pipefail
 
@@ -110,12 +123,24 @@ for f in "$VENDOR"/*; do
 done
 
 # ──────────────────────────────────────────────────────────────────────────
-# 4. Re-codesign (ad-hoc) each modified file. Required after install_name_tool.
+# 4. Re-codesign each modified file. Required after install_name_tool.
+#    Defaults to ad-hoc (`-`); set APPLE_SIGNING_IDENTITY to a Developer ID
+#    string to produce a notarization-ready signature with the hardened
+#    runtime + secure timestamp. Those flags are NOT compatible with the
+#    ad-hoc identity on some macOS versions, so they are only added when a
+#    real identity is configured.
 # ──────────────────────────────────────────────────────────────────────────
-echo "[sign] ad-hoc resigning..."
+SIGN_IDENTITY="${APPLE_SIGNING_IDENTITY:--}"
+SIGN_FLAGS=(--force --sign "$SIGN_IDENTITY")
+if [ "$SIGN_IDENTITY" != "-" ]; then
+  echo "[sign] resigning with Developer ID: $SIGN_IDENTITY"
+  SIGN_FLAGS+=(--options runtime --timestamp)
+else
+  echo "[sign] ad-hoc resigning (set APPLE_SIGNING_IDENTITY for Developer ID)..."
+fi
 for f in "$VENDOR"/*; do
   [ -f "$f" ] || continue
-  codesign --force --sign - "$f" 2>/dev/null || echo "[warn] codesign failed for $f"
+  codesign "${SIGN_FLAGS[@]}" "$f" 2>/dev/null || echo "[warn] codesign failed for $f"
 done
 
 echo
