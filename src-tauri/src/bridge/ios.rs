@@ -1,6 +1,5 @@
 //! iOS bridge — spawns `idevicesyslog --no-colors`, parses each line into
-//! a `Frame::Log`, broadcasts JSON to WS subscribers. Mirrors
-//! `launcher.py::ios_handler` (lines 142-258).
+//! a `Frame::Log`, broadcasts JSON to WS subscribers.
 //!
 //! Auto-respawns on subprocess exit (2 s backoff) so unplugging + replugging
 //! the iPhone resumes streaming without restarting the app.
@@ -97,8 +96,8 @@ async fn run_once(tx: &broadcast::Sender<String>, store: &LogStore) -> Result<()
             app,
             msg: msg.to_string(),
         };
-        store.push(log_frame.clone()).await;
-        push(tx, &Frame::Log(log_frame));
+        push(tx, &Frame::Log(log_frame.clone()));
+        store.push(log_frame).await;
     }
 
     let status = child.wait().await.map_err(|e| e.to_string())?;

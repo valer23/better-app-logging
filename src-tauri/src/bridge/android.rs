@@ -1,9 +1,8 @@
 //! Android bridge — spawns `adb logcat -v year,threadtime -T 500`,
 //! parses each line into a `Frame::Log`, broadcasts JSON to WS subscribers.
 //!
-//! Mirrors `launcher.py::android_handler` (lines 99-130). The `app` field
-//! is filled from a PID → package map maintained by `pid_map.rs`
-//! (`adb shell ps -A` polled every 5 s).
+//! The `app` field is filled from a PID → package map maintained by
+//! `pid_map.rs` (`adb shell ps -A` polled every 5 s).
 //!
 //! Auto-respawns on subprocess exit (2 s backoff).
 
@@ -100,8 +99,8 @@ async fn run_once(
             app,
             msg: msg.to_string(),
         };
-        store.push(log_frame.clone()).await;
-        push(tx, &Frame::Log(log_frame));
+        push(tx, &Frame::Log(log_frame.clone()));
+        store.push(log_frame).await;
     }
 
     let status = child.wait().await.map_err(|e| e.to_string())?;
