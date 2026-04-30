@@ -893,7 +893,7 @@ function connectAndroid() {
   wsAndroid.onopen = () => { androidLive = true; setStatus('android','connected','Connected'); setConnectBtn('android', true); refreshLiveView(); };
   wsAndroid.onmessage = e => handleWsMsg(e, 'android');
   wsAndroid.onerror   = () => { setStatus('android','error','Error'); resetConnectBtn('android'); androidLive = false; };
-  wsAndroid.onclose   = () => { if (androidLive) setStatus('android','disconnected','Disconnected'); resetConnectBtn('android'); androidLive = false; refreshLiveView(); };
+  wsAndroid.onclose   = () => { if (androidLive) setStatus('android','disconnected','Disconnected'); resetConnectBtn('android'); androidLive = false; clearDeviceBadge('android'); refreshLiveView(); };
 }
 function disconnectAndroid() {
   if (wsAndroid) {
@@ -922,7 +922,7 @@ function connectIos() {
   wsIos.onopen = () => { iosLive = true; setStatus('ios','connected','Connected'); setConnectBtn('ios', true); refreshLiveView(); };
   wsIos.onmessage = e => handleWsMsg(e, 'ios');
   wsIos.onerror   = () => { setStatus('ios','error','Error'); resetConnectBtn('ios'); iosLive = false; };
-  wsIos.onclose   = () => { if (iosLive) setStatus('ios','disconnected','Disconnected'); resetConnectBtn('ios'); iosLive = false; refreshLiveView(); };
+  wsIos.onclose   = () => { if (iosLive) setStatus('ios','disconnected','Disconnected'); resetConnectBtn('ios'); iosLive = false; clearDeviceBadge('ios'); refreshLiveView(); };
 }
 function disconnectIos() {
   if (wsIos) {
