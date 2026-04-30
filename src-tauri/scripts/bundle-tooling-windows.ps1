@@ -51,16 +51,17 @@ New-Item -ItemType Directory -Path $staging | Out-Null
 #      before merging. The whole point is that a single host being MITM'd
 #      cannot poison the pin.
 
-# Google does not publish a checksum for platform-tools-latest-windows.zip,
-# so we pin to the versioned URL (which Google serves as an immutable artifact
-# alongside the rolling 'latest' alias) and verify against a hash recorded in
-# this repo. Bump both together; see header comment for procedure.
-$script:AdbZipUrl    = 'https://dl.google.com/android/repository/platform-tools_r35.0.2-windows.zip'
+# Google does not host versioned ZIPs at predictable URLs — only the rolling
+# `platform-tools-latest-windows.zip` URL works (versioned URLs all 404).
+# Trade-off: when Google rotates `latest`, the recorded SHA-256 below stops
+# matching and the build fails loud. Recover via the
+# APPLOGS_BUNDLER_TRUST_ON_FIRST_USE bootstrap procedure (see header comment).
+$script:AdbZipUrl    = 'https://dl.google.com/android/repository/platform-tools-latest-windows.zip'
 $script:AdbZipSha256 = '0000000000000000000000000000000000000000000000000000000000000000'  # set on first pin via APPLOGS_BUNDLER_TRUST_ON_FIRST_USE
 
 # Pin to a concrete release tag (NOT 'latest') so the asset URL is stable and
 # the recorded SHA-256 below means something. Bump the tag + hash together.
-$script:ImdReleaseTag   = 'v2024.10.07-DCFAA63'
+$script:ImdReleaseTag   = 'v20260426-74585f8'
 $script:ImdAssetPattern = '^libimobile-suite-.*_w64\.zip$'
 $script:ImdZipSha256    = '0000000000000000000000000000000000000000000000000000000000000000'  # set on first pin via APPLOGS_BUNDLER_TRUST_ON_FIRST_USE
 
