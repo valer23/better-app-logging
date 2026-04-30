@@ -72,11 +72,12 @@ jobs:
           APPLOGS_BUNDLER_TRUST_ON_FIRST_USE: ${{ vars.BUNDLER_TRUST_ON_FIRST_USE || '0' }}
         with:
           projectPath: src-tauri
-          # tauri-action only creates a Release when the workflow was
-          # triggered by a tag. workflow_dispatch runs upload artifacts to
-          # the run page only.
-          tagName: ${{ github.ref_name }}
-          releaseName: 'AppLogsViewer ${{ github.ref_name }}'
+          # Publish a Release only on tag pushes. workflow_dispatch runs
+          # leave tagName/releaseName empty, which tells tauri-action to
+          # build artifacts (available via the action's outputs + run page)
+          # without creating or updating a Release.
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('AppLogsViewer {0}', github.ref_name) || '' }}
           releaseBody: |
             See [README](https://github.com/${{ github.repository }}#install) for install instructions.
 
