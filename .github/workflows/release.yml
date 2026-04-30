@@ -1,0 +1,92 @@
+name: Release
+
+# Trigger:
+#   - tag push matching v* (e.g. `git tag v1.0.1 && git push --tags`)
+#   - manual workflow_dispatch (does NOT publish a release; uploads as run artifacts only)
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+# Required for tauri-action to create / update a GitHub Release.
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.os-label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macos-14: GitHub-hosted M1 runner, free for public repos.
+          # Builds aarch64-apple-darwin → .app + .dmg.
+          - platform: macos-14
+            os-label: macOS (Apple Silicon)
+            pre-build: bash scripts/bundle-tooling-macos.sh
+            install-deps: |
+              brew install --cask android-platform-tools
+              brew install libimobiledevice
+
+          # windows-latest: GitHub-hosted Windows x64, free for public repos.
+          # Builds x86_64-pc-windows-msvc → .exe (NSIS installer).
+          - platform: windows-latest
+            os-label: Windows (x64)
+            pre-build: powershell -ExecutionPolicy Bypass -File scripts/bundle-tooling-windows.ps1
+            install-deps: ''
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install platform tooling
+        if: matrix.install-deps != ''
+        run: ${{ matrix.install-deps }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Build + publish via tauri-action
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # First Windows build will fail because SHA-256 hashes for the
+          # downloaded adb / libimobiledevice archives ship as placeholder
+          # zeros (see src-tauri/scripts/bundle-tooling-windows.ps1).
+          # Bootstrap procedure (one-time):
+          #   1. Set the repo variable BUNDLER_TRUST_ON_FIRST_USE to '1'
+          #      (Settings → Secrets and variables → Actions → Variables).
+          #   2. Push a release tag — the script prints the computed hashes
+          #      via Write-Warning in the job log.
+          #   3. Copy the printed hashes into the script's $script:AdbZipSha256
+          #      / $script:ImdZipSha256 vars, commit, push.
+          #   4. Unset the repo variable. Future builds verify against the
+          #      committed hashes.
+          APPLOGS_BUNDLER_TRUST_ON_FIRST_USE: ${{ vars.BUNDLER_TRUST_ON_FIRST_USE || '0' }}
+        with:
+          projectPath: src-tauri
+          # tauri-action only creates a Release when the workflow was
+          # triggered by a tag. workflow_dispatch runs upload artifacts to
+          # the run page only.
+          tagName: ${{ github.ref_name }}
+          releaseName: 'AppLogsViewer ${{ github.ref_name }}'
+          releaseBody: |
+            See [README](https://github.com/${{ github.repository }}#install) for install instructions.
+
+            **First launch (unsigned build):**
+            - macOS: right-click `.app` → **Open** → **Open** to bypass Gatekeeper once.
+            - Windows: SmartScreen warns → **More info** → **Run anyway** once.
+
+            iOS support on Windows additionally requires [Apple Devices](https://apps.microsoft.com/detail/9NP83LWLPZ9K) from the Microsoft Store.
+          releaseDraft: false
+          prerelease: false
+          # Run the vendor-tooling bundler before `cargo tauri build`.
+          # Skipped automatically when not needed (vendor/ already populated).
+          preBuildCommand: ${{ matrix.pre-build }}
