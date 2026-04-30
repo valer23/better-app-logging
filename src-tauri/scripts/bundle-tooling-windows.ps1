@@ -57,13 +57,13 @@ New-Item -ItemType Directory -Path $staging | Out-Null
 # matching and the build fails loud. Recover via the
 # APPLOGS_BUNDLER_TRUST_ON_FIRST_USE bootstrap procedure (see header comment).
 $script:AdbZipUrl    = 'https://dl.google.com/android/repository/platform-tools-latest-windows.zip'
-$script:AdbZipSha256 = '0000000000000000000000000000000000000000000000000000000000000000'  # set on first pin via APPLOGS_BUNDLER_TRUST_ON_FIRST_USE
+$script:AdbZipSha256 = '4fe305812db074cea32903a489d061eb4454cbc90a49e8fea677f4b7af764918'  # platform-tools (rolling 'latest' as of 2026-04-30)
 
 # Pin to a concrete release tag (NOT 'latest') so the asset URL is stable and
 # the recorded SHA-256 below means something. Bump the tag + hash together.
 $script:ImdReleaseTag   = 'v20260426-74585f8'
 $script:ImdAssetPattern = '^libimobile-suite-.*_w64\.zip$'
-$script:ImdZipSha256    = '0000000000000000000000000000000000000000000000000000000000000000'  # set on first pin via APPLOGS_BUNDLER_TRUST_ON_FIRST_USE
+$script:ImdZipSha256    = '2985634c50c62b36630d610b6acf3caf5b7f1e6b7480a8877a936965f9810eac'  # libimobile-suite-latest_w64.zip from v20260426-74585f8 (10999780 bytes)
 
 function Assert-Sha256 {
     # Verifies that $Path hashes to $Expected (case-insensitive). Three modes:
