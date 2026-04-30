@@ -26,6 +26,18 @@ To enable Developer ID / EV signing, see [Code signing](#code-signing) below.
   - Android: `adb` on `PATH` (Homebrew: `brew install --cask android-platform-tools`)
   - iOS: `idevicesyslog` on `PATH` (Homebrew: `brew install libimobiledevice`)
 
+> **iOS 17+ live-stream stalls.** `idevicesyslog` (libimobiledevice 1.4.0)
+> uses the legacy `com.apple.syslog_relay` service for live mode. On iOS
+> 17+ that channel can go silent — connection succeeds, `[connected:UDID]`
+> is emitted, then `syslogd` stops feeding the relay. The bridge in
+> [`src/bridge/ios.rs`](src/bridge/ios.rs) arms an 8 s post-connect
+> watchdog (`STREAM_STALL_TIMEOUT_SECS`) and broadcasts an `ErrorFrame`
+> with recovery hints when no log line arrives. Common fixes: reboot the
+> iPhone, `sudo killall usbmuxd` on the Mac, or
+> `idevicepair unpair && idevicepair pair`. Longer-term we may migrate
+> to `pymobiledevice3` (RemoteServiceDiscovery path) — adopt only if the
+> regression keeps recurring.
+
 ## Run from source
 
 ```bash
