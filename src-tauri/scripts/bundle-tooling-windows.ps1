@@ -51,25 +51,31 @@ New-Item -ItemType Directory -Path $staging | Out-Null
 #      before merging. The whole point is that a single host being MITM'd
 #      cannot poison the pin.
 
-# Google does not publish a checksum for platform-tools-latest-windows.zip,
-# so we pin to the versioned URL (which Google serves as an immutable artifact
-# alongside the rolling 'latest' alias) and verify against a hash recorded in
-# this repo. Bump both together; see header comment for procedure.
-$script:AdbZipUrl    = 'https://dl.google.com/android/repository/platform-tools_r35.0.2-windows.zip'
-$script:AdbZipSha256 = '0000000000000000000000000000000000000000000000000000000000000000'  # set on first pin via APPLOGS_BUNDLER_TRUST_ON_FIRST_USE
+# Google does not host versioned ZIPs at predictable URLs — only the rolling
+# `platform-tools-latest-windows.zip` URL works (versioned URLs all 404).
+# Trade-off: when Google rotates `latest`, the recorded SHA-256 below stops
+# matching and the build fails loud. Recovery: re-run with
+# APPLOGS_BUNDLER_TRUST_ON_FIRST_USE=1 — Assert-Sha256 will print the new
+# hash on mismatch (no need to first reset the constant to placeholder zeros).
+# Cross-check against an independent source, paste the printed hash here, commit.
+$script:AdbZipUrl    = 'https://dl.google.com/android/repository/platform-tools-latest-windows.zip'
+$script:AdbZipSha256 = '4fe305812db074cea32903a489d061eb4454cbc90a49e8fea677f4b7af764918'  # platform-tools (rolling 'latest' as of 2026-04-30)
 
 # Pin to a concrete release tag (NOT 'latest') so the asset URL is stable and
 # the recorded SHA-256 below means something. Bump the tag + hash together.
-$script:ImdReleaseTag   = 'v2024.10.07-DCFAA63'
+$script:ImdReleaseTag   = 'v20260426-74585f8'
 $script:ImdAssetPattern = '^libimobile-suite-.*_w64\.zip$'
-$script:ImdZipSha256    = '0000000000000000000000000000000000000000000000000000000000000000'  # set on first pin via APPLOGS_BUNDLER_TRUST_ON_FIRST_USE
+$script:ImdZipSha256    = '2985634c50c62b36630d610b6acf3caf5b7f1e6b7480a8877a936965f9810eac'  # libimobile-suite-latest_w64.zip from v20260426-74585f8 (10999780 bytes)
 
 function Assert-Sha256 {
-    # Verifies that $Path hashes to $Expected (case-insensitive). Three modes:
-    #   - Expected is a real 64-hex-char hash → strict compare, throw on mismatch.
-    #   - Expected is the all-zero placeholder AND the env var
-    #     APPLOGS_BUNDLER_TRUST_ON_FIRST_USE='1' is set → print the actual hash
-    #     and throw (so the operator can paste it into the script and re-run).
+    # Verifies that $Path hashes to $Expected (case-insensitive). Modes:
+    #   - Expected is a real 64-hex-char hash AND matches → success.
+    #   - Expected is the all-zero placeholder AND APPLOGS_BUNDLER_TRUST_ON_FIRST_USE='1'
+    #     → print the actual hash and throw (operator pastes it into the script).
+    #   - Expected is a real hash AND mismatches AND APPLOGS_BUNDLER_TRUST_ON_FIRST_USE='1'
+    #     → print the actual hash with mismatch context and throw (re-pin path,
+    #     e.g. when Google rotates `platform-tools-latest`). Caller does NOT need
+    #     to first reset the constant to placeholder zeros.
     #   - Anything else → throw immediately. We never silently accept an
     #     unverified download.
     param(
@@ -83,9 +89,10 @@ function Assert-Sha256 {
     $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
     $expectedNorm  = $Expected.ToLowerInvariant()
     $isPlaceholder = ($expectedNorm -eq ('0' * 64))
+    $trustOnFirstUse = ($env:APPLOGS_BUNDLER_TRUST_ON_FIRST_USE -eq '1')
 
     if ($isPlaceholder) {
-        if ($env:APPLOGS_BUNDLER_TRUST_ON_FIRST_USE -eq '1') {
+        if ($trustOnFirstUse) {
             Write-Host ""
             Write-Warning ("[$Label] TRUST-ON-FIRST-USE: computed SHA-256 = {0}" -f $actual)
             Write-Warning ("[$Label] Cross-check against an independent source, then paste this")
@@ -97,7 +104,19 @@ function Assert-Sha256 {
     }
 
     if ($actual -ne $expectedNorm) {
-        throw ("[$Label] SHA-256 MISMATCH - refusing to use download.`n  expected: {0}`n  actual:   {1}`n  file:     {2}`nSomeone may be tampering with the download (CDN compromise / MITM). Do NOT bypass this check; investigate first." -f $expectedNorm, $actual, $Path)
+        if ($trustOnFirstUse) {
+            Write-Host ""
+            Write-Warning ("[$Label] HASH MISMATCH + TRUST-ON-FIRST-USE: re-pinning")
+            Write-Warning ("[$Label]   expected (current pin): {0}" -f $expectedNorm)
+            Write-Warning ("[$Label]   actual   (downloaded):  {0}" -f $actual)
+            Write-Warning ("[$Label] If this is an expected upstream rotation (e.g. Google bumped")
+            Write-Warning ("[$Label] platform-tools-latest), cross-check against an independent source")
+            Write-Warning ("[$Label] then paste the actual hash into bundle-tooling-windows.ps1 and re-run.")
+            Write-Warning ("[$Label] If you did NOT expect a rotation, treat this as tampering and investigate.")
+            Write-Host ""
+            throw "[$Label] pinned hash mismatch; aborting so build cannot ship an unverified artifact"
+        }
+        throw ("[$Label] SHA-256 MISMATCH - refusing to use download.`n  expected: {0}`n  actual:   {1}`n  file:     {2}`nSomeone may be tampering with the download (CDN compromise / MITM). Do NOT bypass this check; investigate first.`nIf this is a legitimate upstream rotation, re-run with APPLOGS_BUNDLER_TRUST_ON_FIRST_USE=1 to print the new hash for review." -f $expectedNorm, $actual, $Path)
     }
     Write-Host ("[$Label] SHA-256 OK ({0})" -f $actual)
 }
