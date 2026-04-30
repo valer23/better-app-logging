@@ -12,12 +12,20 @@ zero-install device tooling on Android, drag-and-drop bundling on macOS.
 
 <table>
   <tr>
-    <td align="center"><strong>Dark</strong></td>
-    <td align="center"><strong>Light</strong></td>
+    <td align="center"><strong>Home — Dark</strong></td>
+    <td align="center"><strong>Home — Light</strong></td>
   </tr>
   <tr>
     <td><img src="img/home_dark.png" alt="AppLogsViewer — Live Devices, dark theme" width="100%"></td>
     <td><img src="img/home_light.png" alt="AppLogsViewer — Live Devices, light theme" width="100%"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Live Android logs</strong></td>
+    <td align="center"><strong>Live iOS logs</strong></td>
+  </tr>
+  <tr>
+    <td><img src="img/live_android_dark.png" alt="AppLogsViewer — live Android adb logcat stream" width="100%"></td>
+    <td><img src="img/live_ios_dark.png" alt="AppLogsViewer — live iOS idevicesyslog stream" width="100%"></td>
   </tr>
 </table>
 
