@@ -57,29 +57,34 @@ jobs:
         with:
           workspaces: src-tauri
 
-      # Two mutually exclusive build paths so release publishing is
-      # explicitly gated on tag refs — never relies on tauri-action's
-      # implicit handling of empty tagName.
+      # Vendor adb + libimobiledevice into src-tauri/vendor/<triple>/ so
+      # `cargo tauri build` can pick them up via tauri.<platform>.conf.json's
+      # bundle.resources glob. Must run BEFORE tauri-action — the action does
+      # not expose a preBuildCommand input and ignores it with a warning.
       #
-      # First Windows build will fail because SHA-256 hashes for the
-      # downloaded adb / libimobiledevice archives ship as placeholder
-      # zeros (see src-tauri/scripts/bundle-tooling-windows.ps1).
-      # Bootstrap procedure (one-time):
-      #   1. Set the repo variable BUNDLER_TRUST_ON_FIRST_USE to '1'
-      #      (Settings → Secrets and variables → Actions → Variables).
-      #   2. Trigger a workflow_dispatch run — the script prints the
-      #      computed hashes via Write-Warning in the job log.
-      #   3. Copy the printed hashes into the script's $script:AdbZipSha256
-      #      / $script:ImdZipSha256 vars, commit, push.
-      #   4. Unset the repo variable. Future builds verify against the
-      #      committed hashes.
+      # First Windows run will fail because SHA-256 hashes for the downloaded
+      # adb / libimobiledevice archives ship as placeholder zeros (see
+      # src-tauri/scripts/bundle-tooling-windows.ps1). Bootstrap procedure:
+      #   1. Set repo variable BUNDLER_TRUST_ON_FIRST_USE=1 (Settings →
+      #      Secrets and variables → Actions → Variables).
+      #   2. Trigger workflow_dispatch — script prints computed hashes via
+      #      Write-Warning in the job log.
+      #   3. Copy hashes into the script's $script:AdbZipSha256 /
+      #      $script:ImdZipSha256, commit, push.
+      #   4. Unset the variable. Future builds verify against committed hashes.
+      - name: Vendor platform tooling
+        working-directory: src-tauri
+        env:
+          APPLOGS_BUNDLER_TRUST_ON_FIRST_USE: ${{ vars.BUNDLER_TRUST_ON_FIRST_USE || '0' }}
+        run: ${{ matrix.pre-build }}
 
+      # Two mutually exclusive build paths so release publishing is
+      # explicitly gated on tag refs.
       - name: Build + publish Release (tag push)
         if: startsWith(github.ref, 'refs/tags/')
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5  # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          APPLOGS_BUNDLER_TRUST_ON_FIRST_USE: ${{ vars.BUNDLER_TRUST_ON_FIRST_USE || '0' }}
         with:
           projectPath: src-tauri
           tagName: ${{ github.ref_name }}
@@ -94,17 +99,13 @@ jobs:
             iOS support on Windows additionally requires [Apple Devices](https://apps.microsoft.com/detail/9NP83LWLPZ9K) from the Microsoft Store.
           releaseDraft: false
           prerelease: false
-          preBuildCommand: ${{ matrix.pre-build }}
 
       - name: Build artifacts (workflow_dispatch — no Release published)
         if: github.event_name == 'workflow_dispatch'
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5  # v0
-        env:
-          # No GITHUB_TOKEN: this path must never reach the Releases API.
-          APPLOGS_BUNDLER_TRUST_ON_FIRST_USE: ${{ vars.BUNDLER_TRUST_ON_FIRST_USE || '0' }}
+        # No GITHUB_TOKEN: this path must never reach the Releases API.
         with:
           projectPath: src-tauri
-          preBuildCommand: ${{ matrix.pre-build }}
 
       - name: Upload dispatch artifacts to run page
         if: github.event_name == 'workflow_dispatch'
