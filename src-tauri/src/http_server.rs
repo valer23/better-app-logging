@@ -1,6 +1,6 @@
 //! Embedded HTTP server.
 //!
-//! Serves `logcat-viewer.html` (embedded at compile time so the Tauri bundle
+//! Serves `applogs-viewer.html` (embedded at compile time so the Tauri bundle
 //! is self-contained, and there is exactly one source of truth on disk under
 //! `viewer/`).
 //!
@@ -24,7 +24,7 @@ use crate::tooling;
 pub const HTTP_PORT: u16 = 8780;
 
 /// Embedded viewer HTML — single source of truth lives under `viewer/`.
-const VIEWER_HTML: &str = include_str!("../../viewer/logcat-viewer.html");
+const VIEWER_HTML: &str = include_str!("../../viewer/applogs-viewer.html");
 
 /// Bind axum on `127.0.0.1:HTTP_PORT`, signal ready via `ready_tx`, then serve forever.
 pub async fn serve(ready_tx: Sender<()>) -> Result<(), String> {
