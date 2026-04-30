@@ -1,7 +1,7 @@
 //! AppLogsViewer — Tauri v2 host process.
 //!
 //! Spawns an embedded axum HTTP server that serves
-//! `viewer/logcat-viewer.html` (embedded at compile time via `include_str!`)
+//! `viewer/applogs-viewer.html` (embedded at compile time via `include_str!`)
 //! on `http://localhost:8780`. The Tauri main window's URL points at that
 //! local server, so the self-contained HTML/JS/CSS viewer renders inside a
 //! native window with no browser needed.

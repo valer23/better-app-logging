@@ -6,7 +6,7 @@ Build instructions and developer notes for the Tauri v2 (Rust) host. For an
 end-user overview — what the tool does, how to install the prebuilt artifact,
 how to use it — see the [root README](../README.md).
 
-> The HTML/CSS/JS viewer (`viewer/logcat-viewer.html`) is embedded at compile
+> The HTML/CSS/JS viewer (`viewer/applogs-viewer.html`) is embedded at compile
 > time via `include_str!`, served over a localhost axum server, and rendered
 > inside the Tauri WebView window. Single source of truth.
 
@@ -31,7 +31,7 @@ cargo run
 
 A native window labelled "AppLogsViewer" opens at 1400×900, navigates to
 `http://localhost:8780`, and renders the existing viewer UI. Edit any Rust source
-or `viewer/logcat-viewer.html` and re-run for an incremental ~5s rebuild.
+or `viewer/applogs-viewer.html` and re-run for an incremental ~5s rebuild.
 
 > **Why `cargo run` instead of `cargo tauri dev`?** The HTTP server is embedded in
 > the same Rust process — Tauri's CLI dev mode waits for an external frontend dev
@@ -214,4 +214,4 @@ src-tauri/
 ```
 
 The `viewer/` directory at the repo root holds the standalone HTML/CSS/JS UI
-(`logcat-viewer.html`) embedded at compile time via `include_str!`.
+(`applogs-viewer.html`) embedded at compile time via `include_str!`.

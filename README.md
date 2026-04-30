@@ -131,7 +131,7 @@ open target/release/bundle/macos/AppLogsViewer.app
 src-tauri/    Rust Tauri v2 host. Embedded axum HTTP server (:8780) + two
               WebSocket servers (Android :8765, iOS :8766) inside one binary.
               Vendored adb + libimobiledevice in vendor/<triple>/.
-viewer/       Standalone HTML/CSS/JS UI (logcat-viewer.html). Embedded into
+viewer/       Standalone HTML/CSS/JS UI (applogs-viewer.html). Embedded into
               the Rust binary at compile time via `include_str!` — single
               source of truth, no separate frontend build step.
 .github/      CI: stale-ref grep, cargo fmt, cargo check, cargo clippy.

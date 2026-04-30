@@ -31,7 +31,7 @@ jobs:
 
       - name: HTML parses
         run: |
-          python3 -c "from html.parser import HTMLParser; HTMLParser().feed(open('viewer/logcat-viewer.html').read()); print('OK')"
+          python3 -c "from html.parser import HTMLParser; HTMLParser().feed(open('viewer/applogs-viewer.html').read()); print('OK')"
 
   rust:
     name: cargo fmt + check + clippy
