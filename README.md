@@ -10,6 +10,17 @@ A native cross-platform desktop app that streams Android (`adb logcat`) and iOS
 (`idevicesyslog`) device logs into a single unified viewer. Tauri v2 (Rust) host,
 zero-install device tooling on Android, drag-and-drop bundling on macOS.
 
+<table>
+  <tr>
+    <td align="center"><strong>Dark</strong></td>
+    <td align="center"><strong>Light</strong></td>
+  </tr>
+  <tr>
+    <td><img src="img/home_dark.png" alt="AppLogsViewer — Live Devices, dark theme" width="100%"></td>
+    <td><img src="img/home_light.png" alt="AppLogsViewer — Live Devices, light theme" width="100%"></td>
+  </tr>
+</table>
+
 ---
 
 ## Features
