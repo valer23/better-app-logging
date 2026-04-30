@@ -10,9 +10,13 @@ how to use it — see the [root README](../README.md).
 > time via `include_str!`, served over a localhost axum server, and rendered
 > inside the Tauri WebView window. Single source of truth.
 
-Distributions ship **unsigned** (right-click → Open on macOS, SmartScreen → Run
-anyway on Windows). To enable Developer ID / EV signing, see
-[Code signing](#code-signing) below.
+Distributions ship **unsigned** — first-launch workaround required:
+- macOS: `xattr -d com.apple.quarantine /Applications/AppLogsViewer.app`
+  (the right-click → Open trick does NOT work for ad-hoc signed apps;
+  macOS flags them as "damaged" instead of "unidentified developer")
+- Windows: SmartScreen → **More info** → **Run anyway**
+
+To enable Developer ID / EV signing, see [Code signing](#code-signing) below.
 
 ## Prerequisites
 
@@ -68,9 +72,13 @@ Outputs:
 
 Open with: `open target/release/bundle/macos/AppLogsViewer.app`.
 
-For QA: ship the `.dmg`. First-launch workaround for unsigned builds:
-**right-click the `.app` → Open → Open** (macOS Gatekeeper warning). Subsequent
-launches are normal.
+For QA: ship the `.dmg`. First-launch workaround for unsigned builds: macOS
+flags the ad-hoc-signed app as *"damaged"* once it has been quarantined by
+the browser-driven download. Strip the quarantine attr once:
+```bash
+xattr -d com.apple.quarantine /Applications/AppLogsViewer.app
+```
+Subsequent launches are normal.
 
 > **Re-run the bundle script** (`bash scripts/bundle-tooling-macos.sh`) on the
 > build host whenever you `brew upgrade libimobiledevice` or

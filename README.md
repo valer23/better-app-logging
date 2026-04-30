@@ -41,8 +41,15 @@ zero-install device tooling on Android, drag-and-drop bundling on macOS.
 1. Download `AppLogsViewer_<version>_aarch64.dmg` from the
    [Releases](https://github.com/valer23/better-app-logging/releases) page
 2. Open the `.dmg` and drag `AppLogsViewer.app` into `/Applications`
-3. **First launch** (unsigned build): right-click the app → **Open** → **Open**.
-   macOS Gatekeeper warns once; subsequent launches are normal
+3. **First launch** (unsigned build): macOS shows
+   *"AppLogsViewer.app is damaged and can't be opened"* because the `.dmg`
+   is downloaded from the web and the app is ad-hoc signed (not Developer ID).
+   Strip the quarantine flag once, then launch normally:
+   ```bash
+   xattr -d com.apple.quarantine /Applications/AppLogsViewer.app
+   open /Applications/AppLogsViewer.app
+   ```
+   Subsequent launches are normal — no need to repeat.
 
 > Intel Macs are not currently shipped as a prebuilt artifact. Build from source
 > on an Intel host — see [src-tauri/README.md](src-tauri/README.md).
@@ -103,7 +110,7 @@ zero-install device tooling on Android, drag-and-drop bundling on macOS.
 | iOS device doesn't appear (Windows) | Install **Apple Devices** from the Microsoft Store. Re-plug, tap **Trust** on the iPhone |
 | iOS device doesn't appear (macOS) | Re-plug, tap **Trust** on the iPhone, ensure the device is unlocked |
 | App says `adb not found` | Should never happen — `adb` ships inside the app. Reinstall, or build from source if you customised the bundle |
-| App won't launch on macOS (Gatekeeper) | Right-click → **Open** → **Open** the first time |
+| macOS says "AppLogsViewer.app is damaged" | Run `xattr -d com.apple.quarantine /Applications/AppLogsViewer.app` once. The app is ad-hoc signed; macOS flags quarantined ad-hoc apps as "damaged" — misleading message, app is fine. |
 | App won't launch on Windows (SmartScreen) | **More info** → **Run anyway** the first time |
 
 ---
