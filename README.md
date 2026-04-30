@@ -12,8 +12,8 @@ zero-install device tooling on Android, drag-and-drop bundling on macOS.
 
 <table>
   <tr>
-    <td align="center"><strong>Dark</strong></td>
-    <td align="center"><strong>Light</strong></td>
+    <td align="center"><strong>Home — Dark</strong></td>
+    <td align="center"><strong>Home — Light</strong></td>
   </tr>
   <tr>
     <td><img src="img/home_dark.png" alt="AppLogsViewer — Live Devices, dark theme" width="100%"></td>
