@@ -205,7 +205,7 @@
   .status-pill.connecting .status-dot { animation: blink 1s ease-in-out infinite; }
   @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
 
-  .device-badge { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--muted); line-height: 1.6; display: none; white-space: pre; }
+  .device-badge { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--muted); line-height: 1.6; display: none; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 96px; overflow-y: auto; }
   .device-badge.visible { display: block; }
 
   /* ── Live status bar (shown above log table in live mode) ── */
@@ -907,6 +907,7 @@ function disconnectAndroid() {
   resetConnectBtn('android');
   androidLive = false;
   setStatus('android','disconnected','Disconnected');
+  clearDeviceBadge('android');
   refreshLiveView();
 }
 function toggleAndroid() { androidLive ? disconnectAndroid() : connectAndroid(); }
@@ -933,7 +934,19 @@ function disconnectIos() {
   resetConnectBtn('ios');
   iosLive = false;
   setStatus('ios','disconnected','Disconnected');
+  clearDeviceBadge('ios');
   refreshLiveView();
+}
+
+// Clear the device-info badge content + hide it. Called from both
+// disconnect paths so the previous session's greeting / lifecycle markers
+// don't linger in the card after the user disconnects.
+function clearDeviceBadge(platform) {
+  const badge = document.getElementById(platform === 'android' ? 'androidDevice' : 'iosDevice');
+  if (badge) {
+    badge.textContent = '';
+    badge.classList.remove('visible');
+  }
 }
 function toggleIos() { iosLive ? disconnectIos() : connectIos(); }
 
