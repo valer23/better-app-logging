@@ -363,15 +363,15 @@
     <button class="icon-btn" id="exportBtn" onclick="toggleExportMenu()" style="color:var(--accent);border-color:var(--accent)">💾 Export</button>
     <div class="export-menu" id="exportMenu">
       <div class="export-menu-header">Export <span id="exportCount"></span></div>
-      <button class="export-opt" onclick="doExport('txt')">
+      <button class="export-opt" onclick="exportClicked('txt')">
         <span class="export-icon">📄</span>
         <div><strong>Plain Text</strong><div class="export-desc">Terminal-style, easy to share</div></div>
       </button>
-      <button class="export-opt" onclick="doExport('csv')">
+      <button class="export-opt" onclick="exportClicked('csv')">
         <span class="export-icon">📊</span>
         <div><strong>CSV</strong><div class="export-desc">Open in Excel / Numbers</div></div>
       </button>
-      <button class="export-opt" onclick="doExport('json')">
+      <button class="export-opt" onclick="exportClicked('json')">
         <span class="export-icon">🗂</span>
         <div><strong>JSON</strong><div class="export-desc">Re-import into this viewer</div></div>
       </button>
@@ -1082,7 +1082,13 @@ function getExportData() {
   return document.querySelector('input[name="exportScope"]:checked').value === 'filtered' ? filtered : allMessages;
 }
 
-function doExport(fmt) {
+// Sync wrapper for inline onclick — async doExport is awaited and any
+// rejection is caught + logged instead of becoming an unhandled rejection.
+function exportClicked(fmt) {
+  void doExport(fmt).catch(e => console.error('Export failed:', e));
+}
+
+async function doExport(fmt) {
   document.getElementById('exportMenu').classList.remove('open');
   const data = getExportData();
   const ts   = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
@@ -1095,7 +1101,7 @@ function doExport(fmt) {
       `${String(m.pid).padStart(6)}-${String(m.tid||0).padStart(6)}  ` +
       `${(LVL[m.lvl]||'?')}  ${m.tag.padEnd(32)}  ${m.app.padEnd(28)}  ${m.msg}`
     );
-    download(name + '.txt', lines.join('\n'), 'text/plain');
+    await saveFile(name + '.txt', lines.join('\n'), 'text/plain', 'Plain text log');
 
   } else if (fmt === 'csv') {
     const header = 'timestamp,platform,pid,tid,level,tag,app,message';
@@ -1103,7 +1109,7 @@ function doExport(fmt) {
       [m.ts, m.platform, m.pid, m.tid||0, m.lvl,
        csvCell(m.tag), csvCell(m.app), csvCell(m.msg)].join(',')
     );
-    download(name + '.csv', [header, ...rows].join('\n'), 'text/csv');
+    await saveFile(name + '.csv', [header, ...rows].join('\n'), 'text/csv', 'CSV log');
 
   } else if (fmt === 'json') {
     const out = {
@@ -1116,7 +1122,7 @@ function doExport(fmt) {
         level: m.lvl, tag: m.tag, app: m.app, message: m.msg
       }))
     };
-    download(name + '.json', JSON.stringify(out, null, 2), 'application/json');
+    await saveFile(name + '.json', JSON.stringify(out, null, 2), 'application/json', 'JSON log');
   }
 }
 
@@ -1126,7 +1132,52 @@ function csvCell(v) {
     ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
 
-function download(filename, content, type) {
+// Native Save-As dialog when supported (Tauri webview: WebView2 on Windows,
+// recent WKWebView on macOS). Falls back to silent download to the
+// Downloads folder ONLY when the File System Access API is unavailable or
+// the picker itself fails. After the user has picked a destination, any
+// mid-write error is surfaced rather than falling back — otherwise the user
+// would silently end up with a second file in their Downloads folder.
+async function saveFile(filename, content, type, description) {
+  if (!window.showSaveFilePicker) {
+    legacyDownload(filename, content, type);
+    return;
+  }
+
+  // Phase 1: get a file handle. Capability errors here → fallback.
+  let handle;
+  try {
+    const ext = (filename.match(/\.([^.]+)$/) || [])[1];
+    handle = await window.showSaveFilePicker({
+      suggestedName: filename,
+      types: ext ? [{ description, accept: { [type]: ['.' + ext] } }] : [],
+    });
+  } catch (e) {
+    if (e && e.name === 'AbortError') return; // user cancelled the dialog
+    console.warn('Save-As dialog unavailable, falling back to download:', e);
+    legacyDownload(filename, content, type);
+    return;
+  }
+
+  // Phase 2: write to the handle. The user has already picked a path —
+  // mid-write errors must NOT fallback to legacyDownload (would create a
+  // surprise second file). Always finalize the writable: close on success,
+  // abort on failure (swallowing secondary cleanup errors).
+  let writable;
+  let written = false;
+  try {
+    writable = await handle.createWritable();
+    await writable.write(content);
+    await writable.close();
+    written = true;
+  } finally {
+    if (writable && !written) {
+      try { await writable.abort(); } catch (_) { /* swallow secondary errors */ }
+    }
+  }
+}
+
+function legacyDownload(filename, content, type) {
   const blob = new Blob([content], { type });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob); a.download = filename; a.click();
