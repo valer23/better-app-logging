@@ -1134,25 +1134,47 @@ function csvCell(v) {
 
 // Native Save-As dialog when supported (Tauri webview: WebView2 on Windows,
 // recent WKWebView on macOS). Falls back to silent download to the
-// Downloads folder when the File System Access API is unavailable.
+// Downloads folder ONLY when the File System Access API is unavailable or
+// the picker itself fails. After the user has picked a destination, any
+// mid-write error is surfaced rather than falling back — otherwise the user
+// would silently end up with a second file in their Downloads folder.
 async function saveFile(filename, content, type, description) {
-  if (window.showSaveFilePicker) {
-    try {
-      const ext = (filename.match(/\.([^.]+)$/) || [])[1];
-      const handle = await window.showSaveFilePicker({
-        suggestedName: filename,
-        types: ext ? [{ description, accept: { [type]: ['.' + ext] } }] : [],
-      });
-      const writable = await handle.createWritable();
-      await writable.write(content);
-      await writable.close();
-      return;
-    } catch (e) {
-      if (e && e.name === 'AbortError') return; // user cancelled the dialog
-      console.warn('Save-As dialog failed, falling back to download:', e);
+  if (!window.showSaveFilePicker) {
+    legacyDownload(filename, content, type);
+    return;
+  }
+
+  // Phase 1: get a file handle. Capability errors here → fallback.
+  let handle;
+  try {
+    const ext = (filename.match(/\.([^.]+)$/) || [])[1];
+    handle = await window.showSaveFilePicker({
+      suggestedName: filename,
+      types: ext ? [{ description, accept: { [type]: ['.' + ext] } }] : [],
+    });
+  } catch (e) {
+    if (e && e.name === 'AbortError') return; // user cancelled the dialog
+    console.warn('Save-As dialog unavailable, falling back to download:', e);
+    legacyDownload(filename, content, type);
+    return;
+  }
+
+  // Phase 2: write to the handle. The user has already picked a path —
+  // mid-write errors must NOT fallback to legacyDownload (would create a
+  // surprise second file). Always finalize the writable: close on success,
+  // abort on failure (swallowing secondary cleanup errors).
+  let writable;
+  let written = false;
+  try {
+    writable = await handle.createWritable();
+    await writable.write(content);
+    await writable.close();
+    written = true;
+  } finally {
+    if (writable && !written) {
+      try { await writable.abort(); } catch (_) { /* swallow secondary errors */ }
     }
   }
-  legacyDownload(filename, content, type);
 }
 
 function legacyDownload(filename, content, type) {
