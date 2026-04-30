@@ -35,7 +35,7 @@ jobs:
           # Builds x86_64-pc-windows-msvc → .exe (NSIS installer).
           - platform: windows-latest
             os-label: Windows (x64)
-            pre-build: powershell -ExecutionPolicy Bypass -File scripts/bundle-tooling-windows.ps1
+            pre-build: powershell -ExecutionPolicy Bypass -NoProfile -File scripts/bundle-tooling-windows.ps1
             install-deps: ''
 
     runs-on: ${{ matrix.platform }}
