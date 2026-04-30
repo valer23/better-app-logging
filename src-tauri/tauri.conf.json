@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "AppLogsViewer",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "identifier": "com.bragi.applogs-viewer",
   "build": {
     "frontendDist": "./dist",
