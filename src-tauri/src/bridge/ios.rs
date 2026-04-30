@@ -5,6 +5,9 @@
 //! the iPhone resumes streaming without restarting the app.
 
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 
 use chrono::Datelike;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -13,6 +16,20 @@ use tokio::sync::broadcast;
 use crate::frame::{DevicesFrame, ErrorFrame, Frame, LogFrame};
 use crate::parser::{ios_level, ANSI_RE, IOS_RE};
 use crate::tooling;
+
+/// Seconds to wait after `[connected:UDID]` before flagging a silent stream.
+/// iOS 17+ `syslog_relay` can stall: the channel is open but `syslogd` stops
+/// feeding it. We surface that as an actionable error instead of leaving the
+/// UI looking healthy with zero output.
+const STREAM_STALL_TIMEOUT_SECS: u64 = 8;
+
+const STALL_HINT: &str = concat!(
+    "iOS device connected but no logs are streaming. ",
+    "iOS 17+ syslog_relay can stall — try (in order): ",
+    "(1) reboot the iPhone, ",
+    "(2) `sudo killall usbmuxd` on the Mac, ",
+    "(3) `idevicepair unpair && idevicepair pair` then re-Trust on the device.",
+);
 
 /// Spawn the iOS bridge worker. Returns immediately; runs forever in a tokio task.
 pub fn spawn(tx: broadcast::Sender<String>) {
@@ -54,6 +71,10 @@ async fn run_once(tx: &broadcast::Sender<String>) -> Result<(), String> {
         }
     });
 
+    // True once we've seen at least one parsed log line on this connection;
+    // the stall watchdog reads this to decide whether to fire.
+    let saw_log = Arc::new(AtomicBool::new(false));
+
     // Year prefix for ts (idevicesyslog omits year).
     let year = chrono::Local::now().year();
     let mut reader = BufReader::new(stdout).lines();
@@ -72,6 +93,11 @@ async fn run_once(tx: &broadcast::Sender<String>) -> Result<(), String> {
                     data: inner.to_string(),
                 }),
             );
+            // On (re)connect, reset the watchdog and arm a fresh timer.
+            if inner.starts_with("connected:") {
+                saw_log.store(false, Ordering::Relaxed);
+                arm_stall_watchdog(tx.clone(), saw_log.clone());
+            }
             continue;
         }
 
@@ -103,11 +129,28 @@ async fn run_once(tx: &broadcast::Sender<String>) -> Result<(), String> {
             app,
             msg: msg.to_string(),
         };
+        saw_log.store(true, Ordering::Relaxed);
         push(tx, &Frame::Log(log_frame));
     }
 
     let status = child.wait().await.map_err(|e| e.to_string())?;
     Err(format!("idevicesyslog exited with status: {status}"))
+}
+
+/// Spawn a one-shot timer that fires after `STREAM_STALL_TIMEOUT_SECS` and,
+/// if no log line has been seen by then, emits an `ErrorFrame` with the
+/// recovery hint. The timer task exits on its own — no cancellation needed,
+/// since `saw_log` is checked only once at deadline.
+fn arm_stall_watchdog(tx: broadcast::Sender<String>, saw_log: Arc<AtomicBool>) {
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(STREAM_STALL_TIMEOUT_SECS)).await;
+        if !saw_log.load(Ordering::Relaxed) {
+            tracing::warn!(
+                "[ios] stream stall: no logs in {STREAM_STALL_TIMEOUT_SECS}s post-connect"
+            );
+            emit_error(&tx, STALL_HINT);
+        }
+    });
 }
 
 fn push(tx: &broadcast::Sender<String>, frame: &Frame) {
