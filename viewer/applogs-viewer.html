@@ -363,15 +363,15 @@
     <button class="icon-btn" id="exportBtn" onclick="toggleExportMenu()" style="color:var(--accent);border-color:var(--accent)">💾 Export</button>
     <div class="export-menu" id="exportMenu">
       <div class="export-menu-header">Export <span id="exportCount"></span></div>
-      <button class="export-opt" onclick="doExport('txt')">
+      <button class="export-opt" onclick="exportClicked('txt')">
         <span class="export-icon">📄</span>
         <div><strong>Plain Text</strong><div class="export-desc">Terminal-style, easy to share</div></div>
       </button>
-      <button class="export-opt" onclick="doExport('csv')">
+      <button class="export-opt" onclick="exportClicked('csv')">
         <span class="export-icon">📊</span>
         <div><strong>CSV</strong><div class="export-desc">Open in Excel / Numbers</div></div>
       </button>
-      <button class="export-opt" onclick="doExport('json')">
+      <button class="export-opt" onclick="exportClicked('json')">
         <span class="export-icon">🗂</span>
         <div><strong>JSON</strong><div class="export-desc">Re-import into this viewer</div></div>
       </button>
@@ -1080,6 +1080,12 @@ document.addEventListener('click', e => {
 
 function getExportData() {
   return document.querySelector('input[name="exportScope"]:checked').value === 'filtered' ? filtered : allMessages;
+}
+
+// Sync wrapper for inline onclick — async doExport is awaited and any
+// rejection is caught + logged instead of becoming an unhandled rejection.
+function exportClicked(fmt) {
+  void doExport(fmt).catch(e => console.error('Export failed:', e));
 }
 
 async function doExport(fmt) {
