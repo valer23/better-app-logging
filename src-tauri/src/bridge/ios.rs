@@ -83,20 +83,22 @@ async fn run_once(tx: &broadcast::Sender<String>) -> Result<(), String> {
         r = stall_watch => r,
     };
 
-    // Kill the child explicitly so the next iteration starts from a clean slate.
-    // (kill_on_drop covers task cancellation; this covers the stall path.)
+    // Kill + reap before returning, in all branches, so we never leak a zombie
+    // across respawns. `wait()` is harmless if the child has already exited
+    // (`ReaderEof`); on stall / reader error it ensures the SIGKILL is reaped.
     let _ = child.kill().await;
+    let _ = child.wait().await;
 
     match outcome {
         StreamOutcome::Stalled => {
             tracing::warn!("[ios] stream stalled after {STREAM_STALL_TIMEOUT_SECS}s — respawning");
             emit_error(tx, STALL_HINT);
-            Err("stream stalled".into())
+            // Return Ok so the outer `spawn` loop respawns silently without
+            // also emitting a generic "ios bridge error: stream stalled" frame
+            // — that would overwrite the actionable hint above in the UI.
+            Ok(())
         }
-        StreamOutcome::ReaderEof => {
-            let status = child.wait().await.map_err(|e| e.to_string())?;
-            Err(format!("idevicesyslog exited with status: {status}"))
-        }
+        StreamOutcome::ReaderEof => Err("idevicesyslog exited (EOF)".into()),
         StreamOutcome::ReaderErr(e) => Err(e),
     }
 }

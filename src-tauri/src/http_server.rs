@@ -11,8 +11,8 @@ use std::sync::mpsc::Sender;
 
 use axum::{
     body::Body,
-    http::{header, Method, StatusCode},
-    response::Response,
+    http::{header, HeaderMap, Method, StatusCode},
+    response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
@@ -209,6 +209,11 @@ async fn ideviceinfo(udid: &str, key: &str) -> Option<String> {
 // rewrites it after the user taps "Trust This Computer" on the phone. The
 // stale-pair-record path is the most common cause of `idevicesyslog` going
 // silent on iOS 17+, so we expose both as one-click UI actions.
+//
+// These endpoints are state-changing and run privileged platform tools, so we
+// gate them with an Origin allowlist that mirrors `ws_server` — a malicious
+// page in the user's regular browser must not be able to trigger an unpair
+// via loopback CSRF.
 
 /// `idevicepair pair` blocks while waiting for the Trust dialog tap. Cap it
 /// so a forgotten/cancelled tap doesn't hang the HTTP handler indefinitely.
@@ -217,17 +222,43 @@ const PAIR_TIMEOUT_SECS: u64 = 30;
 /// stuck `lockdownd` can't wedge the request.
 const UNPAIR_TIMEOUT_SECS: u64 = 5;
 
-async fn ios_unpair() -> Json<serde_json::Value> {
-    Json(run_idevicepair("unpair", UNPAIR_TIMEOUT_SECS).await)
+/// Origins allowed to invoke state-changing POST endpoints. The viewer is
+/// served from `http://localhost:8780`, so a `fetch('/ios/repair', ...)`
+/// from inside it sends one of these two Origin values. Any other Origin
+/// — or a missing Origin (non-browser caller) — is rejected with HTTP 403.
+const ALLOWED_POST_ORIGINS: &[&str] = &["http://localhost:8780", "http://127.0.0.1:8780"];
+
+fn require_browser_origin(headers: &HeaderMap) -> Result<(), Response> {
+    let origin = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok());
+    match origin {
+        Some(o) if ALLOWED_POST_ORIGINS.contains(&o) => Ok(()),
+        _ => {
+            tracing::warn!("[ios] POST rejected: Origin = {origin:?}");
+            Err((StatusCode::FORBIDDEN, "forbidden origin").into_response())
+        }
+    }
 }
 
-async fn ios_pair() -> Json<serde_json::Value> {
-    Json(run_idevicepair("pair", PAIR_TIMEOUT_SECS).await)
+async fn ios_unpair(headers: HeaderMap) -> Response {
+    if let Err(r) = require_browser_origin(&headers) {
+        return r;
+    }
+    Json(run_idevicepair("unpair", UNPAIR_TIMEOUT_SECS).await).into_response()
+}
+
+async fn ios_pair(headers: HeaderMap) -> Response {
+    if let Err(r) = require_browser_origin(&headers) {
+        return r;
+    }
+    Json(run_idevicepair("pair", PAIR_TIMEOUT_SECS).await).into_response()
 }
 
 /// Combo flow: unpair, then pair. Stops on first failure and reports which
 /// step failed so the UI can show a targeted message.
-async fn ios_repair() -> Json<serde_json::Value> {
+async fn ios_repair(headers: HeaderMap) -> Response {
+    if let Err(r) = require_browser_origin(&headers) {
+        return r;
+    }
     let unpair = run_idevicepair("unpair", UNPAIR_TIMEOUT_SECS).await;
     if !unpair["ok"].as_bool().unwrap_or(false) {
         // Unpair failure with "ERROR: Device ... is not paired" is benign — fall through to pair.
@@ -239,7 +270,8 @@ async fn ios_repair() -> Json<serde_json::Value> {
                 "stdout": unpair["stdout"],
                 "stderr": unpair["stderr"],
                 "error": unpair["error"],
-            }));
+            }))
+            .into_response();
         }
     }
     let pair = run_idevicepair("pair", PAIR_TIMEOUT_SECS).await;
@@ -252,34 +284,111 @@ async fn ios_repair() -> Json<serde_json::Value> {
         "unpair_stdout": unpair["stdout"],
         "unpair_stderr": unpair["stderr"],
     }))
+    .into_response()
 }
 
 /// Spawn `idevicepair <sub>`, wait up to `timeout_secs`, and return a uniform
-/// JSON result. On timeout the child is killed and `error` is populated.
+/// JSON result.
+///
+/// On timeout the child is killed *and reaped* (`kill().await` then
+/// `wait().await`) — `tokio::time::timeout` only drops the future, which by
+/// itself does not terminate the underlying child. Without the explicit
+/// kill + wait, a user who never taps "Trust This Computer" could stack up
+/// stuck `idevicepair pair` processes by retrying the button.
 async fn run_idevicepair(sub: &str, timeout_secs: u64) -> serde_json::Value {
+    use std::process::Stdio;
+    use tokio::io::AsyncReadExt;
+
     tracing::info!("[ios] idevicepair {sub}");
-    let fut = tooling::tokio_command("idevicepair").arg(sub).output();
-    match tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), fut).await {
-        Ok(Ok(out)) => serde_json::json!({
-            "ok": out.status.success(),
-            "stdout": String::from_utf8_lossy(&out.stdout).trim(),
-            "stderr": String::from_utf8_lossy(&out.stderr).trim(),
-            "error": serde_json::Value::Null,
-        }),
-        Ok(Err(e)) => serde_json::json!({
+    let mut child = match tooling::tokio_command("idevicepair")
+        .arg(sub)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true) // belt-and-braces: kill if the handler future is dropped
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return serde_json::json!({
+                "ok": false,
+                "stdout": "",
+                "stderr": "",
+                "error": format!("spawn idevicepair {sub}: {e} (is libimobiledevice installed?)"),
+            });
+        }
+    };
+
+    // Drain stdout/stderr in dedicated tasks so a full pipe buffer never
+    // blocks `child.wait()`. They own the readers and finish on EOF (which
+    // happens naturally when the child exits or is killed below).
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let stdout_task = stdout.map(|mut s| {
+        tokio::spawn(async move {
+            let mut buf = Vec::new();
+            let _ = s.read_to_end(&mut buf).await;
+            buf
+        })
+    });
+    let stderr_task = stderr.map(|mut s| {
+        tokio::spawn(async move {
+            let mut buf = Vec::new();
+            let _ = s.read_to_end(&mut buf).await;
+            buf
+        })
+    });
+
+    let (status_opt, timed_out, io_err) = match tokio::time::timeout(
+        std::time::Duration::from_secs(timeout_secs),
+        child.wait(),
+    )
+    .await
+    {
+        Ok(Ok(s)) => (Some(s), false, None),
+        Ok(Err(e)) => (None, false, Some(e.to_string())),
+        Err(_) => {
+            // Timeout: explicit kill + reap so we don't leak a zombie or
+            // accumulate stuck pair processes across retries.
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            (None, true, None)
+        }
+    };
+
+    let so = match stdout_task {
+        Some(t) => t.await.unwrap_or_default(),
+        None => Vec::new(),
+    };
+    let se = match stderr_task {
+        Some(t) => t.await.unwrap_or_default(),
+        None => Vec::new(),
+    };
+
+    if timed_out {
+        return serde_json::json!({
             "ok": false,
-            "stdout": "",
-            "stderr": "",
-            "error": format!("spawn idevicepair {sub}: {e} (is libimobiledevice installed?)"),
-        }),
-        Err(_) => serde_json::json!({
-            "ok": false,
-            "stdout": "",
-            "stderr": "",
+            "stdout": String::from_utf8_lossy(&so).trim(),
+            "stderr": String::from_utf8_lossy(&se).trim(),
             "error": format!(
                 "idevicepair {sub} timed out after {timeout_secs}s — \
                  if pairing, make sure the iPhone is unlocked and tap 'Trust This Computer'."
             ),
-        }),
+        });
     }
+    if let Some(e) = io_err {
+        return serde_json::json!({
+            "ok": false,
+            "stdout": String::from_utf8_lossy(&so).trim(),
+            "stderr": String::from_utf8_lossy(&se).trim(),
+            "error": format!("idevicepair {sub} I/O error: {e}"),
+        });
+    }
+    let ok = status_opt.map(|s| s.success()).unwrap_or(false);
+    serde_json::json!({
+        "ok": ok,
+        "stdout": String::from_utf8_lossy(&so).trim(),
+        "stderr": String::from_utf8_lossy(&se).trim(),
+        "error": serde_json::Value::Null,
+    })
 }
