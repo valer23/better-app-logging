@@ -228,27 +228,31 @@ const UNPAIR_TIMEOUT_SECS: u64 = 5;
 /// — or a missing Origin (non-browser caller) — is rejected with HTTP 403.
 const ALLOWED_POST_ORIGINS: &[&str] = &["http://localhost:8780", "http://127.0.0.1:8780"];
 
-fn require_browser_origin(headers: &HeaderMap) -> Result<(), Response> {
+/// Returns `Err((status, message))` on rejection. The small `Err` shape keeps
+/// `Result` slim — Clippy's `result_large_err` lint fires if the Err carries
+/// a full `axum::Response` (~128 bytes), so we defer `into_response()` to the
+/// call site instead.
+fn require_browser_origin(headers: &HeaderMap) -> Result<(), (StatusCode, &'static str)> {
     let origin = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok());
     match origin {
         Some(o) if ALLOWED_POST_ORIGINS.contains(&o) => Ok(()),
         _ => {
             tracing::warn!("[ios] POST rejected: Origin = {origin:?}");
-            Err((StatusCode::FORBIDDEN, "forbidden origin").into_response())
+            Err((StatusCode::FORBIDDEN, "forbidden origin"))
         }
     }
 }
 
 async fn ios_unpair(headers: HeaderMap) -> Response {
-    if let Err(r) = require_browser_origin(&headers) {
-        return r;
+    if let Err(e) = require_browser_origin(&headers) {
+        return e.into_response();
     }
     Json(run_idevicepair("unpair", UNPAIR_TIMEOUT_SECS).await).into_response()
 }
 
 async fn ios_pair(headers: HeaderMap) -> Response {
-    if let Err(r) = require_browser_origin(&headers) {
-        return r;
+    if let Err(e) = require_browser_origin(&headers) {
+        return e.into_response();
     }
     Json(run_idevicepair("pair", PAIR_TIMEOUT_SECS).await).into_response()
 }
@@ -256,8 +260,8 @@ async fn ios_pair(headers: HeaderMap) -> Response {
 /// Combo flow: unpair, then pair. Stops on first failure and reports which
 /// step failed so the UI can show a targeted message.
 async fn ios_repair(headers: HeaderMap) -> Response {
-    if let Err(r) = require_browser_origin(&headers) {
-        return r;
+    if let Err(e) = require_browser_origin(&headers) {
+        return e.into_response();
     }
     let unpair = run_idevicepair("unpair", UNPAIR_TIMEOUT_SECS).await;
     if !unpair["ok"].as_bool().unwrap_or(false) {
