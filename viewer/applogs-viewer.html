@@ -288,7 +288,13 @@
     display: none;
     position: fixed; top: 0; left: 0;
     background: var(--surface); border: 1px solid var(--border);
-    border-radius: 10px; padding: 6px; min-width: 240px; max-width: calc(100vw - 16px);
+    border-radius: 10px; padding: 6px;
+    /* Prefer 240px, but shrink below that on very narrow viewports so the
+       menu never exceeds the viewport (16px = 2 × PAD from positionExportMenu).
+       No `min-width` — JS clamping reads `menu.offsetWidth` and needs the
+       laid-out width to be ≤ viewport for `Math.min(left, vw - mw - PAD)`
+       to keep the menu on-screen. */
+    width: min(240px, calc(100vw - 16px));
     box-shadow: 0 8px 32px #00000060; z-index: 50;
     flex-direction: column; gap: 2px;
   }
