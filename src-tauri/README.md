@@ -53,11 +53,12 @@ or `viewer/applogs-viewer.html` and re-run for an incremental ~5s rebuild.
 > under `vendor/macos-aarch64/` are ad-hoc signed (`codesign -s -`) by
 > `scripts/bundle-tooling-macos.sh`. On macOS 15+ Gatekeeper may show
 > *"adb cannot be opened, Apple could not verify…"* the first time the
-> debug build spawns one of them. Strip quarantine once on the whole
-> vendor dir:
+> debug build spawns one of them. Strip the quarantine attribute once on
+> the whole vendor dir (run from `src-tauri/`, matching `cd src-tauri`
+> above):
 >
 > ```bash
-> xattr -cr src-tauri/vendor/macos-aarch64
+> xattr -dr com.apple.quarantine vendor/macos-aarch64
 > ```
 >
 > Released `.app` bundles get the same treatment via
