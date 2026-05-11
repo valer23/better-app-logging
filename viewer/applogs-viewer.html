@@ -235,6 +235,20 @@
   .copy-btn:hover { color: var(--text); }
   .modal-footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px; border-top: 1px solid var(--border); }
 
+  /* ── iOS troubleshoot section in Bridge Setup ── */
+  .troubleshoot { border-top: 1px solid var(--border); padding-top: 14px; display: flex; flex-direction: column; gap: 10px; }
+  .troubleshoot .ts-title { font-size: 12px; font-weight: 600; color: var(--text); }
+  .troubleshoot .ts-desc  { font-size: 12px; color: var(--muted); line-height: 1.6; margin: 0; }
+  .troubleshoot .ts-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .troubleshoot .ts-result { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted); white-space: pre-wrap; word-break: break-word; display: none; }
+  .troubleshoot .ts-result.visible { display: block; padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; }
+  .troubleshoot .ts-result.ok  { color: var(--green); border-color: var(--green); }
+  .troubleshoot .ts-result.err { color: var(--red);   border-color: var(--red);   }
+
+  /* ── Stall error popup (iOS log stream went silent) ── */
+  .stall-modal h2 { color: var(--yellow); }
+  .stall-modal p  { font-size: 12px; color: var(--text); line-height: 1.6; }
+
   /* ── Log table ── */
   #logWrapper { flex: 1; overflow: hidden; display: none; flex-direction: column; }
   #logWrapper.visible { display: flex; }
@@ -466,6 +480,7 @@
         </div>
         <button class="btn-secondary" onclick="loadIosDevices()" title="Refresh device list">↻</button>
         <button class="btn-primary" id="iosBtn" onclick="connectIos()">Connect</button>
+        <button class="btn-secondary" id="iosRepairBtn" onclick="iosRepairFromHeader()" title="Re-pair iPhone — fixes most cases of 'no logs streaming'">🔄 Re-pair</button>
         <button class="btn-secondary" onclick="showSetup('ios')">⚙</button>
       </div>
       <div class="device-badge" id="iosDevice"></div>
@@ -556,9 +571,36 @@
         <div class="step"><div class="step-num">2</div><p><strong>Windows only:</strong> install <strong>Apple Devices</strong> from the Microsoft Store — it ships the kernel driver and Apple Mobile Device Service that iOS USB log streaming relies on. (<a href="https://apps.microsoft.com/detail/9NP83LWLPZ9K" target="_blank" rel="noopener">Install Apple Devices</a>.) macOS and Linux already have everything they need.</p></div>
         <div class="step"><div class="step-num">3</div><p>Hit the refresh icon (↻) next to the iOS device picker — your device should appear in the dropdown. Then click <strong>Connect</strong>.</p></div>
       </div>
+
+      <!-- Troubleshoot: re-pair when logs stop streaming -->
+      <div class="troubleshoot">
+        <div class="ts-title">🔧 Troubleshoot</div>
+        <p class="ts-desc">If logs stop streaming or never start after pressing <strong>Connect</strong>, the host/device pair record is usually stale. <strong>Re-pair</strong> fixes it. You will need to tap <strong>Trust This Computer</strong> on the iPhone afterwards.</p>
+        <div class="ts-actions">
+          <button class="btn-primary" id="setupRepairBtn" onclick="iosRepairFromSetup()">🔄 Re-pair iPhone</button>
+          <button class="btn-secondary" id="setupUnpairBtn" onclick="iosUnpairFromSetup()" title="Advanced: delete the host's pair record only">Unpair only</button>
+          <button class="btn-secondary" id="setupPairBtn"   onclick="iosPairFromSetup()"   title="Advanced: re-issue a pair record (Trust prompt on device)">Pair only</button>
+        </div>
+        <div class="ts-result" id="setupRepairResult"></div>
+      </div>
+
       <div class="modal-footer">
         <button class="btn-primary" onclick="hideSetup()">Got it</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Stall error popup — surfaced when the iOS log stream goes silent -->
+<div class="modal-overlay" id="stallModal">
+  <div class="modal stall-modal">
+    <h2>⚠ iOS log stream stalled</h2>
+    <p id="stallModalText">No logs received from the iOS device. The host/device pair record is likely stale.</p>
+    <p>Tap <strong>Re-pair iPhone</strong> below — you'll be asked to tap <strong>Trust This Computer</strong> on the iPhone again.</p>
+    <div class="ts-result" id="stallRepairResult"></div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="hideStallModal()">Dismiss</button>
+      <button class="btn-primary" id="stallRepairBtn" onclick="iosRepairFromStall()">🔄 Re-pair iPhone</button>
     </div>
   </div>
 </div>
@@ -971,6 +1013,16 @@ function handleWsMsg(e, platform) {
       badge.textContent = data.data.trim(); badge.classList.add('visible');
       return;
     }
+    if (data.type === 'error' && platform === 'ios') {
+      // iOS bridge stall hint — surface a popup with a one-click Re-pair action
+      // so non-CLI users have a clear recovery path. Other error frames
+      // (transient bridge errors that auto-recover) are ignored.
+      const text = (data.data || '').trim();
+      if (text.toLowerCase().includes('stalled')) {
+        showStallModal(text);
+      }
+      return;
+    }
     if (data.type === 'log') {
       data.platform = platform;
       // Always queue — pause only stops the drain, so resume flushes the
@@ -982,6 +1034,115 @@ function handleWsMsg(e, platform) {
       }
     }
   } catch {}
+}
+
+// ── iOS pair / unpair / repair ──
+//
+// The Rust HTTP server exposes POST /ios/{unpair,pair,repair} which shell out
+// to `idevicepair`. Stale pair records are the most common cause of
+// `idevicesyslog` going silent on iOS 17+ — these wrappers let the user fix it
+// with one click instead of opening a terminal.
+
+const REPAIR_CONFIRM = "You will need to trust the device again from your iPhone.\n\nThe iPhone must be unlocked, and after pressing OK you'll see a 'Trust This Computer?' dialog on the phone — tap Trust and enter the passcode.\n\nContinue?";
+const UNPAIR_CONFIRM = "This deletes the host's pair record for the iPhone. The next connect attempt will prompt 'Trust This Computer?' on the iPhone again.\n\nContinue?";
+
+async function callIosPairAction(action) {
+  const res = await fetch(`/ios/${action}`, { method: 'POST' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return await res.json();
+}
+
+function renderPairResult(el, result, fallbackAction) {
+  if (!el) return;
+  el.classList.remove('ok','err');
+  el.classList.add('visible');
+  if (result && result.ok) {
+    el.classList.add('ok');
+    el.textContent = `✓ ${fallbackAction} succeeded.\n${(result.stdout || '').trim()}`;
+  } else {
+    el.classList.add('err');
+    const why = (result && (result.error || result.stderr || result.stdout)) || 'unknown error';
+    const step = result && result.step ? ` (step: ${result.step})` : '';
+    el.textContent = `✗ ${fallbackAction} failed${step}.\n${why}`;
+  }
+}
+
+async function runPairAction(action, buttons, resultEl, label) {
+  const btnList = buttons.map(id => document.getElementById(id)).filter(Boolean);
+  const originalText = new Map(btnList.map(b => [b, b.textContent]));
+  btnList.forEach(b => { b.disabled = true; });
+  const primary = btnList[0];
+  if (primary) primary.textContent = `${label}…`;
+  if (resultEl) {
+    resultEl.classList.remove('ok','err');
+    resultEl.classList.add('visible');
+    resultEl.textContent = `Running idevicepair ${action}… (if pairing, watch the iPhone for the Trust dialog)`;
+  }
+  try {
+    const result = await callIosPairAction(action);
+    renderPairResult(resultEl, result, label);
+    return result;
+  } catch (err) {
+    renderPairResult(resultEl, { ok: false, error: String(err) }, label);
+    return { ok: false, error: String(err) };
+  } finally {
+    btnList.forEach(b => { b.disabled = false; b.textContent = originalText.get(b); });
+  }
+}
+
+function iosRepairFromHeader() {
+  if (!confirm(REPAIR_CONFIRM)) return;
+  // Header has no inline result area — disconnect first so the new pair record
+  // doesn't fight a live syslog stream, then surface result via the setup modal.
+  if (iosLive) disconnectIos();
+  runPairAction('repair', ['iosRepairBtn'], null, 'Re-pair')
+    .then(result => {
+      if (result.ok) {
+        alert("Re-pair succeeded. Click 'Connect' to resume streaming.");
+      } else {
+        alert(`Re-pair failed: ${result.error || result.stderr || result.stdout || 'unknown error'}\n\nOpen Bridge Setup → iOS for advanced controls.`);
+      }
+    });
+}
+
+function iosRepairFromSetup() {
+  if (!confirm(REPAIR_CONFIRM)) return;
+  if (iosLive) disconnectIos();
+  runPairAction('repair', ['setupRepairBtn','setupUnpairBtn','setupPairBtn'], document.getElementById('setupRepairResult'), 'Re-pair');
+}
+
+function iosUnpairFromSetup() {
+  if (!confirm(UNPAIR_CONFIRM)) return;
+  if (iosLive) disconnectIos();
+  runPairAction('unpair', ['setupRepairBtn','setupUnpairBtn','setupPairBtn'], document.getElementById('setupRepairResult'), 'Unpair');
+}
+
+function iosPairFromSetup() {
+  // Pair alone doesn't destroy state, but still triggers a Trust dialog.
+  runPairAction('pair', ['setupRepairBtn','setupUnpairBtn','setupPairBtn'], document.getElementById('setupRepairResult'), 'Pair');
+}
+
+function iosRepairFromStall() {
+  if (!confirm(REPAIR_CONFIRM)) return;
+  if (iosLive) disconnectIos();
+  runPairAction('repair', ['stallRepairBtn'], document.getElementById('stallRepairResult'), 'Re-pair')
+    .then(result => {
+      if (result.ok) {
+        // Auto-dismiss on success after a short delay so the user can read the result.
+        setTimeout(hideStallModal, 1500);
+      }
+    });
+}
+
+function showStallModal(text) {
+  const el = document.getElementById('stallModalText');
+  if (el && text) el.textContent = text;
+  const res = document.getElementById('stallRepairResult');
+  if (res) { res.classList.remove('visible','ok','err'); res.textContent = ''; }
+  document.getElementById('stallModal').classList.add('visible');
+}
+function hideStallModal() {
+  document.getElementById('stallModal').classList.remove('visible');
 }
 
 const LIVE_DOM_CAP   = 6000;  // max rows in DOM at once
@@ -1441,6 +1602,7 @@ function switchSetupTab(t) {
   document.getElementById('setupIos').classList.toggle('active', t === 'ios');
 }
 document.getElementById('setupModal').addEventListener('click', e => { if (e.target === document.getElementById('setupModal')) hideSetup(); });
+document.getElementById('stallModal').addEventListener('click', e => { if (e.target === document.getElementById('stallModal')) hideStallModal(); });
 
 // Python launcher download helpers (`downloadScript`, `getAdbBridgeScript`,
 // `getIosBridgeScript`) and the `copyBlock` clipboard helper for the old
