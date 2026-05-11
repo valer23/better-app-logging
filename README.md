@@ -101,7 +101,9 @@ zero-install device tooling on Android, drag-and-drop bundling on macOS.
    - **Android**: enable Developer options → USB debugging on the device. Accept the
      RSA fingerprint prompt the first time you plug it in. The phone must be
      unlocked when accepting the prompt
-   - **iOS**: tap **Trust This Computer** when iOS prompts. iPhone must be unlocked
+   - **iOS**: tap **Trust This Computer** when iOS prompts. iPhone must be unlocked.
+     If logs ever stop streaming, click the **🔄 Re-pair** button on the iOS card —
+     it deletes the stale pair record and prompts Trust again on the iPhone
 2. **Open the app** (`AppLogsViewer`)
 3. **Switch panels** between **📱 Live Devices** (default) and **📂 File Import**
 4. **Pick your device** from the platform dropdown(s) — Android and iOS lists are
@@ -128,7 +130,7 @@ zero-install device tooling on Android, drag-and-drop bundling on macOS.
 | Android device doesn't appear | Re-plug, accept the RSA prompt on the phone (must be unlocked). On Windows, install OEM USB driver if Windows Update did not |
 | iOS device doesn't appear (Windows) | Install **Apple Devices** from the Microsoft Store. Re-plug, tap **Trust** on the iPhone |
 | iOS device doesn't appear (macOS) | Re-plug, tap **Trust** on the iPhone, ensure the device is unlocked |
-| iOS device shows **Connected** but no logs stream | iOS 17+ `syslog_relay` quirk — channel pairs fine but the on-device log daemon stops feeding it. The viewer surfaces an inline error after ~8 s. Try, in order: (1) reboot the iPhone; (2) `sudo killall usbmuxd` on the Mac (Apple's daemon auto-respawns); (3) `idevicepair unpair && idevicepair pair`, then re-Trust on the device. Sanity check: `idevicesyslog archive - --age-limit 60 > /tmp/x.tar` — if that produces a tar, the device path is healthy and only the live stream stalled. |
+| iOS device shows **Connected** but no logs stream | iOS 17+ `syslog_relay` quirk — channel pairs fine but the on-device log daemon stops feeding it. The bridge auto-restarts `idevicesyslog` after 8 s of silence and surfaces a popup with a one-click **🔄 Re-pair iPhone** button. Re-pair is the fix in 95% of cases — click it, tap **Trust This Computer** on the unlocked phone, then click **Connect**. If Re-pair fails: (1) reboot the iPhone; (2) `sudo killall usbmuxd` on the Mac (Apple's daemon auto-respawns). Advanced controls (**Unpair only** / **Pair only**) live in **Bridge Setup → 🍎 iOS → Troubleshoot**. Sanity check: `idevicesyslog archive - --age-limit 60 > /tmp/x.tar` — if that produces a tar, the device path is healthy and only the live stream stalled. |
 | App says `adb not found` | Should never happen — `adb` ships inside the app. Reinstall, or build from source if you customised the bundle |
 | macOS says "AppLogsViewer.app is damaged" | Run `xattr -d com.apple.quarantine /Applications/AppLogsViewer.app` once. The app is ad-hoc signed; macOS flags quarantined ad-hoc apps as "damaged" — misleading message, app is fine. |
 | App won't launch on Windows (SmartScreen) | **More info** → **Run anyway** the first time |

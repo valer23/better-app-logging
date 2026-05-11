@@ -155,7 +155,7 @@ function Resolve-AdbSource {
 function Resolve-ImdSource {
     # Heuristic: the directory needs the three .exes we ship; we'll grab
     # every .dll next to them, whatever the libimd version names them.
-    $required = @('idevice_id.exe', 'ideviceinfo.exe', 'idevicesyslog.exe')
+    $required = @('idevice_id.exe', 'ideviceinfo.exe', 'idevicepair.exe', 'idevicesyslog.exe')
     if ($env:APPLOGS_VENDOR_IMD_DIR) {
         if (Test-DirHasFiles $env:APPLOGS_VENDOR_IMD_DIR $required) {
             return @{ Dir = $env:APPLOGS_VENDOR_IMD_DIR; Source = 'env:APPLOGS_VENDOR_IMD_DIR' }
@@ -258,7 +258,7 @@ try {
     }
     Write-Host ("[imd] source: {0}" -f $imdSrc.Source)
     Write-Host ("[imd]      :  {0}" -f $imdSrc.Dir)
-    foreach ($e in @('idevice_id.exe', 'ideviceinfo.exe', 'idevicesyslog.exe')) {
+    foreach ($e in @('idevice_id.exe', 'ideviceinfo.exe', 'idevicepair.exe', 'idevicesyslog.exe')) {
         $src = Join-Path $imdSrc.Dir $e
         if (-not (Test-Path $src)) { throw "libimobiledevice source missing $e at $src" }
         Copy-Item -LiteralPath $src -Destination (Join-Path $vendor $e) -Force

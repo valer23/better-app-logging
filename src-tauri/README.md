@@ -30,13 +30,20 @@ To enable Developer ID / EV signing, see [Code signing](#code-signing) below.
 > uses the legacy `com.apple.syslog_relay` service for live mode. On iOS
 > 17+ that channel can go silent — connection succeeds, `[connected:UDID]`
 > is emitted, then `syslogd` stops feeding the relay. The bridge in
-> [`src/bridge/ios.rs`](src/bridge/ios.rs) arms an 8 s post-connect
-> watchdog (`STREAM_STALL_TIMEOUT_SECS`) and broadcasts an `ErrorFrame`
-> with recovery hints when no log line arrives. Common fixes: reboot the
-> iPhone, `sudo killall usbmuxd` on the Mac, or
-> `idevicepair unpair && idevicepair pair`. Longer-term we may migrate
-> to `pymobiledevice3` (RemoteServiceDiscovery path) — adopt only if the
-> regression keeps recurring.
+> [`src/bridge/ios.rs`](src/bridge/ios.rs) runs a rolling activity
+> watchdog (`STREAM_STALL_TIMEOUT_SECS = 8 s`): every parsed log line
+> pings a `tokio::sync::Notify`; if no ping arrives within the window,
+> the child `idevicesyslog` is killed and the outer loop respawns it
+> after 2 s. An `ErrorFrame` carrying the recovery hint is broadcast
+> simultaneously, which the viewer renders as a popup with a one-click
+> **🔄 Re-pair iPhone** action. Re-pair shells out to `idevicepair
+> unpair && idevicepair pair` via three HTTP POST endpoints exposed by
+> [`src/http_server.rs`](src/http_server.rs): `/ios/unpair`, `/ios/pair`
+> (30 s timeout — waits for the on-device Trust tap), and `/ios/repair`
+> (combo). The viewer also surfaces standalone Unpair / Pair buttons in
+> **Bridge Setup → 🍎 iOS → Troubleshoot** for advanced users. Longer-term
+> we may migrate to `pymobiledevice3` (RemoteServiceDiscovery path) —
+> adopt only if the regression keeps recurring.
 
 ## Run from source
 

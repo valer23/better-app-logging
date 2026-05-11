@@ -33,7 +33,7 @@ mkdir -p "$VENDOR"
 rm -f "$VENDOR"/*
 
 # Tools to bundle (must already be installed via Homebrew).
-declare -a BINARIES=(adb idevice_id ideviceinfo idevicesyslog)
+declare -a BINARIES=(adb idevice_id ideviceinfo idevicepair idevicesyslog)
 
 # ──────────────────────────────────────────────────────────────────────────
 # 1. Copy the binaries (resolving symlinks to the actual Mach-O files).

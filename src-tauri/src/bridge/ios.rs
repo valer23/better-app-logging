@@ -5,30 +5,29 @@
 //! the iPhone resumes streaming without restarting the app.
 
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Datelike;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, Notify};
 
 use crate::frame::{DevicesFrame, ErrorFrame, Frame, LogFrame};
 use crate::parser::{ios_level, ANSI_RE, IOS_RE};
 use crate::tooling;
 
-/// Seconds to wait after `[connected:UDID]` before flagging a silent stream.
-/// iOS 17+ `syslog_relay` can stall: the channel is open but `syslogd` stops
-/// feeding it. We surface that as an actionable error instead of leaving the
-/// UI looking healthy with zero output.
+/// Seconds of silence on the syslog stream before we treat it as stalled and
+/// force a respawn. iOS 17+ `syslog_relay` can go quiet while the socket stays
+/// open (device sleeps, lockdownd throttles, usbmuxd tunnel hiccups). Killing
+/// the child lets the outer `spawn` loop reconnect from scratch.
 const STREAM_STALL_TIMEOUT_SECS: u64 = 8;
 
 const STALL_HINT: &str = concat!(
-    "iOS device connected but no logs are streaming. ",
-    "iOS 17+ syslog_relay can stall — try (in order): ",
-    "(1) reboot the iPhone, ",
-    "(2) `sudo killall usbmuxd` on the Mac, ",
-    "(3) `idevicepair unpair && idevicepair pair` then re-Trust on the device.",
+    "iOS log stream stalled — restarting idevicesyslog. ",
+    "If this repeats, the pair record is usually stale: ",
+    "(1) `idevicepair unpair && idevicepair pair`, then re-Trust on the device, ",
+    "(2) unlock the iPhone and disable Auto-Lock while debugging, ",
+    "(3) `sudo launchctl kickstart -k system/com.apple.usbmuxd` on the Mac.",
 );
 
 /// Spawn the iOS bridge worker. Returns immediately; runs forever in a tokio task.
@@ -71,14 +70,58 @@ async fn run_once(tx: &broadcast::Sender<String>) -> Result<(), String> {
         }
     });
 
-    // True once we've seen at least one parsed log line on this connection;
-    // the stall watchdog reads this to decide whether to fire.
-    let saw_log = Arc::new(AtomicBool::new(false));
+    // Activity pings: each parsed line and each `[connected:...]` marker
+    // notifies the watchdog. The watchdog only arms after the first ping,
+    // so an unplugged device doesn't cause a respawn loop.
+    let activity = Arc::new(Notify::new());
 
-    // Year prefix for ts (idevicesyslog omits year).
+    let read_loop = read_lines(stdout, tx.clone(), activity.clone());
+    let stall_watch = watch_for_stall(activity.clone());
+
+    let outcome = tokio::select! {
+        r = read_loop => r,
+        r = stall_watch => r,
+    };
+
+    // Kill the child explicitly so the next iteration starts from a clean slate.
+    // (kill_on_drop covers task cancellation; this covers the stall path.)
+    let _ = child.kill().await;
+
+    match outcome {
+        StreamOutcome::Stalled => {
+            tracing::warn!("[ios] stream stalled after {STREAM_STALL_TIMEOUT_SECS}s — respawning");
+            emit_error(tx, STALL_HINT);
+            Err("stream stalled".into())
+        }
+        StreamOutcome::ReaderEof => {
+            let status = child.wait().await.map_err(|e| e.to_string())?;
+            Err(format!("idevicesyslog exited with status: {status}"))
+        }
+        StreamOutcome::ReaderErr(e) => Err(e),
+    }
+}
+
+enum StreamOutcome {
+    Stalled,
+    ReaderEof,
+    ReaderErr(String),
+}
+
+async fn read_lines(
+    stdout: tokio::process::ChildStdout,
+    tx: broadcast::Sender<String>,
+    activity: Arc<Notify>,
+) -> StreamOutcome {
     let year = chrono::Local::now().year();
     let mut reader = BufReader::new(stdout).lines();
-    while let Some(raw) = reader.next_line().await.map_err(|e| e.to_string())? {
+    loop {
+        let next = reader.next_line().await;
+        let raw = match next {
+            Ok(Some(line)) => line,
+            Ok(None) => return StreamOutcome::ReaderEof,
+            Err(e) => return StreamOutcome::ReaderErr(e.to_string()),
+        };
+
         let line = ANSI_RE.replace_all(&raw, "").trim_end().to_string();
         if line.is_empty() {
             continue;
@@ -88,15 +131,13 @@ async fn run_once(tx: &broadcast::Sender<String>) -> Result<(), String> {
         if line.starts_with('[') && line.ends_with(']') {
             let inner = &line[1..line.len() - 1];
             push(
-                tx,
+                &tx,
                 &Frame::Devices(DevicesFrame {
                     data: inner.to_string(),
                 }),
             );
-            // On (re)connect, reset the watchdog and arm a fresh timer.
             if inner.starts_with("connected:") {
-                saw_log.store(false, Ordering::Relaxed);
-                arm_stall_watchdog(tx.clone(), saw_log.clone());
+                activity.notify_one();
             }
             continue;
         }
@@ -129,28 +170,26 @@ async fn run_once(tx: &broadcast::Sender<String>) -> Result<(), String> {
             app,
             msg: msg.to_string(),
         };
-        saw_log.store(true, Ordering::Relaxed);
-        push(tx, &Frame::Log(log_frame));
+        push(&tx, &Frame::Log(log_frame));
+        activity.notify_one();
     }
-
-    let status = child.wait().await.map_err(|e| e.to_string())?;
-    Err(format!("idevicesyslog exited with status: {status}"))
 }
 
-/// Spawn a one-shot timer that fires after `STREAM_STALL_TIMEOUT_SECS` and,
-/// if no log line has been seen by then, emits an `ErrorFrame` with the
-/// recovery hint. The timer task exits on its own — no cancellation needed,
-/// since `saw_log` is checked only once at deadline.
-fn arm_stall_watchdog(tx: broadcast::Sender<String>, saw_log: Arc<AtomicBool>) {
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(Duration::from_secs(STREAM_STALL_TIMEOUT_SECS)).await;
-        if !saw_log.load(Ordering::Relaxed) {
-            tracing::warn!(
-                "[ios] stream stall: no logs in {STREAM_STALL_TIMEOUT_SECS}s post-connect"
-            );
-            emit_error(&tx, STALL_HINT);
+/// Arms only after the first ping, then fires if no ping arrives within
+/// `STREAM_STALL_TIMEOUT_SECS`. Caller respawns the child on return.
+async fn watch_for_stall(activity: Arc<Notify>) -> StreamOutcome {
+    activity.notified().await;
+    loop {
+        match tokio::time::timeout(
+            Duration::from_secs(STREAM_STALL_TIMEOUT_SECS),
+            activity.notified(),
+        )
+        .await
+        {
+            Ok(()) => continue,
+            Err(_) => return StreamOutcome::Stalled,
         }
-    });
+    }
 }
 
 fn push(tx: &broadcast::Sender<String>, frame: &Frame) {

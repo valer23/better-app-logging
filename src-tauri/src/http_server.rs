@@ -13,7 +13,7 @@ use axum::{
     body::Body,
     http::{header, Method, StatusCode},
     response::Response,
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use tower_http::cors::{AllowOrigin, CorsLayer};
@@ -37,13 +37,16 @@ pub async fn serve(ready_tx: Sender<()>) -> Result<(), String> {
             "http://localhost:8780".parse().expect("static origin"),
             "http://127.0.0.1:8780".parse().expect("static origin"),
         ]))
-        .allow_methods([Method::GET])
+        .allow_methods([Method::GET, Method::POST])
         .allow_headers([header::CONTENT_TYPE]);
     let app = Router::new()
         .route("/", get(serve_index))
         .route("/devices/android", get(android_devices))
         .route("/devices/ios", get(ios_devices))
         .route("/ios-driver-status", get(ios_driver_status))
+        .route("/ios/unpair", post(ios_unpair))
+        .route("/ios/pair", post(ios_pair))
+        .route("/ios/repair", post(ios_repair))
         .layer(cors);
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", HTTP_PORT))
         .await
@@ -197,5 +200,86 @@ async fn ideviceinfo(udid: &str, key: &str) -> Option<String> {
         None
     } else {
         Some(s)
+    }
+}
+
+// ─── iOS pairing ───────────────────────────────────────────────────────────
+//
+// `idevicepair unpair` deletes the pair record stored on the host; `pair`
+// rewrites it after the user taps "Trust This Computer" on the phone. The
+// stale-pair-record path is the most common cause of `idevicesyslog` going
+// silent on iOS 17+, so we expose both as one-click UI actions.
+
+/// `idevicepair pair` blocks while waiting for the Trust dialog tap. Cap it
+/// so a forgotten/cancelled tap doesn't hang the HTTP handler indefinitely.
+const PAIR_TIMEOUT_SECS: u64 = 30;
+/// `unpair` is local-only — should be near-instant. Bound it anyway so a
+/// stuck `lockdownd` can't wedge the request.
+const UNPAIR_TIMEOUT_SECS: u64 = 5;
+
+async fn ios_unpair() -> Json<serde_json::Value> {
+    Json(run_idevicepair("unpair", UNPAIR_TIMEOUT_SECS).await)
+}
+
+async fn ios_pair() -> Json<serde_json::Value> {
+    Json(run_idevicepair("pair", PAIR_TIMEOUT_SECS).await)
+}
+
+/// Combo flow: unpair, then pair. Stops on first failure and reports which
+/// step failed so the UI can show a targeted message.
+async fn ios_repair() -> Json<serde_json::Value> {
+    let unpair = run_idevicepair("unpair", UNPAIR_TIMEOUT_SECS).await;
+    if !unpair["ok"].as_bool().unwrap_or(false) {
+        // Unpair failure with "ERROR: Device ... is not paired" is benign — fall through to pair.
+        let stderr = unpair["stderr"].as_str().unwrap_or("");
+        if !stderr.to_lowercase().contains("not paired") {
+            return Json(serde_json::json!({
+                "ok": false,
+                "step": "unpair",
+                "stdout": unpair["stdout"],
+                "stderr": unpair["stderr"],
+                "error": unpair["error"],
+            }));
+        }
+    }
+    let pair = run_idevicepair("pair", PAIR_TIMEOUT_SECS).await;
+    Json(serde_json::json!({
+        "ok": pair["ok"],
+        "step": "pair",
+        "stdout": pair["stdout"],
+        "stderr": pair["stderr"],
+        "error": pair["error"],
+        "unpair_stdout": unpair["stdout"],
+        "unpair_stderr": unpair["stderr"],
+    }))
+}
+
+/// Spawn `idevicepair <sub>`, wait up to `timeout_secs`, and return a uniform
+/// JSON result. On timeout the child is killed and `error` is populated.
+async fn run_idevicepair(sub: &str, timeout_secs: u64) -> serde_json::Value {
+    tracing::info!("[ios] idevicepair {sub}");
+    let fut = tooling::tokio_command("idevicepair").arg(sub).output();
+    match tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), fut).await {
+        Ok(Ok(out)) => serde_json::json!({
+            "ok": out.status.success(),
+            "stdout": String::from_utf8_lossy(&out.stdout).trim(),
+            "stderr": String::from_utf8_lossy(&out.stderr).trim(),
+            "error": serde_json::Value::Null,
+        }),
+        Ok(Err(e)) => serde_json::json!({
+            "ok": false,
+            "stdout": "",
+            "stderr": "",
+            "error": format!("spawn idevicepair {sub}: {e} (is libimobiledevice installed?)"),
+        }),
+        Err(_) => serde_json::json!({
+            "ok": false,
+            "stdout": "",
+            "stderr": "",
+            "error": format!(
+                "idevicepair {sub} timed out after {timeout_secs}s — \
+                 if pairing, make sure the iPhone is unlocked and tap 'Trust This Computer'."
+            ),
+        }),
     }
 }
