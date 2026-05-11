@@ -15,6 +15,14 @@ publish_output = true
 # Skip the marketing footer Qodo appends to every comment.
 ai_disclaimer_title = ""
 ai_disclaimer = ""
+# Skip Qodo on release PRs — they're pure version bumps (Cargo.toml +
+# Cargo.lock + tauri.conf.json), so a code review burns a paid credit for
+# zero signal. Belt-and-braces: match both the branch convention and the
+# commit/PR title convention. Both keys accept regex patterns and MUST
+# live under [config] — under [github_app] they are silently ignored.
+# Docs: https://docs.qodo.ai/code-review/concepts/ignore-content-from-analysis
+ignore_pr_source_branches = ["chore/release-.*", "release/.*"]
+ignore_pr_title = ["^chore: release", "^chore\\(release\\)"]
 
 [pr_reviewer]
 # Auto-review when a PR is opened or marked ready for review.
@@ -101,9 +109,3 @@ pr_commands = [
 ]
 # Run /improve only on demand (cost-conscious; we already have CI + Claude reviewers).
 push_commands = []
-# Skip auto-review on release PRs — they're pure version bumps (Cargo.toml +
-# Cargo.lock + tauri.conf.json), so a code review burns a paid credit for
-# zero signal. Belt-and-braces: match both the branch convention and the
-# commit/PR title convention.
-ignore_pr_source_branches = ["chore/release-.*", "release/.*"]
-ignore_pr_title = ["^chore: release", "^chore\\(release\\)"]
