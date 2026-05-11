@@ -13,7 +13,7 @@ jobs:
     name: Stale-ref grep + HTML parse
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: No dangling Python-bridge refs
         run: |
@@ -37,7 +37,7 @@ jobs:
     name: cargo fmt + check + clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Tauri Linux deps
         run: |
