@@ -101,3 +101,9 @@ pr_commands = [
 ]
 # Run /improve only on demand (cost-conscious; we already have CI + Claude reviewers).
 push_commands = []
+# Skip auto-review on release PRs — they're pure version bumps (Cargo.toml +
+# Cargo.lock + tauri.conf.json), so a code review burns a paid credit for
+# zero signal. Belt-and-braces: match both the branch convention and the
+# commit/PR title convention.
+ignore_pr_source_branches = ["chore/release-.*", "release/.*"]
+ignore_pr_title = ["^chore: release", "^chore\\(release\\)"]
