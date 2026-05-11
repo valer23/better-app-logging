@@ -277,12 +277,24 @@
   tr.new-row { animation: fadeIn .25s ease; }
 
   /* ── Export dropdown ── */
-  .export-wrap { position: relative; }
+  /* `margin-left: auto` keeps Export pinned to the right of its row even
+     when #filterbar wraps onto a second line on narrow viewports. */
+  .export-wrap { position: relative; margin-left: auto; }
+  /* Menu uses `position: fixed` and is positioned by JS (toggleExportMenu)
+     against the button's bounding rect, clamped to the viewport. This
+     prevents the menu from clipping off-screen when the button wraps to
+     the far left of the toolbar on small screens. */
   .export-menu {
     display: none;
-    position: absolute; top: calc(100% + 6px); right: 0;
+    position: fixed; top: 0; left: 0;
     background: var(--surface); border: 1px solid var(--border);
-    border-radius: 10px; padding: 6px; min-width: 240px;
+    border-radius: 10px; padding: 6px;
+    /* Prefer 240px, but shrink below that on very narrow viewports so the
+       menu never exceeds the viewport (16px = 2 × PAD from positionExportMenu).
+       No `min-width` — JS clamping reads `menu.offsetWidth` and needs the
+       laid-out width to be ≤ viewport for `Math.min(left, vw - mw - PAD)`
+       to keep the menu on-screen. */
+    width: min(240px, calc(100vw - 16px));
     box-shadow: 0 8px 32px #00000060; z-index: 50;
     flex-direction: column; gap: 2px;
   }
@@ -1065,17 +1077,61 @@ function togglePause() {
 function clearLogs() { allMessages = []; filtered = []; document.getElementById('tbody').innerHTML = ''; updateStats(); updateExportVisibility(); }
 
 // ── Export ──
+// Position the export menu against the button's bounding rect, clamped to
+// the viewport. Menu uses `position: fixed` so its placement is independent
+// of how the toolbar wrapped — fixes the off-screen-menu bug on narrow
+// viewports where the Export button wraps to the far left of the row.
+function positionExportMenu() {
+  const btn  = document.getElementById('exportBtn');
+  const menu = document.getElementById('exportMenu');
+  if (!btn || !menu) return;
+  const PAD = 8;
+  const rect = btn.getBoundingClientRect();
+  // Measure menu while it's invisible-but-laid-out (display:flex via .open).
+  const mw = menu.offsetWidth;
+  const mh = menu.offsetHeight;
+  const vw = document.documentElement.clientWidth;
+  const vh = document.documentElement.clientHeight;
+  // Preferred: right-align menu's right edge with button's right edge.
+  let left = rect.right - mw;
+  let top  = rect.bottom + 6;
+  // Clamp horizontally so the menu always stays fully on-screen.
+  left = Math.max(PAD, Math.min(left, vw - mw - PAD));
+  // Flip above the button if there isn't enough room below.
+  if (top + mh + PAD > vh) {
+    top = Math.max(PAD, rect.top - mh - 6);
+  }
+  menu.style.left = `${left}px`;
+  menu.style.top  = `${top}px`;
+}
 function toggleExportMenu() {
   const menu = document.getElementById('exportMenu');
   const open = menu.classList.toggle('open');
   if (open) {
     document.getElementById('exportFilteredCount').textContent = filtered.length.toLocaleString() + ' lines';
     document.getElementById('exportAllCount').textContent = allMessages.length.toLocaleString() + ' lines';
+    positionExportMenu();
   }
 }
 document.addEventListener('click', e => {
   const wrap = document.getElementById('exportWrap');
-  if (wrap && !wrap.contains(e.target)) document.getElementById('exportMenu').classList.remove('open');
+  const menu = document.getElementById('exportMenu');
+  // The menu is `position: fixed`, so it's no longer a descendant of `wrap`
+  // for hit-testing purposes when sized by JS — check both to avoid the
+  // click-inside-menu immediately closing it.
+  if (wrap && !wrap.contains(e.target) && menu && !menu.contains(e.target)) {
+    menu.classList.remove('open');
+  }
+});
+// Keep the menu glued to the button if the viewport changes while open.
+// Only `resize` is wired — the Export button lives in the static #filterbar
+// above the log table, and `body { overflow: hidden }` plus an internal
+// scroll container (`#logTable`) mean no scroll event can move the button.
+// A capture-phase scroll listener here would re-run positionExportMenu()
+// on every #logTable scroll for nothing — wasted layout reads/writes.
+window.addEventListener('resize', () => {
+  const menu = document.getElementById('exportMenu');
+  if (menu && menu.classList.contains('open')) positionExportMenu();
 });
 
 function getExportData() {
