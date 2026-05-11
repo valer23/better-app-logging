@@ -49,6 +49,21 @@ A native window labelled "AppLogsViewer" opens at 1400×900, navigates to
 `http://localhost:8780`, and renders the existing viewer UI. Edit any Rust source
 or `viewer/applogs-viewer.html` and re-run for an incremental ~5s rebuild.
 
+> **macOS Gatekeeper prompt on first `cargo run`.** The vendored binaries
+> under `vendor/macos-aarch64/` are ad-hoc signed (`codesign -s -`) by
+> `scripts/bundle-tooling-macos.sh`. On macOS 15+ Gatekeeper may show
+> *"adb cannot be opened, Apple could not verify…"* the first time the
+> debug build spawns one of them. Strip quarantine once on the whole
+> vendor dir:
+>
+> ```bash
+> xattr -cr src-tauri/vendor/macos-aarch64
+> ```
+>
+> Released `.app` bundles get the same treatment via
+> `xattr -d com.apple.quarantine /Applications/AppLogsViewer.app` — see
+> the [root README troubleshooting table](../README.md#troubleshooting).
+
 > **Why `cargo run` instead of `cargo tauri dev`?** The HTTP server is embedded in
 > the same Rust process — Tauri's CLI dev mode waits for an external frontend dev
 > server on `http://localhost:8780` before launching the binary, so the two would
