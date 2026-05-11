@@ -132,12 +132,17 @@
   .icon-btn.danger { color: var(--red); border-color: var(--red); }
   .icon-btn.paused { color: var(--yellow); border-color: var(--yellow); }
 
-  /* `margin-left: auto` pins the [stats][Export] cluster to the right of
-     #filterbar (and of its row when the toolbar wraps), so Export's right
-     edge stays anchored as the line counter widens.
-     `tabular-nums` keeps digit widths uniform so the counter doesn't jitter
-     glyph-by-glyph as the value grows (e.g. 9,999 → 10,000). */
-  .stats { font-size: 11px; color: var(--muted); font-family: 'JetBrains Mono', monospace; white-space: nowrap; margin-left: auto; font-variant-numeric: tabular-nums; }
+  /* `tabular-nums` keeps digit widths uniform so the counter doesn't
+     jitter glyph-by-glyph as the value grows (e.g. 9,999 → 10,000).
+     Right-pinning lives on the `.stats-export` wrapper below — keeping
+     it there (instead of on `.stats` itself) guarantees stats + Export
+     wrap together as a single unit when #filterbar wraps. */
+  .stats { font-size: 11px; color: var(--muted); font-family: 'JetBrains Mono', monospace; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  /* Single inline-flex row that holds [stats][Export]. `flex-wrap: nowrap`
+     stops Export from breaking onto its own line when stats fattens up;
+     `margin-left: auto` pins the whole cluster to the right edge of
+     #filterbar (and of the wrapped row when the toolbar itself wraps). */
+  .stats-export { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
 
   /* ── Drop Zone ── */
   #dropzone { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; border: 2px dashed var(--border); margin: 24px; border-radius: 12px; cursor: pointer; transition: border-color .2s, background .2s; }
@@ -296,9 +301,9 @@
   tr.new-row { animation: fadeIn .25s ease; }
 
   /* ── Export dropdown ── */
-  /* Right-pinning is now driven by `.stats { margin-left: auto }` so the
-     [stats][Export] cluster moves together — keeps Export's right edge
-     anchored as the line counter widens. */
+  /* Right-pinning is owned by the `.stats-export` wrapper around this
+     element, so `.export-wrap` only needs to anchor the menu in CSS.
+     (The menu itself is `position: fixed` and placed by JS.) */
   .export-wrap { position: relative; }
   /* Menu uses `position: fixed` and is positioned by JS (toggleExportMenu)
      against the button's bounding rect, clamped to the viewport. This
@@ -390,29 +395,31 @@
   <button class="icon-btn"        id="pauseBtn"      onclick="togglePause()"      style="display:none">⏸ Pause</button>
   <button class="icon-btn danger" id="clearBtn"      onclick="clearLogs()"        style="display:none">🗑 Clear</button>
   <div class="sep"></div>
-  <!-- Stats counter renders LEFT of Export so its growing width pushes
-       leftward into the bar spacer instead of nudging Export off-axis. -->
-  <div class="stats" id="stats"></div>
-  <!-- Export button + dropdown (always visible when logs are loaded) -->
-  <div class="export-wrap" id="exportWrap" style="display:none; position:relative;">
-    <button class="icon-btn" id="exportBtn" onclick="toggleExportMenu()" style="color:var(--accent);border-color:var(--accent)">💾 Export</button>
-    <div class="export-menu" id="exportMenu">
-      <div class="export-menu-header">Export <span id="exportCount"></span></div>
-      <button class="export-opt" onclick="exportClicked('txt')">
-        <span class="export-icon">📄</span>
-        <div><strong>Plain Text</strong><div class="export-desc">Terminal-style, easy to share</div></div>
-      </button>
-      <button class="export-opt" onclick="exportClicked('csv')">
-        <span class="export-icon">📊</span>
-        <div><strong>CSV</strong><div class="export-desc">Open in Excel / Numbers</div></div>
-      </button>
-      <button class="export-opt" onclick="exportClicked('json')">
-        <span class="export-icon">🗂</span>
-        <div><strong>JSON</strong><div class="export-desc">Re-import into this viewer</div></div>
-      </button>
-      <div class="export-scope">
-        <label><input type="radio" name="exportScope" value="filtered" checked> Filtered view (<span id="exportFilteredCount"></span>)</label>
-        <label><input type="radio" name="exportScope" value="all"> All logs (<span id="exportAllCount"></span>)</label>
+  <!-- Stats counter and Export live in one wrapper so they always wrap as
+       a unit and stay right-anchored together — see `.stats-export` CSS. -->
+  <div class="stats-export">
+    <div class="stats" id="stats"></div>
+    <!-- Export button + dropdown (always visible when logs are loaded) -->
+    <div class="export-wrap" id="exportWrap" style="display:none; position:relative;">
+      <button class="icon-btn" id="exportBtn" onclick="toggleExportMenu()" style="color:var(--accent);border-color:var(--accent)">💾 Export</button>
+      <div class="export-menu" id="exportMenu">
+        <div class="export-menu-header">Export <span id="exportCount"></span></div>
+        <button class="export-opt" onclick="exportClicked('txt')">
+          <span class="export-icon">📄</span>
+          <div><strong>Plain Text</strong><div class="export-desc">Terminal-style, easy to share</div></div>
+        </button>
+        <button class="export-opt" onclick="exportClicked('csv')">
+          <span class="export-icon">📊</span>
+          <div><strong>CSV</strong><div class="export-desc">Open in Excel / Numbers</div></div>
+        </button>
+        <button class="export-opt" onclick="exportClicked('json')">
+          <span class="export-icon">🗂</span>
+          <div><strong>JSON</strong><div class="export-desc">Re-import into this viewer</div></div>
+        </button>
+        <div class="export-scope">
+          <label><input type="radio" name="exportScope" value="filtered" checked> Filtered view (<span id="exportFilteredCount"></span>)</label>
+          <label><input type="radio" name="exportScope" value="all"> All logs (<span id="exportAllCount"></span>)</label>
+        </div>
       </div>
     </div>
   </div>
