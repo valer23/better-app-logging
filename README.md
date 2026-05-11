@@ -1,7 +1,7 @@
 # better-app-logging
 
 [![CI](https://github.com/valer23/better-app-logging/actions/workflows/ci.yml/badge.svg)](https://github.com/valer23/better-app-logging/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-MIT_OR_Apache--2.0-blue.svg)](#license)
 [![Tauri v2](https://img.shields.io/badge/Tauri-v2-24C8DB.svg)](https://v2.tauri.app/)
 [![macOS](https://img.shields.io/badge/macOS-Apple_Silicon-000000.svg?logo=apple)](#install)
 [![Windows](https://img.shields.io/badge/Windows-x64-0078D6.svg?logo=windows)](#install)
@@ -164,7 +164,7 @@ viewer/       Standalone HTML/CSS/JS UI (applogs-viewer.html). Embedded into
               the Rust binary at compile time via `include_str!` — single
               source of truth, no separate frontend build step.
 .github/      CI: stale-ref grep, cargo fmt, cargo check, cargo clippy.
-LICENSE       MIT.
+LICENSE-MIT, LICENSE-APACHE   Dual-licensed under MIT or Apache-2.0.
 ```
 
 The host process spawns `adb logcat` and `idevicesyslog` as subprocesses,
@@ -176,4 +176,25 @@ the streams, and renders into a virtualised table.
 
 ## License
 
-[MIT](LICENSE).
+Licensed under either of:
+
+- [MIT License](LICENSE-MIT)
+- [Apache License, Version 2.0](LICENSE-APACHE)
+
+at your option.
+
+### Contribution
+
+Unless you explicitly state otherwise, any contribution intentionally
+submitted for inclusion in this project by you, as defined in the
+Apache-2.0 license, shall be dual-licensed as above, without any
+additional terms or conditions.
+
+### Third-party tooling
+
+The bundled binaries shipped under `src-tauri/vendor/<triple>/` retain
+their upstream licenses:
+
+- `adb` (Android Platform Tools): Apache-2.0
+- `idevice_id`, `ideviceinfo`, `idevicepair`, `idevicesyslog` and their
+  shared libraries (libimobiledevice): LGPL-2.1-or-later

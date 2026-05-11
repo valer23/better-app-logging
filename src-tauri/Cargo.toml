@@ -4,7 +4,7 @@ version = "1.0.4"
 edition = "2021"
 description = "Native cross-platform live log viewer for Android and iOS devices"
 authors = ["Bragi"]
-license = "MIT"
+license = "MIT OR Apache-2.0"
 
 [lib]
 name = "applogs_viewer_lib"
