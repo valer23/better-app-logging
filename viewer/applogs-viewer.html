@@ -1124,14 +1124,15 @@ document.addEventListener('click', e => {
   }
 });
 // Keep the menu glued to the button if the viewport changes while open.
+// Only `resize` is wired — the Export button lives in the static #filterbar
+// above the log table, and `body { overflow: hidden }` plus an internal
+// scroll container (`#logTable`) mean no scroll event can move the button.
+// A capture-phase scroll listener here would re-run positionExportMenu()
+// on every #logTable scroll for nothing — wasted layout reads/writes.
 window.addEventListener('resize', () => {
   const menu = document.getElementById('exportMenu');
   if (menu && menu.classList.contains('open')) positionExportMenu();
 });
-window.addEventListener('scroll', () => {
-  const menu = document.getElementById('exportMenu');
-  if (menu && menu.classList.contains('open')) positionExportMenu();
-}, true);
 
 function getExportData() {
   return document.querySelector('input[name="exportScope"]:checked').value === 'filtered' ? filtered : allMessages;
