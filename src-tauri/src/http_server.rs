@@ -4,12 +4,16 @@
 //! is self-contained, and there is exactly one source of truth on disk under
 //! `viewer/`).
 //!
-//! Single `GET /` route on port 8780, `Cache-Control: no-store` for fast
-//! iteration.
+//! Routes on port 8780:
+//! - `GET /` — viewer HTML
+//! - `GET /devices/{android,ios}`, `GET /ios-driver-status` — device discovery
+//! - `POST /ios/{pair,unpair,repair}` — iOS pairing actions
+//! - `POST /window/glass-mode` — toggle macOS NSVisualEffectView material
+//!
+//! `Cache-Control: no-store` for fast iteration.
 
 use std::sync::mpsc::Sender;
 
-#[allow(unused_imports)] // State is imported now; used in Task 3's glass-mode handler
 use axum::{
     body::Body,
     extract::State,
@@ -18,15 +22,24 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use serde::Deserialize;
 use tauri::AppHandle;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use crate::tooling;
 
+/// Port the Tauri window is configured to load (`tauri.conf.json:13`).
 pub const HTTP_PORT: u16 = 8780;
+
+/// Embedded viewer HTML — single source of truth lives under `viewer/`.
 const VIEWER_HTML: &str = include_str!("../../viewer/applogs-viewer.html");
 
+/// Bind axum on `127.0.0.1:HTTP_PORT`, signal ready via `ready_tx`, then serve forever.
 pub async fn serve(app: AppHandle, ready_tx: Sender<()>) -> Result<(), String> {
+    // Lock CORS to the two loopback origins the Tauri window can present.
+    // Native (no Origin header, e.g. direct curl / IPC) is not blocked by
+    // CORS — the browser is the enforcer; tower-http only acts when an
+    // Origin header is present.
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::list([
             "http://localhost:8780".parse().expect("static origin"),
@@ -42,6 +55,7 @@ pub async fn serve(app: AppHandle, ready_tx: Sender<()>) -> Result<(), String> {
         .route("/ios/unpair", post(ios_unpair))
         .route("/ios/pair", post(ios_pair))
         .route("/ios/repair", post(ios_repair))
+        .route("/window/glass-mode", post(set_glass_mode))
         .layer(cors);
     let app_router = router.with_state(app);
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", HTTP_PORT))
@@ -479,4 +493,51 @@ async fn run_idevicepair(sub: &str, timeout_secs: u64) -> serde_json::Value {
         "stderr": String::from_utf8_lossy(&se).trim(),
         "error": serde_json::Value::Null,
     })
+}
+
+// ─── Window effects ─────────────────────────────────────────────────────────
+
+/// Request body for `POST /window/glass-mode`.
+#[derive(Deserialize)]
+struct GlassModeReq {
+    enabled: bool,
+}
+
+/// Toggle NSVisualEffectView material on the `main` window.
+///
+/// On non-macOS targets, Tauri's `set_effects` is a no-op for
+/// macOS-specific materials, so this handler is safe to call (and reach via the
+/// frontend) on any platform — the frontend, however, gates the toggle UI to
+/// darwin only.
+async fn set_glass_mode(
+    State(app): State<AppHandle>,
+    Json(req): Json<GlassModeReq>,
+) -> Response {
+    use tauri::utils::config::WindowEffectsConfig;
+    use tauri::utils::{WindowEffect, WindowEffectState};
+    use tauri::Manager;
+
+    let Some(window) = app.get_webview_window("main") else {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "main window missing").into_response();
+    };
+
+    let result = if req.enabled {
+        let cfg = WindowEffectsConfig {
+            effects: vec![WindowEffect::HudWindow],
+            state: Some(WindowEffectState::FollowsWindowActiveState),
+            radius: None,
+            color: None,
+        };
+        window.set_effects(cfg)
+    } else {
+        window.set_effects(None)
+    };
+
+    match result {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => {
+            tracing::warn!("set_glass_mode failed: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response()
+        }
+    }
 }
