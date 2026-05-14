@@ -86,6 +86,32 @@ pub fn run() {
                 tooling::init(bundled);
             }
 
+            // Enforce a sensible minimum window size on startup. macOS auto-
+            // restores the last-used NSWindow geometry from its Saved
+            // Application State, which can be smaller than `minWidth`/
+            // `minHeight` from the conf (those constraints only gate user
+            // resize, not OS-side restoration). Without this clamp, a user
+            // who once shrank the window keeps reopening into a cropped UI.
+            {
+                use tauri::{LogicalSize, Manager};
+                if let Some(w) = app.get_webview_window("main") {
+                    let scale = w.scale_factor().unwrap_or(1.0);
+                    if let Ok(size) = w.inner_size() {
+                        let logical_w = size.width as f64 / scale;
+                        let logical_h = size.height as f64 / scale;
+                        const MIN_W: f64 = 1100.0;
+                        const MIN_H: f64 = 700.0;
+                        const DEFAULT_W: f64 = 1400.0;
+                        const DEFAULT_H: f64 = 900.0;
+                        if logical_w < MIN_W || logical_h < MIN_H {
+                            let target_w = logical_w.max(DEFAULT_W);
+                            let target_h = logical_h.max(DEFAULT_H);
+                            let _ = w.set_size(LogicalSize::new(target_w, target_h));
+                        }
+                    }
+                }
+            }
+
             // HTTP server (axum) — bind synchronously so the window does
             // not race the page load.
             let (ready_tx, ready_rx) = std::sync::mpsc::channel::<()>();
