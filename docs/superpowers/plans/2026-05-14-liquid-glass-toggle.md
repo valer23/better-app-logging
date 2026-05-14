@@ -47,6 +47,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
@@ -68,10 +69,19 @@
 }
 ```
 
+Also enable the matching Tauri feature in `src-tauri/Cargo.toml`:
+
+```toml
+tauri = { version = "2", features = ["macos-private-api"] }
+```
+
+Without `macOSPrivateApi: true` + the `macos-private-api` feature, `transparent: true` is silently ignored on macOS and the entire Liquid Glass effect renders flat.
+
 Notes:
 - `effects: []` at startup → glass is OFF by default (matches Classic default).
 - Window is permanently transparent so the runtime toggle can add/remove the material without recreating the window.
 - `hiddenTitle: true` + `titleBarStyle: "Overlay"` puts traffic lights on top of `#topbar`; CSS adds `padding-left: 78px` (Task 7).
+- `macOSPrivateApi: true` blocks Mac App Store submission. This project ships as DMG only — confirmed acceptable.
 
 - [ ] **Step 2: Verify config validates**
 
