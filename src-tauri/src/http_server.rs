@@ -257,8 +257,10 @@ async fn ios_pair(headers: HeaderMap) -> Response {
     Json(run_idevicepair("pair", PAIR_TIMEOUT_SECS).await).into_response()
 }
 
-/// Combo flow: unpair, then pair. Stops on first failure and reports which
-/// step failed so the UI can show a targeted message.
+/// Combo flow: unpair, pair, then kill any stale `idevicesyslog` left over
+/// from a prior connect attempt. The kill step is a cleanup — its result is
+/// reported but never fails the overall repair, since "no matching process"
+/// is the common case on a healthy host.
 async fn ios_repair(headers: HeaderMap) -> Response {
     if let Err(e) = require_browser_origin(&headers) {
         return e.into_response();
@@ -279,6 +281,7 @@ async fn ios_repair(headers: HeaderMap) -> Response {
         }
     }
     let pair = run_idevicepair("pair", PAIR_TIMEOUT_SECS).await;
+    let kill = kill_stale_idevicesyslog().await;
     Json(serde_json::json!({
         "ok": pair["ok"],
         "step": "pair",
@@ -287,8 +290,97 @@ async fn ios_repair(headers: HeaderMap) -> Response {
         "error": pair["error"],
         "unpair_stdout": unpair["stdout"],
         "unpair_stderr": unpair["stderr"],
+        "kill_stale": kill,
     }))
     .into_response()
+}
+
+/// Kill any leftover `idevicesyslog` processes still holding the device
+/// after a prior connect attempt. On Unix this is `pkill -f idevicesyslog`;
+/// on Windows it's `taskkill /F /IM idevicesyslog.exe`.
+///
+/// Best-effort: "no matching process" is benign (pkill exit 1, taskkill exit
+/// 128) and is reported as `ok: true` so the UI does not flag a healthy host
+/// as broken. Anything else is surfaced verbatim alongside the pair output.
+async fn kill_stale_idevicesyslog() -> serde_json::Value {
+    use std::process::Stdio;
+    use tokio::io::AsyncReadExt;
+
+    #[cfg(target_os = "windows")]
+    let (cmd, args): (&str, &[&str]) = ("taskkill", &["/F", "/IM", "idevicesyslog.exe"]);
+    #[cfg(not(target_os = "windows"))]
+    let (cmd, args): (&str, &[&str]) = ("pkill", &["-f", "idevicesyslog"]);
+
+    tracing::info!("[ios] {cmd} {}", args.join(" "));
+    let mut child = match tokio::process::Command::new(cmd)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return serde_json::json!({
+                "ok": false,
+                "stdout": "",
+                "stderr": "",
+                "error": format!("spawn {cmd}: {e}"),
+            });
+        }
+    };
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let stdout_task = stdout.map(|mut s| {
+        tokio::spawn(async move {
+            let mut buf = Vec::new();
+            let _ = s.read_to_end(&mut buf).await;
+            buf
+        })
+    });
+    let stderr_task = stderr.map(|mut s| {
+        tokio::spawn(async move {
+            let mut buf = Vec::new();
+            let _ = s.read_to_end(&mut buf).await;
+            buf
+        })
+    });
+
+    let status_opt = match tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        child.wait(),
+    )
+    .await
+    {
+        Ok(Ok(s)) => Some(s),
+        _ => {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            None
+        }
+    };
+
+    let so = match stdout_task {
+        Some(t) => t.await.unwrap_or_default(),
+        None => Vec::new(),
+    };
+    let se = match stderr_task {
+        Some(t) => t.await.unwrap_or_default(),
+        None => Vec::new(),
+    };
+    let exit_code = status_opt.and_then(|s| s.code());
+    // pkill: 0 = killed at least one, 1 = no matches. taskkill: 0 = killed,
+    // 128 = no matching task. Treat all three as success — the post-condition
+    // ("no idevicesyslog running") holds in every case.
+    let ok = matches!(exit_code, Some(0) | Some(1) | Some(128));
+    serde_json::json!({
+        "ok": ok,
+        "exit": exit_code,
+        "stdout": String::from_utf8_lossy(&so).trim(),
+        "stderr": String::from_utf8_lossy(&se).trim(),
+    })
 }
 
 /// Spawn `idevicepair <sub>`, wait up to `timeout_secs`, and return a uniform

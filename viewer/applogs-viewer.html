@@ -596,7 +596,7 @@
       <!-- Troubleshoot: re-pair when logs stop streaming -->
       <div class="troubleshoot">
         <div class="ts-title">🔧 Troubleshoot</div>
-        <p class="ts-desc">If logs stop streaming or never start after pressing <strong>Connect</strong>, the host/device pair record is usually stale, or a previous <code>idevicesyslog</code> process is still holding the connection. <strong>Re-pair</strong> rewrites the pair record (runs <code>idevicepair unpair</code> + <code>idevicepair pair</code>). You will need to tap <strong>Trust This Computer</strong> on the iPhone afterwards.</p>
+        <p class="ts-desc">If logs stop streaming or never start after pressing <strong>Connect</strong>, the host/device pair record is usually stale, or a previous <code>idevicesyslog</code> process is still holding the connection. <strong>Re-pair</strong> rewrites the pair record and clears any leftover stream (runs <code>idevicepair unpair</code> + <code>idevicepair pair</code> + <code>pkill -f idevicesyslog</code>). You will need to tap <strong>Trust This Computer</strong> on the iPhone afterwards.</p>
         <div class="ts-actions">
           <button class="btn-primary" id="setupRepairBtn" onclick="iosRepairFromSetup()">🔄 Re-pair iPhone</button>
           <button class="btn-secondary" id="setupUnpairBtn" onclick="iosUnpairFromSetup()" title="Advanced: delete the host's pair record only">Unpair only</button>
@@ -625,7 +625,7 @@ pkill -f idevicesyslog</pre>
   <div class="modal stall-modal">
     <h2>⚠ iOS log stream stalled</h2>
     <p id="stallModalText">No logs received from the iOS device. The host/device pair record is likely stale, or a previous <code>idevicesyslog</code> process is still holding the connection.</p>
-    <p>Tap <strong>Re-pair iPhone</strong> below (runs <code>idevicepair unpair</code> + <code>idevicepair pair</code>) — you'll be asked to tap <strong>Trust This Computer</strong> on the iPhone again.</p>
+    <p>Tap <strong>Re-pair iPhone</strong> below (runs <code>idevicepair unpair</code> + <code>idevicepair pair</code> + <code>pkill -f idevicesyslog</code>) — you'll be asked to tap <strong>Trust This Computer</strong> on the iPhone again.</p>
     <div class="ts-result" id="stallRepairResult"></div>
     <div class="ts-manual">
       <div class="ts-manual-title">Still stuck? Run these in a terminal:</div>
@@ -1192,10 +1192,12 @@ function handleWsMsg(e, platform) {
 
 // ── iOS pair / unpair / repair ──
 //
-// The Rust HTTP server exposes POST /ios/{unpair,pair,repair} which shell out
-// to `idevicepair`. Stale pair records are the most common cause of
-// `idevicesyslog` going silent on iOS 17+ — these wrappers let the user fix it
-// with one click instead of opening a terminal.
+// The Rust HTTP server exposes POST /ios/{unpair,pair,repair}. The repair
+// flow runs `idevicepair unpair`, `idevicepair pair`, and `pkill -f
+// idevicesyslog` (taskkill on Windows) in that order. Stale pair records and
+// leftover idevicesyslog processes are the two most common causes of an iOS
+// log stream going silent — chaining all three lets the user recover with
+// one click instead of opening a terminal.
 
 const REPAIR_CONFIRM = "You will need to trust the device again from your iPhone.\n\nThe iPhone must be unlocked, and after pressing OK you'll see a 'Trust This Computer?' dialog on the phone — tap Trust and enter the passcode.\n\nContinue?";
 const UNPAIR_CONFIRM = "This deletes the host's pair record for the iPhone. The next connect attempt will prompt 'Trust This Computer?' on the iPhone again.\n\nContinue?";
