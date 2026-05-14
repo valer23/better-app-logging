@@ -1,5 +1,19 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "transparent": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "windowEffects": {
+          "effects": [],
+          "state": "followsWindowActiveState"
+        }
+      }
+    ]
+  },
   "bundle": {
     "resources": [
       "vendor/macos-aarch64/*"
