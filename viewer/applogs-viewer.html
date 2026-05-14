@@ -22,10 +22,15 @@
       }
     } catch (_) {}
     // Seed Liquid Glass state pre-paint so the chrome doesn't flash.
+    // Platform detection is localStorage-independent; the glass read is wrapped
+    // separately so a SecurityError on localStorage still leaves data-platform set.
     var __glassRoot = document.documentElement;
-    var __isMac = /Mac OS X/i.test(navigator.userAgent);
-    __glassRoot.setAttribute('data-platform', __isMac ? 'mac' : 'other');
-    __glassRoot.setAttribute('data-glass', localStorage.getItem('glassMode') === 'on' ? 'on' : 'off');
+    __glassRoot.setAttribute('data-platform', /Mac OS X/i.test(navigator.userAgent) ? 'mac' : 'other');
+    try {
+      __glassRoot.setAttribute('data-glass', localStorage.getItem('applogs-viewer.glassMode') === 'on' ? 'on' : 'off');
+    } catch (_) {
+      __glassRoot.setAttribute('data-glass', 'off');
+    }
   })();
 </script>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%23161b22' stroke='%2330363d' stroke-width='1'/><circle cx='8' cy='9' r='2' fill='%2356d364'/><rect x='13' y='8' width='13' height='2' rx='1' fill='%233ddc84' opacity='.55'/><circle cx='8' cy='16' r='2' fill='%2379c0ff'/><rect x='13' y='15' width='11' height='2' rx='1' fill='%2379c0ff' opacity='.55'/><circle cx='8' cy='23' r='2' fill='%23ff7b72'/><rect x='13' y='22' width='9' height='2' rx='1' fill='%23ff7b72' opacity='.55'/></svg>">
@@ -127,7 +132,7 @@
      Hidden on non-macOS platforms via .platform-mac class (set by JS). */
   .glass-switch { position: relative; display: none; align-items: center; cursor: pointer; user-select: none; margin-left: 8px; }
   .glass-switch.platform-mac { display: inline-flex; }
-  .glass-switch input { position: absolute; opacity: 0; pointer-events: none; }
+  .glass-switch input { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
   .glass-switch-track {
     position: relative; width: 110px; height: 28px;
     background: var(--surface2); border: 1px solid var(--muted);
@@ -138,6 +143,7 @@
     color: var(--muted);
     transition: background .2s, border-color .2s, color .2s;
   }
+  .glass-switch:hover .glass-switch-track { border-color: var(--accent); }
   .glass-switch-label { z-index: 1; transition: color .2s; }
   .glass-switch input:checked + .glass-switch-track .glass-switch-label.glass { color: var(--text); }
   .glass-switch input:not(:checked) + .glass-switch-track .glass-switch-label.classic { color: var(--text); }
@@ -747,7 +753,7 @@ pkill -f idevicesyslog</pre>
       const enabled = input.checked;
       const next = enabled ? 'on' : 'off';
       root.setAttribute('data-glass', next);
-      localStorage.setItem('glassMode', next);
+      try { localStorage.setItem('applogs-viewer.glassMode', next); } catch (_) {}
       if (!isMac) return;
       try {
         const r = await postGlassMode(enabled);
