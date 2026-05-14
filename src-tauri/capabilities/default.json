@@ -3,6 +3,9 @@
   "identifier": "default",
   "description": "Capabilities for the main AppLogsViewer window. The frontend talks to the Rust host exclusively over HTTP/WebSocket (axum on :8780, :8765, :8766) for data. The one exception is window-control IPC: `start_dragging` is invoked from the page so the topbar can drag the native window when the title bar is overlay-hidden (macOS Liquid Glass mode).",
   "windows": ["main"],
+  "remote": {
+    "urls": ["http://localhost:8780/*", "http://localhost:8780"]
+  },
   "permissions": [
     "core:default",
     "core:window:default",
