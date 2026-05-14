@@ -429,9 +429,9 @@
 <div id="dropzone">
   <div class="drop-icon">📂</div>
   <h2>Drop a log file here</h2>
-  <p>Android: JSON <code style="font-family:monospace;font-size:12px;background:#1c2128;padding:1px 5px;border-radius:3px">.logcat</code> export from Android Studio<br>iOS: text log from <code style="font-family:monospace;font-size:12px;background:#1c2128;padding:1px 5px;border-radius:3px">idevicesyslog -o FILE</code></p>
+  <p>Android: JSON <code style="font-family:monospace;font-size:12px;background:#1c2128;padding:1px 5px;border-radius:3px">.logcat</code> export from Android Studio<br>iOS: text log from <code style="font-family:monospace;font-size:12px;background:#1c2128;padding:1px 5px;border-radius:3px">idevicesyslog -o FILE</code><br>Or any <code style="font-family:monospace;font-size:12px;background:#1c2128;padding:1px 5px;border-radius:3px">.txt</code> / <code style="font-family:monospace;font-size:12px;background:#1c2128;padding:1px 5px;border-radius:3px">.csv</code> / <code style="font-family:monospace;font-size:12px;background:#1c2128;padding:1px 5px;border-radius:3px">.json</code> exported from this viewer</p>
   <label for="fileInput">Browse file</label>
-  <input type="file" id="fileInput" accept=".logcat,.json,.log,.txt">
+  <input type="file" id="fileInput" accept=".logcat,.json,.log,.txt,.csv">
 </div>
 
 <!-- Live mode panel -->
@@ -899,20 +899,47 @@ function handleFile(file) {
   reader.onload = ev => {
     const text = ev.target.result;
     try {
-      // Try Android JSON first
-      if (text.trimStart().startsWith('{')) {
-        document.getElementById('loadingText').textContent = 'Parsing Android JSON…';
-        const json = JSON.parse(text);
-        allMessages = (json.logcatMessages || []).map(m => ({
-          ts: formatTs(m.header.timestamp), pid: m.header.pid, tid: m.header.tid,
-          tag: m.header.tag || '', app: m.header.applicationId || m.header.processName || '',
-          lvl: m.header.logLevel || 'VERBOSE', msg: m.message || '', platform: 'android'
-        }));
+      const trimmed = text.replace(/^﻿/, '').trimStart();
+      if (trimmed.startsWith('{')) {
+        const json = JSON.parse(trimmed);
+        if (json && json.source === 'device-log-viewer' && Array.isArray(json.messages)) {
+          document.getElementById('loadingText').textContent = 'Parsing viewer JSON…';
+          allMessages = json.messages.map(m => ({
+            ts: m.timestamp || '', pid: m.pid || 0, tid: m.tid || 0,
+            tag: m.tag || '', app: m.app || '',
+            lvl: m.level || 'INFO', msg: m.message || '',
+            platform: m.platform || 'ios',
+          }));
+        } else if (Array.isArray(json.logcatMessages)) {
+          document.getElementById('loadingText').textContent = 'Parsing Android JSON…';
+          allMessages = json.logcatMessages.map(m => ({
+            ts: formatTs(m.header.timestamp), pid: m.header.pid, tid: m.header.tid,
+            tag: m.header.tag || '', app: m.header.applicationId || m.header.processName || '',
+            lvl: m.header.logLevel || 'VERBOSE', msg: m.message || '', platform: 'android'
+          }));
+        } else {
+          throw new Error('Unrecognized JSON format (no logcatMessages or viewer messages array)');
+        }
       } else {
-        // Try iOS syslog text format
-        document.getElementById('loadingText').textContent = 'Parsing iOS syslog…';
-        allMessages = parseIosText(text);
+        const firstLine = trimmed.split('\n', 1)[0].trimEnd();
+        if (firstLine === EXPORTED_CSV_HEADER) {
+          document.getElementById('loadingText').textContent = 'Parsing viewer CSV…';
+          allMessages = parseExportedCsv(text);
+        } else if (EXPORTED_TXT_RE.test(firstLine)) {
+          document.getElementById('loadingText').textContent = 'Parsing viewer text export…';
+          allMessages = parseExportedTxt(text);
+        } else {
+          document.getElementById('loadingText').textContent = 'Parsing iOS syslog…';
+          allMessages = parseIosText(text);
+        }
       }
+
+      if (allMessages.length === 0) {
+        alert('No log lines found — file format not recognized.');
+        showOnly('dropzone');
+        return;
+      }
+
       document.getElementById('loadingText').textContent = `Rendering ${allMessages.length.toLocaleString()} lines…`;
       setTimeout(() => { applyFilters(); showOnly('logWrapper'); updateExportVisibility(); }, 50);
     } catch(err) {
@@ -943,6 +970,96 @@ function parseIosText(text) {
     msgs.push({ ts: `${year} ${ts}`, pid: parseInt(pid), tid: 0, tag: process, app: '', lvl: IOS_LEVEL_MAP[level] || 'INFO', msg, platform: 'ios' });
   }
   return msgs;
+}
+
+// Viewer-export round-trip parsers. Format must stay in sync with `doExport`
+// below. TXT line shape (widths: pid/tid padStart 6, tag padEnd 32, app
+// padEnd 28; fields joined by "  "):
+//   "YYYY MMM DD HH:MM:SS.uuuuuu  EMOJI  PID-TID  L  TAG  APP  MSG"
+const EXPORTED_TXT_RE = /^(\d{4}\s+\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\.\d+)\s+(🍎|🤖)\s+(\s*\d+)-(\s*\d+)\s+([VDIWEA?])\s+(.+)$/;
+const TXT_LEVEL_MAP = { V:'VERBOSE', D:'DEBUG', I:'INFO', W:'WARN', E:'ERROR', A:'ASSERT' };
+const EXPORTED_CSV_HEADER = 'timestamp,platform,pid,tid,level,tag,app,message';
+
+function parseExportedTxt(text) {
+  const msgs = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const m = EXPORTED_TXT_RE.exec(raw);
+    if (!m) continue;
+    const [, ts, emoji, pid, tid, lvlChar, rest] = m;
+    // rest = tag.padEnd(32) + "  " + app.padEnd(28) + "  " + msg.
+    // Anchor splits at the min field widths so tag/app trailing pad spaces
+    // never collide with the "  " separator, even when message contains
+    // embedded double spaces.
+    const i = rest.indexOf('  ', 32);
+    if (i < 0) continue;
+    const tag = rest.slice(0, i).trimEnd();
+    const after = rest.slice(i + 2);
+    const j = after.indexOf('  ', 28);
+    if (j < 0) continue;
+    const app = after.slice(0, j).trimEnd();
+    const msg = after.slice(j + 2);
+    msgs.push({
+      ts, pid: parseInt(pid, 10), tid: parseInt(tid, 10),
+      lvl: TXT_LEVEL_MAP[lvlChar] || 'INFO',
+      tag, app, msg,
+      platform: emoji === '🍎' ? 'ios' : 'android',
+    });
+  }
+  return msgs;
+}
+
+function parseExportedCsv(text) {
+  const rows = parseCsvRows(text.replace(/^﻿/, ''));
+  if (!rows.length) return [];
+  const header = rows[0].join(',');
+  if (header !== EXPORTED_CSV_HEADER) return [];
+  const msgs = [];
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    if (row.length < 8) continue;
+    const [timestamp, platform, pid, tid, level, tag, app, message] = row;
+    msgs.push({
+      ts: timestamp, pid: parseInt(pid, 10) || 0, tid: parseInt(tid, 10) || 0,
+      lvl: level || 'INFO', tag: tag || '', app: app || '', msg: message || '',
+      platform: platform || 'ios',
+    });
+  }
+  return msgs;
+}
+
+// Minimal RFC-4180 reader: handles quoted cells with embedded `,`, `"` (as
+// `""`), `\n`, and CRLF line endings. No CSV libraries pulled in — viewer
+// stays single-file.
+function parseCsvRows(text) {
+  const rows = [];
+  let row = [];
+  let cell = '';
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { cell += '"'; i++; }
+        else { inQuotes = false; }
+      } else {
+        cell += c;
+      }
+    } else if (c === '"') {
+      inQuotes = true;
+    } else if (c === ',') {
+      row.push(cell); cell = '';
+    } else if (c === '\n' || c === '\r') {
+      row.push(cell); cell = '';
+      rows.push(row); row = [];
+      if (c === '\r' && text[i + 1] === '\n') i++;
+    } else {
+      cell += c;
+    }
+  }
+  if (cell.length || row.length) { row.push(cell); rows.push(row); }
+  // Drop trailing empty row from final newline.
+  if (rows.length && rows[rows.length - 1].length === 1 && rows[rows.length - 1][0] === '') rows.pop();
+  return rows;
 }
 
 function formatTs(ts) {
