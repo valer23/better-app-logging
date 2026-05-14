@@ -543,7 +543,9 @@ async fn set_glass_mode(
         {
             // Tauri 2.10.3 does not remove the NSVisualEffectView on macOS when
             // set_effects(None) is called, so we call window-vibrancy directly.
-            window_vibrancy::clear_vibrancy(&window).map(|_| ()).map_err(|e| e.to_string())
+            window_vibrancy::clear_vibrancy(&window)
+                .map(|_| ())
+                .map_err(|e| e.to_string())
         }
         #[cfg(not(target_os = "macos"))]
         {
