@@ -16,7 +16,7 @@
 - Glass applies only to chrome (`#topbar`, `#filterbar`, `#liveBar`, `thead`, `.modal`, `.connect-card`, `.device-menu`) — log rows stay opaque for readability
 - Toggle = two-state pill "Classic | Glass" right of the theme switch
 - Default = Classic, state persisted in `localStorage`
-- `titleBarStyle: Overlay` + `hiddenTitleBar: true` + permanent `transparent: true` on macOS; topbar gains 78px left padding for traffic lights
+- `titleBarStyle: Overlay` + `hiddenTitle: true` + permanent `transparent: true` on macOS; topbar gains 78px left padding for traffic lights
 - Wiring: `POST /window/glass-mode` on axum (no new Tauri IPC permission)
 - Verification: manual smoke on macOS + existing `cargo fmt/check/clippy` CI
 
