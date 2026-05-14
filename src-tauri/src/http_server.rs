@@ -348,19 +348,15 @@ async fn kill_stale_idevicesyslog() -> serde_json::Value {
         })
     });
 
-    let status_opt = match tokio::time::timeout(
-        std::time::Duration::from_secs(3),
-        child.wait(),
-    )
-    .await
-    {
-        Ok(Ok(s)) => Some(s),
-        _ => {
-            let _ = child.kill().await;
-            let _ = child.wait().await;
-            None
-        }
-    };
+    let status_opt =
+        match tokio::time::timeout(std::time::Duration::from_secs(3), child.wait()).await {
+            Ok(Ok(s)) => Some(s),
+            _ => {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                None
+            }
+        };
 
     let so = match stdout_task {
         Some(t) => t.await.unwrap_or_default(),
