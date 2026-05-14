@@ -509,10 +509,19 @@ struct GlassModeReq {
 /// macOS-specific materials, so this handler is safe to call (and reach via the
 /// frontend) on any platform — the frontend, however, gates the toggle UI to
 /// darwin only.
+///
+/// The `disabled` branch on macOS calls `window_vibrancy::clear_vibrancy`
+/// directly because Tauri 2.10.3's `set_effects(None)` returns `Ok(())` without
+/// actually removing the NSVisualEffectView on macOS.
 async fn set_glass_mode(
     State(app): State<AppHandle>,
+    headers: HeaderMap,
     Json(req): Json<GlassModeReq>,
 ) -> Response {
+    if let Err(e) = require_browser_origin(&headers) {
+        return e.into_response();
+    }
+
     use tauri::utils::config::WindowEffectsConfig;
     use tauri::utils::{WindowEffect, WindowEffectState};
     use tauri::Manager;
@@ -521,23 +530,32 @@ async fn set_glass_mode(
         return (StatusCode::INTERNAL_SERVER_ERROR, "main window missing").into_response();
     };
 
-    let result = if req.enabled {
+    let result: Result<(), String> = if req.enabled {
         let cfg = WindowEffectsConfig {
             effects: vec![WindowEffect::HudWindow],
             state: Some(WindowEffectState::FollowsWindowActiveState),
             radius: None,
             color: None,
         };
-        window.set_effects(cfg)
+        window.set_effects(cfg).map_err(|e| e.to_string())
     } else {
-        window.set_effects(None)
+        #[cfg(target_os = "macos")]
+        {
+            // Tauri 2.10.3 does not remove the NSVisualEffectView on macOS when
+            // set_effects(None) is called, so we call window-vibrancy directly.
+            window_vibrancy::clear_vibrancy(&window).map(|_| ()).map_err(|e| e.to_string())
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            window.set_effects(None).map_err(|e| e.to_string())
+        }
     };
 
     match result {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => {
             tracing::warn!("set_glass_mode failed: {e}");
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response()
+            (StatusCode::INTERNAL_SERVER_ERROR, e).into_response()
         }
     }
 }

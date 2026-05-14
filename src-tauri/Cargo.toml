@@ -27,6 +27,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 futures-util = "0.3"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+window-vibrancy = "0.6"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
