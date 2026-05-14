@@ -89,8 +89,9 @@ pub fn run() {
             // HTTP server (axum) — bind synchronously so the window does
             // not race the page load.
             let (ready_tx, ready_rx) = std::sync::mpsc::channel::<()>();
+            let http_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(err) = http_server::serve(ready_tx).await {
+                if let Err(err) = http_server::serve(http_handle, ready_tx).await {
                     tracing::error!("http server failed: {err:?}");
                 }
             });

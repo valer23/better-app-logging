@@ -9,29 +9,24 @@
 
 use std::sync::mpsc::Sender;
 
+#[allow(unused_imports)] // State is imported now; used in Task 3's glass-mode handler
 use axum::{
     body::Body,
+    extract::State,
     http::{header, HeaderMap, Method, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
+use tauri::AppHandle;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use crate::tooling;
 
-/// Port the Tauri window is configured to load (`tauri.conf.json:13`).
 pub const HTTP_PORT: u16 = 8780;
-
-/// Embedded viewer HTML — single source of truth lives under `viewer/`.
 const VIEWER_HTML: &str = include_str!("../../viewer/applogs-viewer.html");
 
-/// Bind axum on `127.0.0.1:HTTP_PORT`, signal ready via `ready_tx`, then serve forever.
-pub async fn serve(ready_tx: Sender<()>) -> Result<(), String> {
-    // Lock CORS to the two loopback origins the Tauri window can present.
-    // Native (no Origin header, e.g. direct curl / IPC) is not blocked by
-    // CORS — the browser is the enforcer; tower-http only acts when an
-    // Origin header is present.
+pub async fn serve(app: AppHandle, ready_tx: Sender<()>) -> Result<(), String> {
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::list([
             "http://localhost:8780".parse().expect("static origin"),
@@ -39,7 +34,7 @@ pub async fn serve(ready_tx: Sender<()>) -> Result<(), String> {
         ]))
         .allow_methods([Method::GET, Method::POST])
         .allow_headers([header::CONTENT_TYPE]);
-    let app = Router::new()
+    let router: Router<AppHandle> = Router::new()
         .route("/", get(serve_index))
         .route("/devices/android", get(android_devices))
         .route("/devices/ios", get(ios_devices))
@@ -48,6 +43,7 @@ pub async fn serve(ready_tx: Sender<()>) -> Result<(), String> {
         .route("/ios/pair", post(ios_pair))
         .route("/ios/repair", post(ios_repair))
         .layer(cors);
+    let app_router = router.with_state(app);
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", HTTP_PORT))
         .await
         .map_err(|e| format!("bind 127.0.0.1:{HTTP_PORT}: {e}"))?;
@@ -55,7 +51,7 @@ pub async fn serve(ready_tx: Sender<()>) -> Result<(), String> {
     if ready_tx.send(()).is_err() {
         tracing::warn!("http ready receiver already dropped — startup will hang");
     }
-    axum::serve(listener, app)
+    axum::serve(listener, app_router)
         .await
         .map_err(|e| format!("axum::serve: {e}"))?;
     Ok(())
