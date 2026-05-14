@@ -29,7 +29,7 @@
 | File | Action | Responsibility |
 |------|--------|---------------|
 | `src-tauri/tauri.macos.conf.json` | Modify | macOS-only window overrides: `transparent`, `titleBarStyle: Overlay`, `hiddenTitle: true`, initial `windowEffects: []` |
-| `src-tauri/src/http_server.rs` | Modify | Carry `tauri::AppHandle` as axum state; add `POST /window/glass-mode` route that calls `Window::set_effects` / `clear_effects` |
+| `src-tauri/src/http_server.rs` | Modify | Carry `tauri::AppHandle` as axum state; add `POST /window/glass-mode` route that calls `Window::set_effects` / `window_vibrancy::clear_vibrancy` (Tauri 2.10.3 lacks a macOS clear path, so the latter is called direct) |
 | `src-tauri/src/lib.rs` | Modify | Pass `app.handle().clone()` into `http_server::serve()` |
 | `viewer/applogs-viewer.html` | Modify | New CSS tokens + glass surface rules + toggle markup + JS state mgmt + `fetch('/window/glass-mode')` |
 | `docs/superpowers/plans/2026-05-14-liquid-glass-toggle.md` | Create | This plan |
@@ -244,8 +244,13 @@ struct GlassModeReq {
 
 async fn set_glass_mode(
     State(app): State<AppHandle>,
+    headers: HeaderMap,
     Json(req): Json<GlassModeReq>,
 ) -> Response {
+    if let Err(e) = require_browser_origin(&headers) {
+        return e.into_response();
+    }
+
     use tauri::utils::config::WindowEffectsConfig;
     use tauri::utils::{WindowEffect, WindowEffectState};
     use tauri::Manager;
@@ -254,29 +259,40 @@ async fn set_glass_mode(
         return (StatusCode::INTERNAL_SERVER_ERROR, "main window missing").into_response();
     };
 
-    let result = if req.enabled {
+    let result: Result<(), String> = if req.enabled {
         let cfg = WindowEffectsConfig {
             effects: vec![WindowEffect::HudWindow],
             state: Some(WindowEffectState::FollowsWindowActiveState),
             radius: None,
             color: None,
         };
-        window.set_effects(cfg)
+        window.set_effects(cfg).map_err(|e| e.to_string())
     } else {
-        window.clear_effects()
+        // Tauri 2.10.3's `set_effects(None)` is a no-op on macOS, so call
+        // window-vibrancy directly to actually remove the NSVisualEffectView.
+        #[cfg(target_os = "macos")]
+        {
+            window_vibrancy::clear_vibrancy(&window)
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            window.set_effects(None).map_err(|e| e.to_string())
+        }
     };
 
     match result {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => {
             tracing::warn!("set_glass_mode failed: {e}");
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response()
+            (StatusCode::INTERNAL_SERVER_ERROR, e).into_response()
         }
     }
 }
 ```
 
-If the Tauri v2 type paths in this project resolve under slightly different modules (some Tauri versions re-export `WindowEffect` from `tauri::window`), follow the compiler error: in v2 the canonical struct is `tauri::utils::config::WindowEffectsConfig`, the variant is `tauri::utils::WindowEffect::HudWindow`, and `set_effects`/`clear_effects` are inherent methods on `tauri::WebviewWindow`.
+If the Tauri v2 type paths in this project resolve under slightly different modules (some Tauri versions re-export `WindowEffect` from `tauri::window`), follow the compiler error: in v2 the canonical struct is `tauri::utils::config::WindowEffectsConfig`, the variant is `tauri::utils::WindowEffect::HudWindow`, and `set_effects` is an inherent method on `tauri::WebviewWindow`. There is no `clear_effects` method in Tauri 2.10.3 — use `set_effects(None)` on Windows/Linux and `window_vibrancy::clear_vibrancy(&window)` on macOS (a Tauri dispatch gap; window-vibrancy is already a transitive dep, promote it to a direct dep). The handler must also call `require_browser_origin(&headers)` for CSRF, matching the pattern used by the other state-changing POST routes in this file.
 
 - [ ] **Step 4: Build it**
 
