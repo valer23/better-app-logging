@@ -163,13 +163,7 @@
 
   /* ── Top bar ── */
   #topbar { background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: stretch; padding: 0 16px; flex-shrink: 0; }
-  html[data-platform="mac"] #topbar { padding-left: 78px; -webkit-app-region: drag; app-region: drag; }
-  html[data-platform="mac"] #topbar button,
-  html[data-platform="mac"] #topbar input,
-  html[data-platform="mac"] #topbar label,
-  html[data-platform="mac"] #topbar .zoom-group,
-  html[data-platform="mac"] #topbar .theme-switch,
-  html[data-platform="mac"] #topbar .glass-switch { -webkit-app-region: no-drag; app-region: no-drag; }
+  html[data-platform="mac"] #topbar { padding-left: 78px; }
   .logo { font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; color: var(--accent); letter-spacing: 0.05em; display: flex; align-items: center; gap: 8px; padding-right: 16px; border-right: 1px solid var(--border); margin-right: 4px; }
   .logo span { color: var(--muted); }
   .logo svg { display: block; flex-shrink: 0; }
@@ -438,7 +432,7 @@
 </head>
 <body>
 
-<div id="topbar" data-tauri-drag-region>
+<div id="topbar">
   <div class="logo">
     <svg class="logo-mark" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
       <rect width="32" height="32" rx="6" fill="var(--surface)" stroke="var(--border)" stroke-width="1"/>
@@ -734,6 +728,40 @@ pkill -f idevicesyslog</pre>
 </div>
 
 <script>
+// ─── Topbar drag-region (Tauri IPC) ──────────────────────────────────────
+// The macOS window uses titleBarStyle:Overlay + hiddenTitle, so the native
+// title bar that normally handles drag is gone. Tauri's CSS app-region needs
+// the `unstable` feature flag we don't enable; data-tauri-drag-region needs
+// the page to be served from tauri://localhost which we don't use (axum on
+// :8780). So drag is wired by hand: mousedown on the topbar background calls
+// the public window plugin via the global Tauri API.
+(function initTopbarDrag() {
+  const topbar = document.getElementById('topbar');
+  if (!topbar) return;
+  const INTERACTIVE = 'button, input, label, select, textarea, a, .zoom-group, .theme-switch, .glass-switch';
+  topbar.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    if (e.target.closest(INTERACTIVE)) return;
+    const tauri = window.__TAURI__;
+    if (!tauri || !tauri.window) return;
+    try {
+      tauri.window.getCurrentWindow().startDragging();
+    } catch (err) {
+      console.warn('startDragging failed', err);
+    }
+  });
+  topbar.addEventListener('dblclick', (e) => {
+    if (e.target.closest(INTERACTIVE)) return;
+    const tauri = window.__TAURI__;
+    if (!tauri || !tauri.window) return;
+    try {
+      tauri.window.getCurrentWindow().toggleMaximize();
+    } catch (err) {
+      console.warn('toggleMaximize failed', err);
+    }
+  });
+})();
+
 // ─── Liquid Glass toggle (macOS only) ────────────────────────────────────
 (function initGlassToggle() {
   const root = document.documentElement;
