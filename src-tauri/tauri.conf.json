@@ -8,6 +8,8 @@
     "devUrl": "http://localhost:8780"
   },
   "app": {
+    "withGlobalTauri": true,
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
@@ -15,8 +17,8 @@
         "url": "http://localhost:8780",
         "width": 1400,
         "height": 900,
-        "minWidth": 900,
-        "minHeight": 600,
+        "minWidth": 1100,
+        "minHeight": 700,
         "resizable": true,
         "decorations": true,
         "fullscreen": false,

@@ -1,11 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capabilities for the main AppLogsViewer window. The frontend talks to the Rust host exclusively over HTTP/WebSocket (axum on :8780, :8765, :8766) — no Tauri IPC commands. Subprocess spawning (adb, idevicesyslog) runs host-side via tokio::process::Command, so no shell plugin or permission is needed.",
+  "description": "Capabilities for the main AppLogsViewer window. The frontend talks to the Rust host exclusively over HTTP/WebSocket (axum on :8780, :8765, :8766) for data. The one exception is window-control IPC: `start_dragging` is invoked from the page so the topbar can drag the native window when the title bar is overlay-hidden (macOS Liquid Glass mode).",
   "windows": ["main"],
   "permissions": [
     "core:default",
     "core:window:default",
+    "core:window:allow-start-dragging",
     "core:webview:default",
     "core:event:default"
   ]
