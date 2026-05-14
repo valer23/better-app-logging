@@ -312,6 +312,7 @@ In another terminal:
 ```bash
 curl -i -X POST http://127.0.0.1:8780/window/glass-mode \
   -H 'Content-Type: application/json' \
+  -H 'Origin: http://localhost:8780' \
   -d '{"enabled":true}'
 ```
 Expected: `HTTP/1.1 204 No Content` and the window background visibly turns translucent (desktop blur shows behind the CSS surfaces — note Tasks 4–9 are not done yet, so CSS surfaces will still be solid; you should at least see a translucent fringe behind the title-bar area where no CSS surface paints).
@@ -319,6 +320,7 @@ Expected: `HTTP/1.1 204 No Content` and the window background visibly turns tran
 ```bash
 curl -i -X POST http://127.0.0.1:8780/window/glass-mode \
   -H 'Content-Type: application/json' \
+  -H 'Origin: http://localhost:8780' \
   -d '{"enabled":false}'
 ```
 Expected: `HTTP/1.1 204 No Content` and the window goes back to flat.
@@ -537,7 +539,7 @@ git commit -m "feat(viewer): add Liquid Glass toggle markup to topbar"
 
 Behavior:
 1. On load: detect macOS via the WebView UA. Set `data-platform="mac"` (or `"other"`) on `<html>`.
-2. On load: read `localStorage.glassMode` (default `"off"`), set `data-glass` on `<html>`, check the checkbox accordingly.
+2. On load: read `localStorage.getItem('applogs-viewer.glassMode')` (default `"off"`), set `data-glass` on `<html>`, check the checkbox accordingly. Wrap reads/writes in `try/catch` to survive private-browsing `SecurityError`. The key uses the project namespace prefix that matches `applogs-viewer.theme` / `applogs-viewer.logFontSize`.
 3. On toggle: update `data-glass`, write `localStorage`, POST new state to `/window/glass-mode` (mac only — non-mac skips the fetch).
 4. Hide the pill on non-mac (via absence of `platform-mac` class — already in Task 6 CSS).
 5. If a previously saved Glass=on session reopens on macOS, send one initial POST so the native window matches the CSS (the conf starts with `effects: []`).
@@ -555,7 +557,10 @@ Find the existing `<script>` opening tag in `viewer/applogs-viewer.html` (after 
   const isMac = /Mac OS X/i.test(navigator.userAgent);
   root.setAttribute('data-platform', isMac ? 'mac' : 'other');
 
-  const saved = localStorage.getItem('glassMode') === 'on' ? 'on' : 'off';
+  const saved = (() => {
+    try { return localStorage.getItem('applogs-viewer.glassMode') === 'on' ? 'on' : 'off'; }
+    catch (_) { return 'off'; }
+  })();
   root.setAttribute('data-glass', saved);
 
   function postGlassMode(enabled) {
@@ -577,7 +582,7 @@ Find the existing `<script>` opening tag in `viewer/applogs-viewer.html` (after 
       const enabled = input.checked;
       const next = enabled ? 'on' : 'off';
       root.setAttribute('data-glass', next);
-      localStorage.setItem('glassMode', next);
+      try { localStorage.setItem('applogs-viewer.glassMode', next); } catch (_) {}
       if (!isMac) return;
       try {
         const r = await postGlassMode(enabled);
