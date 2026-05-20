@@ -20,7 +20,7 @@ use crate::tooling;
 /// force a respawn. iOS 17+ `syslog_relay` can go quiet while the socket stays
 /// open (device sleeps, lockdownd throttles, usbmuxd tunnel hiccups). Killing
 /// the child lets the outer `spawn` loop reconnect from scratch.
-const STREAM_STALL_TIMEOUT_SECS: u64 = 8;
+const STREAM_STALL_TIMEOUT_SECS: u64 = 15;
 
 const STALL_HINT: &str = concat!(
     "iOS log stream stalled — restarting idevicesyslog. ",

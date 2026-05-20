@@ -1339,8 +1339,13 @@ function handleWsMsg(e, platform) {
       // iOS bridge stall hint — surface a popup with a one-click Re-pair action
       // so non-CLI users have a clear recovery path. Other error frames
       // (transient bridge errors that auto-recover) are ignored.
+      //
+      // Suppress while the user has Pause engaged: the backend watchdog is
+      // bridge-side and keeps firing on quiet streams regardless of the UI,
+      // so popping a recovery modal over a deliberately-paused view is a
+      // false alarm from the user's perspective.
       const text = (data.data || '').trim();
-      if (text.toLowerCase().includes('stalled')) {
+      if (text.toLowerCase().includes('stalled') && !livePaused) {
         showStallModal(text);
       }
       return;
