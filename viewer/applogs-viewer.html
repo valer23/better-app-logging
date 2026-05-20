@@ -72,18 +72,41 @@
   /* Liquid Glass mode — chrome surfaces become translucent overlays.
      Combined with light/dark theme to yield 4 effective looks. */
   [data-glass="on"] {
-    --surface:        rgba(22, 27, 34, 0.55);
-    --surface2:       rgba(22, 27, 34, 0.35);
-    --border:         rgba(255, 255, 255, 0.12);
-    --row-hover:      rgba(255, 255, 255, 0.04);
+    --surface:        rgba(22, 27, 34, 0.82);
+    --surface2:       rgba(22, 27, 34, 0.62);
+    --border:         rgba(255, 255, 255, 0.14);
+    --row-hover:      rgba(255, 255, 255, 0.05);
   }
   [data-glass="on"][data-theme="light"] {
-    --surface:        rgba(255, 255, 255, 0.55);
-    --surface2:       rgba(255, 255, 255, 0.35);
-    --border:         rgba(0, 0, 0, 0.10);
-    --row-hover:      rgba(0, 0, 0, 0.03);
+    --surface:        rgba(255, 255, 255, 0.85);
+    --surface2:       rgba(255, 255, 255, 0.65);
+    --border:         rgba(0, 0, 0, 0.14);
+    --row-hover:      rgba(0, 0, 0, 0.04);
   }
+  /* Body stays transparent so chrome surfaces show desktop blur, BUT the
+     log-viewing region (#logWrapper, dropzone, livePanel) is forced opaque
+     so dense text never composites over the desktop. This is the
+     "chrome translucent, content opaque" rule from the original plan. */
   [data-glass="on"] body { background: transparent; }
+  [data-glass="on"] #logWrapper,
+  [data-glass="on"] #logTable,
+  [data-glass="on"] tbody,
+  [data-glass="on"] tbody tr,
+  [data-glass="on"] tbody td,
+  [data-glass="on"] #dropzone,
+  [data-glass="on"] #livePanel { background: var(--bg); }
+  /* Chrome text gains a 1px shadow against the bg color so it stays legible
+     when the blurred desktop behind is bright/noisy. */
+  [data-glass="on"] #topbar,
+  [data-glass="on"] #filterbar,
+  [data-glass="on"] #liveBar,
+  [data-glass="on"] .modal,
+  [data-glass="on"] .connect-card { text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25); }
+  [data-glass="on"][data-theme="light"] #topbar,
+  [data-glass="on"][data-theme="light"] #filterbar,
+  [data-glass="on"][data-theme="light"] #liveBar,
+  [data-glass="on"][data-theme="light"] .modal,
+  [data-glass="on"][data-theme="light"] .connect-card { text-shadow: 0 1px 1px rgba(255, 255, 255, 0.55); }
 
   /* Apply backdrop-filter only to chrome surfaces when glass is on.
      Log rows + tbody intentionally stay opaque for readability. */
