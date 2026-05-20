@@ -72,16 +72,18 @@
   /* Liquid Glass mode — chrome surfaces become translucent overlays.
      Combined with light/dark theme to yield 4 effective looks. */
   [data-glass="on"] {
-    --surface:        rgba(22, 27, 34, 0.82);
-    --surface2:       rgba(22, 27, 34, 0.62);
-    --border:         rgba(255, 255, 255, 0.14);
+    --surface:        rgba(22, 27, 34, 0.62);
+    --surface2:       rgba(22, 27, 34, 0.42);
+    --border:         rgba(255, 255, 255, 0.16);
     --row-hover:      rgba(255, 255, 255, 0.05);
+    --glass-edge:     inset 0 1px 0 rgba(255, 255, 255, 0.10);
   }
   [data-glass="on"][data-theme="light"] {
-    --surface:        rgba(255, 255, 255, 0.85);
-    --surface2:       rgba(255, 255, 255, 0.65);
+    --surface:        rgba(255, 255, 255, 0.68);
+    --surface2:       rgba(255, 255, 255, 0.48);
     --border:         rgba(0, 0, 0, 0.14);
     --row-hover:      rgba(0, 0, 0, 0.04);
+    --glass-edge:     inset 0 1px 0 rgba(255, 255, 255, 0.55);
   }
   /* Body stays transparent so chrome surfaces show desktop blur, BUT the
      log-viewing region (#logWrapper, dropzone, livePanel) is forced opaque
@@ -117,8 +119,9 @@
   [data-glass="on"] .modal,
   [data-glass="on"] .connect-card,
   [data-glass="on"] .device-menu {
-    backdrop-filter: blur(30px) saturate(180%);
-    -webkit-backdrop-filter: blur(30px) saturate(180%);
+    backdrop-filter: blur(40px) saturate(200%);
+    -webkit-backdrop-filter: blur(40px) saturate(200%);
+    box-shadow: var(--glass-edge);
   }
 
   [data-glass="on"] .modal-overlay {
