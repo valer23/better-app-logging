@@ -765,10 +765,24 @@ pkill -f idevicesyslog</pre>
   const topbar = document.getElementById('topbar');
   if (!topbar) return;
   const INTERACTIVE = 'button, input, label, select, textarea, a, .zoom-group, .theme-switch, .glass-switch';
+  // Drag is gesture-based: arm on mousedown, fire startDragging only when
+  // the cursor actually moves. This keeps dblclick clean — without the
+  // movement gate, calling startDragging() on the first mousedown enters
+  // OS drag tracking and the second click of a dblclick is swallowed.
+  let armed = null; // { x, y } when a potential drag is pending, else null
+  const DRAG_THRESHOLD_PX = 4;
   topbar.addEventListener('mousedown', (e) => {
     if (e.button !== 0) return;
     if (e.target.closest(INTERACTIVE)) return;
+    if (e.detail >= 2) return; // second click of a dblclick — ignore
+    armed = { x: e.clientX, y: e.clientY };
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!armed) return;
+    if (Math.abs(e.clientX - armed.x) < DRAG_THRESHOLD_PX &&
+        Math.abs(e.clientY - armed.y) < DRAG_THRESHOLD_PX) return;
     const tauri = window.__TAURI__;
+    armed = null;
     if (!tauri || !tauri.window) return;
     try {
       tauri.window.getCurrentWindow().startDragging();
@@ -776,8 +790,10 @@ pkill -f idevicesyslog</pre>
       console.warn('startDragging failed', err);
     }
   });
+  window.addEventListener('mouseup', () => { armed = null; });
   topbar.addEventListener('dblclick', (e) => {
     if (e.target.closest(INTERACTIVE)) return;
+    armed = null;
     const tauri = window.__TAURI__;
     if (!tauri || !tauri.window) return;
     try {
