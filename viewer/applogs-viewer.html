@@ -876,7 +876,7 @@ let renderedEnd = 0;
 // ~537M-char string limit (WebView2). `let` so it can be tuned from the console (Infinity = no cap).
 // Loaded-file lines carry no seq and are never counted or trimmed.
 let MAX_RETAINED = 500000;
-const TRIM_FRACTION = 0.1;      // trim to 90% of the cap at once: one sub-ms splice per ~50k lines, not per flush
+const TRIM_FRACTION = 0.1;      // trim to 90% of the cap at once: ~1-2ms splice per ~50k lines (V8), not per flush
 let discardedCount = 0;         // live lines dropped since the last Clear / file load
 let nextSeq = 0;                // arrival order of live lines; never reset, so stale references still compare
 let backlogOverflowed = false;  // the paused backlog dropped frames: every retained live line is older than them
@@ -1584,6 +1584,7 @@ function flushBatch() {
   } catch (err) {
     // Don't lose the rest of the backlog; drop only the frame that threw.
     pendingBatch = batch.slice(i + 1).concat(pendingBatch);
+    trimRetained();   // a throwing frame must not leave allMessages over the cap until the next flush
     throw err;
   }
   trimRetained();   // bound memory per chunk, before renderFrom/renderLiveTail use filtered indexes
@@ -1692,7 +1693,10 @@ function togglePause() {
   if (!livePaused) {
     // Frames dropped from an overflowing backlog were newer than everything retained; drop those
     // too so the retained window stays one contiguous run of the newest lines.
-    if (backlogOverflowed) { backlogOverflowed = false; trimRetained(true); }
+    // domStale keeps the frozen rows on screen during the drain; the final chunk replaces them in one
+    // step, so the table never goes blank and no stale rows survive. updateStats/updateExportVisibility
+    // cover an empty queue, where flushBatch returns early.
+    if (backlogOverflowed) { backlogOverflowed = false; domStale = true; trimRetained(true); updateStats(); updateExportVisibility(); }
     flushBatch();
   }
 }
@@ -1809,7 +1813,9 @@ function toggleExportMenu() {
     document.getElementById('exportAllCount').textContent = allMessages.length.toLocaleString() + ' lines';
     const note = document.getElementById('exportNote');
     note.hidden = !discardedCount;
-    if (discardedCount) note.textContent = `Exports retained lines only: ${discardedCount.toLocaleString()} older lines were discarded (live view keeps the newest ${MAX_RETAINED.toLocaleString()}).`;
+    if (discardedCount) note.textContent = backlogOverflowed
+      ? `Exports the paused lines on screen only: ${discardedCount.toLocaleString()} lines were discarded while paused, and these lines are dropped on resume.`
+      : `Exports retained lines only: ${discardedCount.toLocaleString()} older lines were discarded (live view keeps the newest ${MAX_RETAINED.toLocaleString()}).`;
     positionExportMenu();
   }
 }
@@ -2041,8 +2047,11 @@ function applyFilters() {
 function updateStats() {
   const el = document.getElementById('stats');
   el.textContent = `${filtered.length.toLocaleString()} / ${allMessages.length.toLocaleString()} lines` +
-    (discardedCount ? `, ${discardedCount.toLocaleString()} older discarded` : '');
-  const title = discardedCount ? `Live view keeps the newest ${MAX_RETAINED.toLocaleString()} lines; older lines are discarded to bound memory.` : '';
+    (!discardedCount ? '' : backlogOverflowed ? `, ${discardedCount.toLocaleString()} discarded, resume skips to newest`
+                                              : `, ${discardedCount.toLocaleString()} older discarded`);
+  const title = !discardedCount ? ''
+    : backlogOverflowed ? `The paused backlog exceeded ${MAX_RETAINED.toLocaleString()} lines, so its oldest frames were dropped. On resume the lines shown now are discarded and the view continues from the newest lines.`
+    : `Live view keeps the newest ${MAX_RETAINED.toLocaleString()} lines; older lines are discarded to bound memory.`;
   if (el.title !== title) el.title = title;   // avoid an attribute write on every flush
 }
 
@@ -2161,8 +2170,11 @@ function prependOlderRows(t) {
 }
 
 document.getElementById('logTable').addEventListener('scroll', function() {
+  // renderFrom >= 0 means a drain is in progress: rows from renderFrom onward are about to be appended by
+  // renderLiveTail, so lazy-loading them here would duplicate them (trims delete rows mid-drain and
+  // fire clamp-driven scroll events).
   if (renderedEnd < filtered.length) {
-    if (this.scrollTop + this.clientHeight >= this.scrollHeight - 200) renderChunk(renderedEnd);
+    if (renderFrom < 0 && this.scrollTop + this.clientHeight >= this.scrollHeight - 200) renderChunk(renderedEnd);
   } else if (this.scrollTop < 200) prependOlderRows(this);
 });
 
