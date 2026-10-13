@@ -7,7 +7,9 @@
 //!
 //! WS contract: on connect, sends an initial device-info `devices` frame
 //! (the per-platform greeting), then streams `log` / `devices` / `error`
-//! frames pushed by the bridge.
+//! frames pushed by the bridge. If this client falls behind the broadcast
+//! buffer, a `{"type":"dropped","count":N}` frame is sent right before the
+//! first frame that survived the gap (N = frames this client lost, log and status frames alike).
 
 use std::sync::Arc;
 
@@ -24,7 +26,7 @@ use axum::{
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::broadcast;
 
-use crate::frame::{DevicesFrame, Frame};
+use crate::frame::{DevicesFrame, DroppedFrame, Frame};
 
 /// Shared state cloned per connection.
 #[derive(Clone)]
@@ -85,6 +87,36 @@ async fn ws_handler(
         .into_response()
 }
 
+/// What the forward loop does with one broadcast receive result. Split out
+/// of the select loop so the Lagged -> `dropped` translation is unit-testable
+/// without a socket.
+#[derive(Debug, PartialEq)]
+enum Forward {
+    /// Send this text frame to the client.
+    Send(String),
+    /// Nothing to send (only if serializing the dropped frame failed).
+    Skip,
+    /// Bridge sender gone: end the connection.
+    Stop,
+}
+
+fn forward(recv: Result<String, broadcast::error::RecvError>) -> Forward {
+    match recv {
+        Ok(json) => Forward::Send(json),
+        Err(broadcast::error::RecvError::Lagged(n)) => {
+            // The receiver skipped the n oldest frames. Tell the client
+            // instead of silently losing lines; tokio hands us the oldest
+            // surviving frame next, so this marks the gap position.
+            tracing::warn!("ws client lagged by {n} frames");
+            match serde_json::to_string(&Frame::Dropped(DroppedFrame { count: n })) {
+                Ok(json) => Forward::Send(json),
+                Err(_) => Forward::Skip,
+            }
+        }
+        Err(broadcast::error::RecvError::Closed) => Forward::Stop,
+    }
+}
+
 async fn handle_connection(socket: WebSocket, state: WsState) {
     let (mut sink, mut stream) = socket.split();
     let mut rx = state.tx.subscribe();
@@ -111,19 +143,15 @@ async fn handle_connection(socket: WebSocket, state: WsState) {
     // Forward broadcast → WS until the client disconnects or sends Close.
     loop {
         tokio::select! {
-            recv = rx.recv() => {
-                match recv {
-                    Ok(json) => {
-                        if sink.send(Message::Text(json)).await.is_err() {
-                            break;
-                        }
+            recv = rx.recv() => match forward(recv) {
+                Forward::Send(json) => {
+                    if sink.send(Message::Text(json)).await.is_err() {
+                        break;
                     }
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        tracing::warn!("ws client lagged by {n} frames");
-                    }
-                    Err(broadcast::error::RecvError::Closed) => break,
                 }
-            }
+                Forward::Skip => {}
+                Forward::Stop => break,
+            },
             client_msg = stream.next() => {
                 match client_msg {
                     Some(Ok(Message::Close(_))) | None => break,
@@ -134,4 +162,31 @@ async fn handle_connection(socket: WebSocket, state: WsState) {
         }
     }
     tracing::debug!("ws client disconnected");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn lagged_receiver_yields_dropped_frame_then_resumes() {
+        let (tx, mut rx) = broadcast::channel::<String>(2);
+        for i in 0..5 {
+            tx.send(i.to_string()).unwrap();
+        }
+        let Forward::Send(s) = forward(rx.recv().await) else {
+            panic!("expected dropped frame");
+        };
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v, serde_json::json!({"type":"dropped","count":3}));
+        assert_eq!(forward(rx.recv().await), Forward::Send("3".into()));
+        assert_eq!(forward(rx.recv().await), Forward::Send("4".into()));
+        drop(tx);
+        assert_eq!(forward(rx.recv().await), Forward::Stop);
+    }
+
+    #[test]
+    fn ok_frame_passes_through_verbatim() {
+        assert_eq!(forward(Ok("x".into())), Forward::Send("x".into()));
+    }
 }
