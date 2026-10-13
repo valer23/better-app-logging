@@ -50,16 +50,29 @@ New-Item -ItemType Directory -Path $staging | Out-Null
 #      page, GitHub release web UI, second machine on a different network)
 #      before merging. The whole point is that a single host being MITM'd
 #      cannot poison the pin.
+#   For adb, follow the stricter 'How to bump adb' steps below (Google's
+#   repository2-3.xml gives an independent size + SHA-1 to check against).
 
-# Google does not host versioned ZIPs at predictable URLs — only the rolling
-# `platform-tools-latest-windows.zip` URL works (versioned URLs all 404).
-# Trade-off: when Google rotates `latest`, the recorded SHA-256 below stops
-# matching and the build fails loud. Recovery: re-run with
-# APPLOGS_BUNDLER_TRUST_ON_FIRST_USE=1 — Assert-Sha256 will print the new
-# hash on mismatch (no need to first reset the constant to placeholder zeros).
-# Cross-check against an independent source, paste the printed hash here, commit.
-$script:AdbZipUrl    = 'https://dl.google.com/android/repository/platform-tools-latest-windows.zip'
-$script:AdbZipSha256 = '4fe305812db074cea32903a489d061eb4454cbc90a49e8fea677f4b7af764918'  # platform-tools (rolling 'latest' as of 2026-04-30)
+# adb comes from a VERSIONED platform-tools archive whose bytes never change
+# once Google publishes it, so the SHA-256 below stays valid until someone
+# bumps it on purpose. Do NOT switch back to the rolling
+# `platform-tools-latest-windows.zip`: Google re-points it on every release
+# (r37.0.0 -> r37.0.1 silently broke the previous pin). Versioned archives use
+# the `-win.zip` suffix (`-windows.zip` 404s) and stay hosted after newer
+# releases ship.
+#
+# How to bump adb:
+#   1. Fetch https://dl.google.com/android/repository/repository2-3.xml and
+#      read <remotePackage path="platform-tools">: the archive with
+#      <host-os>windows</host-os> gives the file name (<url>), <size> and
+#      SHA-1 <checksum>.
+#   2. Download https://dl.google.com/android/repository/<url> over HTTPS and
+#      confirm its size and SHA-1 match the manifest (Google's own checksum,
+#      fetched independently of the archive).
+#   3. Compute its SHA-256 (`Get-FileHash` / `shasum -a 256`) and update the
+#      URL, hash and trailing comment below in the same commit.
+$script:AdbZipUrl    = 'https://dl.google.com/android/repository/platform-tools_r37.0.1-win.zip'
+$script:AdbZipSha256 = '45f4d63113e895ebde0c90f194099a4676b6ac653bd28d54314a9e022bbc1a99'  # platform-tools r37.0.1 (8044989 bytes, sha1 e03e78b1d80b396f1c3358e31251cb31740e1110 per repository2-3.xml)
 
 # Pin to a concrete release tag (NOT 'latest') so the asset URL is stable and
 # the recorded SHA-256 below means something. Bump the tag + hash together.
@@ -74,7 +87,7 @@ function Assert-Sha256 {
     #     → print the actual hash and throw (operator pastes it into the script).
     #   - Expected is a real hash AND mismatches AND APPLOGS_BUNDLER_TRUST_ON_FIRST_USE='1'
     #     → print the actual hash with mismatch context and throw (re-pin path,
-    #     e.g. when Google rotates `platform-tools-latest`). Caller does NOT need
+    #     e.g. right after bumping a pinned URL/tag). Caller does NOT need
     #     to first reset the constant to placeholder zeros.
     #   - Anything else → throw immediately. We never silently accept an
     #     unverified download.
@@ -109,14 +122,14 @@ function Assert-Sha256 {
             Write-Warning ("[$Label] HASH MISMATCH + TRUST-ON-FIRST-USE: re-pinning")
             Write-Warning ("[$Label]   expected (current pin): {0}" -f $expectedNorm)
             Write-Warning ("[$Label]   actual   (downloaded):  {0}" -f $actual)
-            Write-Warning ("[$Label] If this is an expected upstream rotation (e.g. Google bumped")
-            Write-Warning ("[$Label] platform-tools-latest), cross-check against an independent source")
-            Write-Warning ("[$Label] then paste the actual hash into bundle-tooling-windows.ps1 and re-run.")
-            Write-Warning ("[$Label] If you did NOT expect a rotation, treat this as tampering and investigate.")
+            Write-Warning ("[$Label] If you just bumped the pinned URL/tag, cross-check against an independent")
+            Write-Warning ("[$Label] source (for adb: size + SHA-1 in Google's repository2-3.xml), then paste")
+            Write-Warning ("[$Label] the actual hash into bundle-tooling-windows.ps1 and re-run.")
+            Write-Warning ("[$Label] If you did NOT just bump a pin, treat this as tampering and investigate.")
             Write-Host ""
             throw "[$Label] pinned hash mismatch; aborting so build cannot ship an unverified artifact"
         }
-        throw ("[$Label] SHA-256 MISMATCH - refusing to use download.`n  expected: {0}`n  actual:   {1}`n  file:     {2}`nSomeone may be tampering with the download (CDN compromise / MITM). Do NOT bypass this check; investigate first.`nIf this is a legitimate upstream rotation, re-run with APPLOGS_BUNDLER_TRUST_ON_FIRST_USE=1 to print the new hash for review." -f $expectedNorm, $actual, $Path)
+        throw ("[$Label] SHA-256 MISMATCH - refusing to use download.`n  expected: {0}`n  actual:   {1}`n  file:     {2}`nSomeone may be tampering with the download (CDN compromise / MITM). Do NOT bypass this check; investigate first.`nPinned URLs are versioned and should never change bytes. If you just bumped a pinned URL/tag, follow the 'How to bump' notes at the top of bundle-tooling-windows.ps1 (or re-run with APPLOGS_BUNDLER_TRUST_ON_FIRST_USE=1 to print the new hash for review)." -f $expectedNorm, $actual, $Path)
     }
     Write-Host ("[$Label] SHA-256 OK ({0})" -f $actual)
 }
