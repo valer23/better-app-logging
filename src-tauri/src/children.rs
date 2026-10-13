@@ -71,7 +71,8 @@ impl Registry {
             return Err(io::Error::other("shutting down"));
         }
         let mut child = cmd.spawn()?;
-        // Before anything else can reap the child (its handle must still be live).
+        // While we still own `child` (raw_handle() is Some until it is reaped) and
+        // before kill_all can see it.
         #[cfg(windows)]
         job::assign(&child);
         let (out, err) = (child.stdout.take(), child.stderr.take());
@@ -111,6 +112,7 @@ impl Registry {
 #[cfg(windows)]
 mod job {
     use std::io;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::OnceLock;
 
     use tokio::process::Child;
@@ -131,15 +133,17 @@ mod job {
     /// hook only. Never closed on purpose: see module doc.
     static JOB: OnceLock<Option<Job>> = OnceLock::new();
 
+    static WARNED: AtomicBool = AtomicBool::new(false);
+
     fn create() -> Option<Job> {
         // SAFETY: null attributes make the handle non-inheritable (a child
         // holding it would keep the job open after we die); a null name makes
         // it unnamed, so no other process can open it.
         let h = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
         if h.is_null() {
+            let e = io::Error::last_os_error();
             tracing::warn!(
-                "could not create job object ({}): children may be orphaned if the app is hard-killed",
-                io::Error::last_os_error()
+                "could not create job object ({e}): children may be orphaned if the app is hard-killed"
             );
             return None;
         }
@@ -183,10 +187,18 @@ mod job {
         // SAFETY: both handles are live: `job` is never closed and `child` is
         // borrowed and not yet reaped.
         if unsafe { AssignProcessToJobObject(job.0, h) } == 0 {
-            tracing::warn!(
-                "could not add child to job object ({}): it may be orphaned if the app is hard-killed",
-                io::Error::last_os_error()
-            );
+            let e = io::Error::last_os_error();
+            // The bridges respawn every 2 s, so a persistent failure (a
+            // restrictive parent job) would flood the log: warn once.
+            if !WARNED.swap(true, Ordering::Relaxed) {
+                tracing::warn!(
+                    "could not add child to job object ({e}): it may be orphaned if the app is hard-killed"
+                );
+            } else {
+                tracing::debug!(
+                    "could not add child to job object ({e}): it may be orphaned if the app is hard-killed"
+                );
+            }
         }
     }
 
@@ -366,7 +378,11 @@ mod tests {
 mod windows_tests {
     use super::*;
     use std::process::Stdio;
-    use windows_sys::Win32::System::JobObjects::IsProcessInJob;
+    use windows_sys::Win32::System::JobObjects::{
+        IsProcessInJob, JobObjectExtendedLimitInformation, QueryInformationJobObject,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK,
+    };
 
     #[tokio::test]
     async fn spawned_child_is_in_job() {
@@ -387,6 +403,26 @@ mod windows_tests {
         };
         assert_ne!(called, 0);
         assert_ne!(r, 0, "child must be a member of the job");
+
+        let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        // SAFETY: valid job handle; pointer and size describe `info`, which
+        // outlives the call.
+        let queried = unsafe {
+            QueryInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                std::ptr::addr_of_mut!(info).cast(),
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                std::ptr::null_mut(),
+            )
+        };
+        assert_ne!(queried, 0);
+        let want = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK;
+        assert_eq!(
+            info.BasicLimitInformation.LimitFlags & want,
+            want,
+            "KILL_ON_JOB_CLOSE reaps children on hard kill; SILENT_BREAKAWAY_OK keeps the adb server out of the job"
+        );
         reg.kill_all();
     }
 }
