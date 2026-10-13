@@ -1192,7 +1192,7 @@ function handleFile(file) {
       }
 
       document.getElementById('loadingText').textContent = `Rendering ${allMessages.length.toLocaleString()} lines…`;
-      discardedCount = 0; backlogOverflowed = false; resetDroppedCounts();
+      discardBacklog();
       setTimeout(() => { applyFilters(); showOnly('logWrapper'); updateExportVisibility(); }, 50);
     } catch(err) {
       alert('Failed to parse file: ' + err.message);
@@ -1394,8 +1394,6 @@ function toggleIos() { iosLive ? disconnectIos() : connectIos(); }
 // the earlier session's lines (and their gaps) are still in the table.
 // The count covers every lost broadcast frame, so a devices/error update in
 // the gap is included and its effect is lost (e.g. an iOS stall prompt never appears).
-// Neither Clear nor a file load empties pendingBatch, so after either while paused,
-// a gap still queued there is under-reported.
 const droppedCount = { android: 0, ios: 0 };
 function updateDroppedIndicator(platform) {
   const pre = platform === 'android' ? 'liveBarAndroid' : 'liveBarIos';
@@ -1787,7 +1785,18 @@ function togglePause() {
     flushBatch();
   }
 }
-function clearLogs() { allMessages = []; filtered = []; renderFrom = -1; renderedEnd = 0; selectedMessage = null; domStale = false; discardedCount = 0; backlogOverflowed = false; document.getElementById('tbody').innerHTML = ''; updateStats(); updateExportVisibility(); resetDroppedCounts(); }
+// Clear and a file load both start a fresh view. Frames still queued (a paused backlog or the
+// rest of an in-progress drain) arrived before it, so they go too, along with the counters
+// describing earlier losses; otherwise Resume re-rendered cleared lines and the drop pill
+// under-reported a gap still queued. New frames keep flowing: batchTimer is null, so the next
+// handleWsMsg re-arms it.
+function discardBacklog() {
+  pendingBatch = [];
+  if (batchTimer) { clearTimeout(batchTimer); batchTimer = null; }
+  renderFrom = -1;   // its drain is gone; >= 0 would keep the scroll handler's lazy-load gated off
+  discardedCount = 0; backlogOverflowed = false; resetDroppedCounts();
+}
+function clearLogs() { discardBacklog(); allMessages = []; filtered = []; renderedEnd = 0; selectedMessage = null; domStale = false; document.getElementById('tbody').innerHTML = ''; updateStats(); updateExportVisibility(); }
 
 // ── Live retention ──
 // First index in [lo, arr.length) where pred holds; pred must be monotone (false…false, true…true).
