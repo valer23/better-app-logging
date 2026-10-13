@@ -34,8 +34,9 @@ jobs:
           python3 -c "from html.parser import HTMLParser; HTMLParser().feed(open('viewer/applogs-viewer.html').read()); print('OK')"
 
   rust:
-    name: cargo fmt + check + clippy
+    name: cargo fmt + check + clippy + test
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
 
@@ -68,3 +69,49 @@ jobs:
       - name: cargo clippy
         working-directory: src-tauri
         run: cargo clippy --all-targets -- -D warnings
+
+      - name: cargo test
+        working-directory: src-tauri
+        run: cargo test
+
+  # children.rs's Job Object code and its test are cfg(windows): the ubuntu
+  # job never compiles them and release.yml builds Windows only on tags or
+  # manual dispatch, in release mode, without clippy or tests, so a
+  # Windows-only break would otherwise first surface at release time.
+  rust-windows:
+    name: cargo check + clippy + test (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # tauri.windows.conf.json bundles vendor/windows-x86_64/*, and
+      # tauri-build fails when that glob matches nothing. CI only compiles,
+      # so a placeholder stands in for the tooling bundle-tooling-windows.ps1
+      # downloads for releases (vendor/ is gitignored).
+      - name: Placeholder for bundled tooling
+        working-directory: src-tauri
+        shell: bash
+        run: |
+          mkdir -p vendor/windows-x86_64
+          printf 'placeholder\n' > vendor/windows-x86_64/README.txt
+
+      - name: cargo check
+        working-directory: src-tauri
+        run: cargo check --all-targets
+
+      - name: cargo clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: cargo test
+        working-directory: src-tauri
+        run: cargo test

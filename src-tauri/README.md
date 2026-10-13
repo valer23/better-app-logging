@@ -137,9 +137,14 @@ each tool in this order — first hit wins:
 1. env var override (`APPLOGS_VENDOR_ADB_DIR`, `APPLOGS_VENDOR_IMD_DIR`)
 2. local install on `PATH` or in well-known locations
    (winget `Google.PlatformTools`, `C:\libimobiledevice-*\`)
-3. network download (Google platform-tools zip + latest upstream
+3. network download of **pinned** archives, each verified against a
+   SHA-256 committed in the script before extraction: a versioned Google
+   platform-tools zip, and a tagged
    [`jrjr/libimobiledevice-windows`](https://github.com/jrjr/libimobiledevice-windows/releases)
-   release — the build linked from [libimobiledevice.org](https://libimobiledevice.org)'s Downloads page)
+   release asset (the build linked from [libimobiledevice.org](https://libimobiledevice.org)'s
+   Downloads page), fetched from its direct release URL with no GitHub API
+   call. Neither follows "latest": upgrading means bumping the pin, as
+   described in the script's "How to bump" notes.
 
 Tauri's `bundle.resources` then drops the folder next to the installed
 `applogs-viewer.exe` (under `%LOCALAPPDATA%\AppLogsViewer\vendor\windows-x86_64\`)
@@ -191,8 +196,10 @@ launches are normal.
 
 > **Re-run the bundle script** (`powershell -ExecutionPolicy Bypass -File scripts\bundle-tooling-windows.ps1`)
 > on the build host whenever you bump android-platform-tools or
-> libimobiledevice. The `vendor\` directory is git-ignored — regenerated on
-> demand.
+> libimobiledevice. A bump means updating the pinned URL/tag and SHA-256 in
+> that script (see its "How to bump" notes); the network fallback never picks
+> up a newer upstream release on its own. The `vendor\` directory is
+> git-ignored — regenerated on demand.
 
 > **Cannot cross-build from macOS → Windows or Linux → macOS.** Apple's licence
 > bans macOS in Docker / non-Apple hardware. Tauri's NSIS bundler also needs the
