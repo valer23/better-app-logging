@@ -1575,7 +1575,7 @@ function hideStallModal() {
   document.getElementById('stallModal').classList.remove('visible');
 }
 
-const LIVE_DOM_CAP   = 6000;  // max live rows in the DOM: the unpinned scroll-back window and the prependOlderRows ceiling (pinned or not)
+const LIVE_DOM_CAP   = 6000;  // max live rows in the DOM: the reading window while auto-scroll is off (grown by prependOlderRows and extendReadingWindow) and the prependOlderRows ceiling
 // While auto-scroll is pinned only the last screenful is visible, and table layout cost
 // scales with the rows in the <table> (~55-100ms per flush at 6000 rows even for a 14-row
 // append, a few ms at 300), so keep just a short tail. 300 rows is >3 screenfuls even at the
@@ -1586,14 +1586,15 @@ const MAX_FLUSH_GAP_MS  = 1000;  // handleWsMsg flushes inline if no flush ran t
 const FLUSH_BUDGET_MS   = 50;    // max time per flush chunk before yielding to the event loop
 let lastFlushAt = 0;             // performance.now() of the last completed flush chunk
 let renderFrom  = -1;            // first new filtered index of the in-progress drain cycle (-1 = none)
-let domStale    = false;         // tbody lags `filtered` (rendering was skipped while hidden)
+let domStale    = false;         // tbody lags `filtered`: rendering was skipped while hidden, or a reading window was trimmed whole
 
 // Drains the whole backlog FIFO, in time-sliced chunks. The old cap (1500 msgs
 // per 150ms tick: nominally ~10k/s, ~5k/s measured once flush time is included)
 // let iOS bursts outrun the drain, and timer throttling while hidden then
 // stretched catch-up to minutes. Data/filter work is O(backlog) but sliced into
-// FLUSH_BUDGET_MS chunks; DOM work is bounded by LIVE_DOM_CAP and skipped while
-// hidden. Under timer throttling setTimeout(0) may clamp to ~1s, but one 50ms
+// FLUSH_BUDGET_MS chunks; DOM work is bounded by FOLLOW_DOM_CAP while following, and
+// while auto-scroll is off it only happens (apart from retention trims) when the reader is at the window's end; it is
+// skipped while hidden. Under timer throttling setTimeout(0) may clamp to ~1s, but one 50ms
 // chunk handles far more than iOS's ~27k/s peak and the inline WS-path flush
 // keeps draining too, so throughput stays above arrival.
 function flushBatch() {
@@ -1647,11 +1648,18 @@ function flushBatch() {
 
 // Render the rows added to `filtered` since index `firstNew`. While hidden the
 // DOM work is skipped (domStale); the next visible render rebuilds the whole tail.
+// With auto-scroll off the table is a window the user is reading and is left alone here
+// (see extendReadingWindow).
 function renderLiveTail(firstNew) {
+  // A stale DOM still gets the full rebuild below.
+  if (!autoScroll && !domStale) { if (currentMode === 'live') extendReadingWindow(); return; }
+  const prevEnd = renderedEnd;
   renderedEnd = filtered.length;
   if (document.hidden) { domStale = true; return; }
-  const cap  = autoScroll ? FOLLOW_DOM_CAP : LIVE_DOM_CAP;   // short tail while following (see FOLLOW_DOM_CAP)
-  const full = domStale || filtered.length - firstNew >= cap;   // full = replace tbody, don't append
+  const cap  = FOLLOW_DOM_CAP;   // the followed tail, or the newest rows when a stale reading window is rebuilt
+  // prevEnd !== firstNew: the DOM doesn't end where the new rows start (after applyFilters, or a reading
+  // window that stopped short), so appending would leave a gap; rebuild instead.
+  const full = domStale || prevEnd !== firstNew || filtered.length - firstNew >= cap;   // full = replace tbody, don't append
   if (full || filtered.length > firstNew) {
     const tbody = document.getElementById('tbody');
     // Only build rows that survive `cap` — anything older would be trimmed right away.
@@ -1678,6 +1686,35 @@ function renderLiveTail(firstNew) {
     }
   }
   if (autoScroll) { const t = document.getElementById('logTable'); t.scrollTop = t.scrollHeight; }
+}
+
+// With auto-scroll off the DOM holds one contiguous run of `filtered` ending at renderedEnd, and
+// newer lines are appended only while the end of the table is within 200px of view: PAGE rows at
+// a time, dropping the oldest rows past LIVE_DOM_CAP. They stop once ~200px have piled up below
+// the reader, until they scroll down. Appending every flush cost a relayout of the whole
+// table (~240ms per flush at 20k lines/s with 6000 rows in WebKit) and, at that cap, evicted the
+// rows being read within ~0.3s. Runs from flushBatch and from the scroll handler (reader
+// scrolled down to the end).
+function extendReadingWindow() {
+  const t = document.getElementById('logTable'), tbody = document.getElementById('tbody');
+  if (domStale || document.hidden) return;   // stale: the next render rebuilds it
+  // applyFilters can render up to RENDER_CAP rows to reach a selection, and a frozen window is
+  // never trimmed otherwise. The selection sits in the last rendered chunk, so it survives.
+  if (tbody.rows.length > LIVE_DOM_CAP) dropTopRows(t, tbody, tbody.rows.length - LIVE_DOM_CAP);
+  if (renderedEnd >= filtered.length) return;
+  if (t.scrollTop + t.clientHeight < t.scrollHeight - 200) return;   // reading further up: stay put
+  const excess = tbody.rows.length + Math.min(PAGE, filtered.length - renderedEnd) - LIVE_DOM_CAP;
+  if (excess > 0) dropTopRows(t, tbody, excess, () => renderChunk(renderedEnd));
+  else renderChunk(renderedEnd);
+}
+// Deletes the first n rows and keeps the first surviving row where it is (WebKit has no scroll
+// anchoring). Its position is read before mutating, so only the post-mutation read forces a layout.
+function dropTopRows(t, tbody, n, mutate) {
+  const survivor = tbody.rows[n], topBefore = survivor.getBoundingClientRect().top;
+  const range = document.createRange();
+  range.setStartBefore(tbody.rows[0]); range.setEndBefore(survivor); range.deleteContents();
+  if (mutate) mutate();
+  t.scrollTop += survivor.getBoundingClientRect().top - topBefore;
 }
 
 // Timers can be throttled/suspended while hidden; drain as soon as we're visible
@@ -1727,7 +1764,13 @@ function resetConnectBtn(platform) {
   btn.onclick = platform === 'android' ? connectAndroid : connectIos;
 }
 
-function toggleAutoScroll() { autoScroll = !autoScroll; document.getElementById('autoScrollBtn').classList.toggle('active', autoScroll); }
+function toggleAutoScroll() {
+  autoScroll = !autoScroll; document.getElementById('autoScrollBtn').classList.toggle('active', autoScroll);
+  // Re-pinning leaves the reading window behind: rebuild the followed tail now (also mid-drain or paused).
+  // renderFrom = -1 so an in-progress drain renders only lines it adds after this. Only when the table
+  // holds live lines: file lines carry no seq, and a file-only table must keep its head and lazy append.
+  if (autoScroll && currentMode === 'live' && filtered.length && filtered[filtered.length - 1].seq !== undefined) { domStale = true; renderLiveTail(filtered.length); renderFrom = -1; }
+}
 function togglePause() {
   livePaused = !livePaused;
   const btn = document.getElementById('pauseBtn');
@@ -1785,10 +1828,10 @@ function trimRetained(dropAllLive = false) {
 }
 
 // Remove table rows whose message was trimmed (seq < cutoff). Rows are an ordered subsequence of
-// `filtered`, so they form one contiguous block after any file rows. Hidden/stale DOM is rebuilt
-// from `filtered` on the next visible render instead.
+// `filtered`, so they form one contiguous block after any file rows. A stale DOM, or a followed
+// tail while hidden, is rebuilt from `filtered` on the next visible render instead.
 function dropTrimmedRows(cutoff) {
-  if (document.hidden || domStale) { domStale = true; return; }
+  if (domStale) return;   // rebuilt from `filtered` on the next visible render
   const tbody = document.getElementById('tbody');
   const rows = tbody.rows;
   let a = 0;
@@ -1796,6 +1839,11 @@ function dropTrimmedRows(cutoff) {
   let b = a;
   while (b < rows.length && rows[b]._message && rows[b]._message.seq < cutoff) b++;
   if (b === a) return;
+  // Following and hidden: the next visible render rebuilds the tail anyway. Auto-scroll off with every live
+  // row trimmed: restart at the newest lines (stale rebuild); refilling from the oldest retained lines would
+  // hand them to the very next trim. A partly trimmed reading window is trimmed in place, hidden or not,
+  // so returning to the app keeps the reading position.
+  if (autoScroll ? document.hidden : b === rows.length) { domStale = true; return; }
   const survivor = b < rows.length ? rows[b] : null;
   const scroller = document.getElementById('logTable');
   // With auto-scroll off the user is reading mid-buffer: keep the first surviving row where it was.
@@ -2221,9 +2269,11 @@ function prependOlderRows(t) {
 document.getElementById('logTable').addEventListener('scroll', function() {
   // renderFrom >= 0 means a drain is in progress: rows from renderFrom onward are about to be appended by
   // renderLiveTail, so lazy-loading them here would duplicate them (trims delete rows mid-drain and
-  // fire clamp-driven scroll events).
-  if (renderedEnd < filtered.length) {
-    if (renderFrom < 0 && this.scrollTop + this.clientHeight >= this.scrollHeight - 200) renderChunk(renderedEnd);
+  // fire clamp-driven scroll events). extendReadingWindow also appends from renderedEnd, but
+  // renderLiveTail never appends while auto-scroll is off, so it can't duplicate rows mid-drain.
+  if (renderedEnd < filtered.length && this.scrollTop + this.clientHeight >= this.scrollHeight - 200) {
+    if (currentMode === 'live' && !autoScroll) extendReadingWindow();
+    else if (renderFrom < 0) renderChunk(renderedEnd);
   } else if (this.scrollTop < 200) prependOlderRows(this);
 });
 
