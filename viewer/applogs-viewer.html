@@ -880,6 +880,7 @@ const TRIM_FRACTION = 0.1;      // trim to 90% of the cap at once: ~1-2ms splice
 let discardedCount = 0;         // live lines dropped since the last Clear / file load
 let nextSeq = 0;                // arrival order of live lines; never reset, so stale references still compare
 let backlogOverflowed = false;  // the paused backlog dropped frames: every retained live line is older than them
+let liveSeqFloor = 0;           // seq of the oldest retained live line; rows below it are trimmed
 
 // ── Level toggles ──
 LEVELS.forEach(lvl => {
@@ -1106,7 +1107,7 @@ initResizeHandles();
 // (handler in applyFilters scrolls the selected row back into view).
 document.getElementById('tbody').addEventListener('click', e => {
   const tr = e.target.closest('tr');
-  if (!tr || !tr._message) return;
+  if (!tr || !tr._message || tr._message.seq < liveSeqFloor) return;   // frozen row of a trimmed line (resume drain after a backlog overflow)
   const tbody = tr.parentElement;
   if (selectedMessage === tr._message) {
     selectedMessage = null;
@@ -1689,6 +1690,7 @@ function togglePause() {
   livePaused = !livePaused;
   const btn = document.getElementById('pauseBtn');
   btn.textContent = livePaused ? '▶ Resume' : '⏸ Pause'; btn.classList.toggle('paused', livePaused);
+  if (livePaused && renderFrom >= 0) { renderLiveTail(renderFrom); renderFrom = -1; }   // a pause mid-drain would otherwise leave already-filtered lines unrendered and lazy-load gated off
   // On resume, drain whatever queued during the pause.
   if (!livePaused) {
     // Frames dropped from an overflowing backlog were newer than everything retained; drop those
@@ -1723,6 +1725,7 @@ function trimRetained(dropAllLive = false) {
   if (drop <= 0) return;
   const cut = base + drop;
   const cutoff = cut < allMessages.length ? allMessages[cut].seq : nextSeq;   // seq of first kept line
+  liveSeqFloor = cutoff;
   allMessages.splice(base, drop);
   const fa = firstIndexWhere(filtered, 0, m => m.seq !== undefined);
   const fb = firstIndexWhere(filtered, fa, m => m.seq >= cutoff);
@@ -1814,7 +1817,7 @@ function toggleExportMenu() {
     const note = document.getElementById('exportNote');
     note.hidden = !discardedCount;
     if (discardedCount) note.textContent = backlogOverflowed
-      ? `Exports the paused lines on screen only: ${discardedCount.toLocaleString()} lines were discarded while paused, and these lines are dropped on resume.`
+      ? `Exports the lines held before the pause (${allMessages.length.toLocaleString()}). ${discardedCount.toLocaleString()} lines were discarded because the paused backlog exceeded ${MAX_RETAINED.toLocaleString()}; on resume the live lines here are dropped and the view continues from the newest.`
       : `Exports retained lines only: ${discardedCount.toLocaleString()} older lines were discarded (live view keeps the newest ${MAX_RETAINED.toLocaleString()}).`;
     positionExportMenu();
   }
