@@ -62,16 +62,14 @@ jobs:
       # bundle.resources glob. Must run BEFORE tauri-action — the action does
       # not expose a preBuildCommand input and ignores it with a warning.
       #
-      # First Windows run will fail because SHA-256 hashes for the downloaded
-      # adb / libimobiledevice archives ship as placeholder zeros (see
-      # src-tauri/scripts/bundle-tooling-windows.ps1). Bootstrap procedure:
-      #   1. Set repo variable BUNDLER_TRUST_ON_FIRST_USE=1 (Settings →
-      #      Secrets and variables → Actions → Variables).
-      #   2. Trigger workflow_dispatch — script prints computed hashes via
-      #      Write-Warning in the job log.
-      #   3. Copy hashes into the script's $script:AdbZipSha256 /
-      #      $script:ImdZipSha256, commit, push.
-      #   4. Unset the variable. Future builds verify against committed hashes.
+      # The Windows script verifies every download against SHA-256 pins
+      # committed in src-tauri/scripts/bundle-tooling-windows.ps1; they point
+      # at versioned URLs (a versioned adb archive and a tagged libimobiledevice
+      # release); the SHA-256 is the integrity guarantee. To bump a pin, follow
+      # the "How to bump" notes in that script.
+      # Optional helper: set repo variable BUNDLER_TRUST_ON_FIRST_USE=1 and
+      # trigger workflow_dispatch; the script prints the computed hash and
+      # aborts. Cross-check it independently, commit it, then unset the variable.
       - name: Vendor platform tooling
         working-directory: src-tauri
         env:
