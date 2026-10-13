@@ -12,6 +12,7 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::broadcast;
 
+use crate::children;
 use crate::frame::{ErrorFrame, Frame, LogFrame};
 use crate::parser::{android_level, ANDROID_RE};
 use crate::pid_map::{self, PidMap};
@@ -24,7 +25,14 @@ pub fn spawn(tx: broadcast::Sender<String>) {
     let pid_map = pid_map::spawn(Duration::from_secs(5));
     tauri::async_runtime::spawn(async move {
         loop {
-            if let Err(e) = run_once(&tx, &pid_map).await {
+            let res = run_once(&tx, &pid_map).await;
+            // App is exiting (children already killed): stop instead of
+            // surfacing the resulting EOF as a bridge error and respawning.
+            if children::is_shutting_down() {
+                tracing::debug!("[android] shutdown — bridge loop exit");
+                break;
+            }
+            if let Err(e) = res {
                 tracing::warn!("[android] bridge error: {e}");
                 emit_error(&tx, &format!("android bridge error: {e}"));
             }
@@ -35,16 +43,19 @@ pub fn spawn(tx: broadcast::Sender<String>) {
 
 async fn run_once(tx: &broadcast::Sender<String>, pid_map: &PidMap) -> Result<(), String> {
     tracing::info!("[android] spawning adb logcat -v year,threadtime -T 500");
-    let mut child = tooling::tokio_command("adb")
-        .args(["logcat", "-v", "year,threadtime", "-T", "500"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|e| format!("spawn adb logcat: {e} (is adb on PATH?)"))?;
+    // Registered with `children` so it is killed on app exit — `kill_on_drop`
+    // alone never fires there (see children.rs).
+    let (child, stdout, stderr) = children::spawn(
+        tooling::tokio_command("adb")
+            .args(["logcat", "-v", "year,threadtime", "-T", "500"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true),
+    )
+    .map_err(|e| format!("spawn adb logcat: {e} (is adb on PATH?)"))?;
 
-    let stdout = child.stdout.take().ok_or("no stdout")?;
-    let stderr = child.stderr.take().ok_or("no stderr")?;
+    let stdout = stdout.ok_or("no stdout")?;
+    let stderr = stderr.ok_or("no stderr")?;
 
     // Forward stderr as ErrorFrame.
     let stderr_tx = tx.clone();

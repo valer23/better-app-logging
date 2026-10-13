@@ -7,6 +7,7 @@
 //! native window with no browser needed.
 
 mod bridge;
+mod children;
 mod frame;
 mod http_server;
 mod parser;
@@ -14,10 +15,17 @@ mod pid_map;
 mod tooling;
 mod ws_server;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 const IOS_WS_PORT: u16 = 8766;
 const ANDROID_WS_PORT: u16 = 8765;
+
+/// Set once `RunEvent::Exit` fires: the process is already in its own exit path
+/// (tao `process::exit` / C `exit()`), so the signal task's backstop must not
+/// start a second concurrent `exit()` (atexit handlers and static destructors
+/// would run twice).
+static EXITING: AtomicBool = AtomicBool::new(false);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -51,6 +59,11 @@ pub fn run() {
         .setup(|app| {
             // All async tasks must spawn inside `setup` — that is when the
             // Tauri-managed Tokio runtime is live and `tokio::spawn` works.
+
+            // Before any bridge spawns: SIGTERM/SIGINT/SIGHUP must reap the
+            // tool children instead of killing us outright and orphaning them.
+            #[cfg(unix)]
+            install_signal_handlers(app.handle().clone());
 
             // Vendored tooling lookup: `Contents/Resources/vendor/<triple>/`
             // contains adb + libimobiledevice binaries + their dylibs (see
@@ -156,8 +169,89 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running AppLogsViewer");
+        .build(tauri::generate_context!())
+        .expect("error while building AppLogsViewer")
+        .run(|_app, event| {
+            // Cmd+Q / menu Quit / last-window close / app.exit() all end in
+            // RunEvent::Exit, then the process exits without dropping tokio
+            // tasks — kill_on_drop alone never fires. (ExitRequested is NOT
+            // emitted on Cmd+Q, so it is the wrong hook.)
+            if let tauri::RunEvent::Exit = event {
+                EXITING.store(true, Ordering::SeqCst);
+                let n = children::kill_all();
+                tracing::info!("exit: signalled {n} tracked child process(es)");
+            }
+        });
+}
+
+/// Reap tracked children on SIGTERM / SIGINT / SIGHUP, then exit through
+/// Tauri so the normal `RunEvent::Exit` path runs. Without a handler SIGTERM
+/// kills the process instantly and orphans `idevicesyslog` / `adb logcat`.
+#[cfg(unix)]
+fn install_signal_handlers(app: tauri::AppHandle) {
+    use tokio::signal::unix::{signal, SignalKind};
+
+    // Register synchronously so the handlers are live before any bridge spawns
+    // a child (a signal in that window would otherwise take the default action
+    // and orphan it). `setup` runs on the main thread, outside the runtime, so
+    // `block_on` is allowed; `signal()` needs the runtime context to register.
+    let (term, int, hup) = tauri::async_runtime::block_on(async {
+        (
+            signal(SignalKind::terminate()),
+            signal(SignalKind::interrupt()).ok(),
+            signal(SignalKind::hangup()).ok(),
+        )
+    });
+    // SIGTERM is required; if it fails nothing is installed and the default
+    // action stays in place. INT/HUP are optional — once SIGTERM is installed
+    // we must not bail, or SIGTERM would be swallowed forever.
+    let mut term = match term {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::warn!("could not install SIGTERM handler ({e}) — children may be orphaned");
+            return;
+        }
+    };
+    let (mut int, mut hup) = (int, hup);
+
+    tauri::async_runtime::spawn(async move {
+        // 128 + signo; only the backstop `process::exit` below honours it.
+        let (name, code) = tokio::select! {
+            _ = term.recv() => ("SIGTERM", 143),
+            _ = recv_opt(&mut int) => ("SIGINT", 130),
+            _ = recv_opt(&mut hup) => ("SIGHUP", 129),
+        };
+        let n = children::kill_all();
+        tracing::info!("{name} received — signalled {n} child process(es), exiting");
+        // -> RunEvent::Exit -> kill_all (no-op) -> single-instance socket
+        // cleanup -> process exit. tauri/tao end the loop with status 0 here
+        // whatever code is passed, so the graceful path always exits 0.
+        app.exit(0);
+
+        // Backstop: event loop wedged, or a second signal arrives.
+        tokio::select! {
+            _ = tokio::time::sleep(std::time::Duration::from_secs(3)) => {}
+            _ = term.recv() => {}
+            _ = recv_opt(&mut int) => {}
+            _ = recv_opt(&mut hup) => {}
+        }
+        // If Exit already fired the process is in its own exit path; a second
+        // concurrent `exit()` would run destructors twice, so just stand down.
+        if !EXITING.load(Ordering::SeqCst) {
+            std::process::exit(code);
+        }
+    });
+}
+
+/// `recv()` on an optional signal; pends forever when it could not be installed.
+#[cfg(unix)]
+async fn recv_opt(s: &mut Option<tokio::signal::unix::Signal>) {
+    match s {
+        Some(s) => {
+            s.recv().await;
+        }
+        None => std::future::pending().await,
+    }
 }
 
 /// Best-effort device info string (one-shot `ideviceinfo -k` calls).
