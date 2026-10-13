@@ -314,6 +314,10 @@
   .status-pill.connecting   { color: var(--yellow); border-color: var(--yellow); background: #e3b34110; }
   .status-pill.connected    { color: var(--green);  border-color: var(--green);  background: #56d36415; }
   .status-pill.error        { color: var(--red);    border-color: var(--red);    background: #ff7b7215; }
+  /* Server-side frame drops (ws `dropped` frames). Warning tint like
+     .connecting, but static: it is a persistent fact, not an in-progress state. */
+  .status-pill.dropped { color: var(--yellow); border-color: var(--yellow); background: #e3b34110; display: none; cursor: help; }
+  .status-pill.dropped.visible { display: inline-flex; }
   .status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
   .status-pill.connecting .status-dot { animation: blink 1s ease-in-out infinite; }
   @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
@@ -630,6 +634,7 @@
       <span class="status-dot"></span><span id="liveBarAndroidText">Disconnected</span>
     </span>
     <button class="btn-secondary" id="liveBarAndroidBtn" onclick="toggleAndroid()" style="font-size:11px;padding:3px 8px">Connect</button>
+    <span class="status-pill dropped" id="liveBarAndroidDropped" title=""><span id="liveBarAndroidDroppedText"></span></span>
   </div>
   <div class="sep" style="height:16px"></div>
   <div class="live-bar-item">
@@ -638,6 +643,7 @@
       <span class="status-dot"></span><span id="liveBarIosText">Disconnected</span>
     </span>
     <button class="btn-secondary" id="liveBarIosBtn" onclick="toggleIos()" style="font-size:11px;padding:3px 8px">Connect</button>
+    <span class="status-pill dropped" id="liveBarIosDropped" title=""><span id="liveBarIosDroppedText"></span></span>
   </div>
 </div>
 
@@ -1186,7 +1192,7 @@ function handleFile(file) {
       }
 
       document.getElementById('loadingText').textContent = `Rendering ${allMessages.length.toLocaleString()} lines…`;
-      discardedCount = 0; backlogOverflowed = false;
+      discardedCount = 0; backlogOverflowed = false; resetDroppedCounts();
       setTimeout(() => { applyFilters(); showOnly('logWrapper'); updateExportVisibility(); }, 50);
     } catch(err) {
       alert('Failed to parse file: ' + err.message);
@@ -1382,6 +1388,31 @@ function clearDeviceBadge(platform) {
 }
 function toggleIos() { iosLive ? disconnectIos() : connectIos(); }
 
+// Lines the backend dropped for this client because its WS stream fell
+// behind the bridge's broadcast buffer (server sends {type:'dropped',count}).
+// Per platform; reset by Clear and by loading a file. Disconnect/reconnect keeps it because
+// the earlier session's lines (and their gaps) are still in the table.
+// The count covers every lost broadcast frame, so a devices/error update in
+// the gap is included and its effect is lost (e.g. an iOS stall prompt never appears).
+// Neither Clear nor a file load empties pendingBatch, so after either while paused,
+// a gap still queued there is under-reported.
+const droppedCount = { android: 0, ios: 0 };
+function updateDroppedIndicator(platform) {
+  const pre = platform === 'android' ? 'liveBarAndroid' : 'liveBarIos';
+  const pill = document.getElementById(pre + 'Dropped');
+  const n = droppedCount[platform];
+  pill.classList.toggle('visible', n > 0);
+  document.getElementById(pre + 'DroppedText').textContent =
+    `\u26A0 ${n.toLocaleString()} ${n === 1 ? 'line' : 'lines'} dropped`;
+  pill.title = `${n.toLocaleString()} ${platform === 'android' ? 'Android' : 'iOS'} ${n === 1 ? 'message' : 'messages'} (log lines, plus any device/status updates in the gap) never reached the viewer: ` +
+    'this connection could not keep up with the stream, so the app\'s server-side buffer overflowed ' +
+    'and the oldest unsent messages were dropped. The table and exports may have gaps where this happened (unless those lines were later discarded by the viewer\'s retention cap). Resets on Clear or when a file is loaded.';
+}
+function resetDroppedCounts() {
+  droppedCount.android = droppedCount.ios = 0;
+  updateDroppedIndicator('android'); updateDroppedIndicator('ios');
+}
+
 function handleWsMsg(e, platform) {
   let flushNow = false;   // flushBatch runs OUTSIDE the try so its errors aren't swallowed
   try {
@@ -1405,6 +1436,13 @@ function handleWsMsg(e, platform) {
       if (text.toLowerCase().includes('stalled') && !livePaused) {
         showStallModal(text);
       }
+      return;
+    }
+    if (data.type === 'dropped') {
+      // Count only well-formed positive integers; the value reaches the DOM via textContent only.
+      // Counted while paused too: the drop happened server-side, pausing does not cause it.
+      const n = data.count;
+      if (typeof n === 'number' && Number.isSafeInteger(n) && n > 0) { droppedCount[platform] += n; updateDroppedIndicator(platform); }
       return;
     }
     if (data.type === 'log') {
@@ -1706,7 +1744,7 @@ function togglePause() {
     flushBatch();
   }
 }
-function clearLogs() { allMessages = []; filtered = []; renderFrom = -1; renderedEnd = 0; selectedMessage = null; domStale = false; discardedCount = 0; backlogOverflowed = false; document.getElementById('tbody').innerHTML = ''; updateStats(); updateExportVisibility(); }
+function clearLogs() { allMessages = []; filtered = []; renderFrom = -1; renderedEnd = 0; selectedMessage = null; domStale = false; discardedCount = 0; backlogOverflowed = false; document.getElementById('tbody').innerHTML = ''; updateStats(); updateExportVisibility(); resetDroppedCounts(); }
 
 // ── Live retention ──
 // First index in [lo, arr.length) where pred holds; pred must be monotone (false…false, true…true).
@@ -1819,10 +1857,14 @@ function toggleExportMenu() {
     document.getElementById('exportFilteredCount').textContent = filtered.length.toLocaleString() + ' lines';
     document.getElementById('exportAllCount').textContent = allMessages.length.toLocaleString() + ' lines';
     const note = document.getElementById('exportNote');
-    note.hidden = !discardedCount;
-    if (discardedCount) note.textContent = backlogOverflowed
-      ? `Exports the lines held before the pause (${allMessages.length.toLocaleString()}). ${discardedCount.toLocaleString()} lines were discarded because the paused backlog exceeded ${MAX_RETAINED.toLocaleString()}; on resume the live lines here are dropped and the view continues from the newest.`
-      : `Exports retained lines only: ${discardedCount.toLocaleString()} older lines were discarded (live view keeps the newest ${MAX_RETAINED.toLocaleString()}).`;
+    const lost = droppedCount.android + droppedCount.ios;
+    note.hidden = !(discardedCount || lost);
+    const parts = [];
+    if (discardedCount) parts.push(backlogOverflowed
+      ? `Exports the lines held before the pause (${allMessages.length.toLocaleString()}). ${discardedCount.toLocaleString()} lines were discarded because the paused backlog exceeded ${MAX_RETAINED.toLocaleString()}; on resume the live lines here are discarded and the view continues from the newest.`
+      : `Exports retained lines only: ${discardedCount.toLocaleString()} older lines were discarded (live view keeps the newest ${MAX_RETAINED.toLocaleString()}).`);
+    if (lost) parts.push(`${lost.toLocaleString()} ${lost === 1 ? 'line' : 'lines'} never reached the viewer (server buffer overflow); the export may have gaps where ${lost === 1 ? 'it' : 'they'} occurred${discardedCount ? ' (unless later discarded by the retention cap)' : ''}.`);
+    note.textContent = parts.join(' ');
     positionExportMenu();
   }
 }
@@ -2057,7 +2099,7 @@ function updateStats() {
     (!discardedCount ? '' : backlogOverflowed ? `, ${discardedCount.toLocaleString()} discarded, resume skips to newest`
                                               : `, ${discardedCount.toLocaleString()} older discarded`);
   const title = !discardedCount ? ''
-    : backlogOverflowed ? `The paused backlog exceeded ${MAX_RETAINED.toLocaleString()} lines, so its oldest frames were dropped. On resume the lines shown now are discarded and the view continues from the newest lines.`
+    : backlogOverflowed ? `The paused backlog exceeded ${MAX_RETAINED.toLocaleString()} lines, so its oldest frames were discarded. On resume the lines shown now are discarded and the view continues from the newest lines.`
     : `Live view keeps the newest ${MAX_RETAINED.toLocaleString()} lines; older lines are discarded to bound memory.`;
   if (el.title !== title) el.title = title;   // avoid an attribute write on every flush
 }

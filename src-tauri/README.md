@@ -248,8 +248,8 @@ src-tauri/
     ├── main.rs                 # thin wrapper → applogs_viewer_lib::run()
     ├── lib.rs                  # Tauri builder + spawn axum + plugins
     ├── http_server.rs          # axum :8780, GET / serves embedded HTML, no-store
-    ├── ws_server.rs            # WebSocket fan-out for log frames
-    ├── frame.rs                # serde structs (LogFrame, DevicesFrame, ErrorFrame)
+    ├── ws_server.rs            # WebSocket fan-out for log frames (+ per-client dropped-frame notices)
+    ├── frame.rs                # serde structs (LogFrame, DevicesFrame, ErrorFrame, DroppedFrame)
     ├── parser.rs               # IOS_RE / ANDROID_RE / level maps
     ├── pid_map.rs              # Android PID→package mapping
     ├── tooling.rs              # vendor-tooling resolution
