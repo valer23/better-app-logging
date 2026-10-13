@@ -1586,6 +1586,10 @@ function flushBatch() {
     // Don't lose the rest of the backlog; drop only the frame that threw.
     pendingBatch = batch.slice(i + 1).concat(pendingBatch);
     trimRetained();   // a throwing frame must not leave allMessages over the cap until the next flush
+    // Re-arm so the interrupted drain still reaches the final renderLiveTail and resets renderFrom
+    // to -1; otherwise the renderFrom<0 lazy-load gate stays closed. renderFrom is kept so the next
+    // chunk renders from the original start.
+    batchTimer = setTimeout(flushBatch, 0);
     throw err;
   }
   trimRetained();   // bound memory per chunk, before renderFrom/renderLiveTail use filtered indexes
@@ -1702,7 +1706,7 @@ function togglePause() {
     flushBatch();
   }
 }
-function clearLogs() { allMessages = []; filtered = []; renderFrom = -1; domStale = false; discardedCount = 0; backlogOverflowed = false; document.getElementById('tbody').innerHTML = ''; updateStats(); updateExportVisibility(); }
+function clearLogs() { allMessages = []; filtered = []; renderFrom = -1; renderedEnd = 0; selectedMessage = null; domStale = false; discardedCount = 0; backlogOverflowed = false; document.getElementById('tbody').innerHTML = ''; updateStats(); updateExportVisibility(); }
 
 // ── Live retention ──
 // First index in [lo, arr.length) where pred holds; pred must be monotone (false…false, true…true).
