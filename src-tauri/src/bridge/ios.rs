@@ -12,6 +12,7 @@ use chrono::Datelike;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::{broadcast, Notify};
 
+use crate::children;
 use crate::frame::{DevicesFrame, ErrorFrame, Frame, LogFrame};
 use crate::parser::{ios_level, ANSI_RE, IOS_RE};
 use crate::tooling;
@@ -34,7 +35,14 @@ const STALL_HINT: &str = concat!(
 pub fn spawn(tx: broadcast::Sender<String>) {
     tauri::async_runtime::spawn(async move {
         loop {
-            if let Err(e) = run_once(&tx).await {
+            let res = run_once(&tx).await;
+            // App is exiting (children already killed): stop instead of
+            // surfacing the resulting EOF as a bridge error and respawning.
+            if children::is_shutting_down() {
+                tracing::debug!("[ios] shutdown — bridge loop exit");
+                break;
+            }
+            if let Err(e) = res {
                 tracing::warn!("[ios] bridge error: {e}");
                 emit_error(&tx, &format!("ios bridge error: {e}"));
             }
@@ -46,16 +54,21 @@ pub fn spawn(tx: broadcast::Sender<String>) {
 
 async fn run_once(tx: &broadcast::Sender<String>) -> Result<(), String> {
     tracing::info!("[ios] spawning idevicesyslog --no-colors");
-    let mut child = tooling::tokio_command("idevicesyslog")
-        .arg("--no-colors")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true) // do not orphan subprocess if our task is dropped
-        .spawn()
-        .map_err(|e| format!("spawn idevicesyslog: {e} (is libimobiledevice installed?)"))?;
+    // Registered with `children` so it is killed on app exit — `kill_on_drop`
+    // alone never fires there (see children.rs). The registry owns the child
+    // from spawn; `kill_on_drop` only fires when `Tracked` is dropped on an
+    // early return, or when `kill_all` drops a `Child` whose `start_kill` failed.
+    let (child, stdout, stderr) = children::spawn(
+        tooling::tokio_command("idevicesyslog")
+            .arg("--no-colors")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true),
+    )
+    .map_err(|e| format!("spawn idevicesyslog: {e} (is libimobiledevice installed?)"))?;
 
-    let stdout = child.stdout.take().ok_or("no stdout")?;
-    let stderr = child.stderr.take().ok_or("no stderr")?;
+    let stdout = stdout.ok_or("no stdout")?;
+    let stderr = stderr.ok_or("no stderr")?;
 
     // Drain stderr in a sibling task — forwarded as ErrorFrame.
     let stderr_tx = tx.clone();
@@ -84,10 +97,10 @@ async fn run_once(tx: &broadcast::Sender<String>) -> Result<(), String> {
     };
 
     // Kill + reap before returning, in all branches, so we never leak a zombie
-    // across respawns. `wait()` is harmless if the child has already exited
-    // (`ReaderEof`); on stall / reader error it ensures the SIGKILL is reaped.
-    let _ = child.kill().await;
-    let _ = child.wait().await;
+    // across respawns. Harmless if the child has already exited
+    // (`ReaderEof`) or `kill_all` already took it at shutdown; on stall /
+    // reader error it ensures the SIGKILL is reaped.
+    child.kill_and_reap().await;
 
     match outcome {
         StreamOutcome::Stalled => {
