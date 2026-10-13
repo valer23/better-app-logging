@@ -1522,7 +1522,12 @@ function hideStallModal() {
   document.getElementById('stallModal').classList.remove('visible');
 }
 
-const LIVE_DOM_CAP   = 6000;  // max rows in DOM at once
+const LIVE_DOM_CAP   = 6000;  // max live rows in the DOM: the unpinned scroll-back window and the prependOlderRows ceiling (pinned or not)
+// While auto-scroll is pinned only the last screenful is visible, and table layout cost
+// scales with the rows in the <table> (~55-100ms per flush at 6000 rows even for a 14-row
+// append, a few ms at 300), so keep just a short tail. 300 rows is >3 screenfuls even at the
+// 8px minimum zoom on a 2160px-tall window (the 16px platform badge keeps rows >= ~23px).
+const FOLLOW_DOM_CAP = 300;
 const FLUSH_INTERVAL_MS = 150;   // batch window — bigger batches, fewer DOM updates
 const MAX_FLUSH_GAP_MS  = 1000;  // handleWsMsg flushes inline if no flush ran this long
 const FLUSH_BUDGET_MS   = 50;    // max time per flush chunk before yielding to the event loop
@@ -1586,11 +1591,12 @@ function flushBatch() {
 function renderLiveTail(firstNew) {
   renderedEnd = filtered.length;
   if (document.hidden) { domStale = true; return; }
-  const full = domStale || filtered.length - firstNew >= LIVE_DOM_CAP;   // full = replace tbody, don't append
+  const cap  = autoScroll ? FOLLOW_DOM_CAP : LIVE_DOM_CAP;   // short tail while following (see FOLLOW_DOM_CAP)
+  const full = domStale || filtered.length - firstNew >= cap;   // full = replace tbody, don't append
   if (full || filtered.length > firstNew) {
     const tbody = document.getElementById('tbody');
-    // Only build rows that survive LIVE_DOM_CAP — anything older would be trimmed right away.
-    const from = Math.max(full ? 0 : firstNew, filtered.length - LIVE_DOM_CAP);
+    // Only build rows that survive `cap` — anything older would be trimmed right away.
+    const from = Math.max(full ? 0 : firstNew, filtered.length - cap);
     const frag = document.createDocumentFragment();
     // No fade-in animation on live rows — at high volume every row would be
     // opacity:0 and the table appears blank
@@ -1603,8 +1609,8 @@ function renderLiveTail(firstNew) {
     } else {
       tbody.appendChild(frag);
       // ── Efficient DOM trim: remove a range in one operation (not row-by-row) ──
-      if (tbody.rows.length > LIVE_DOM_CAP) {
-        const toRemove = tbody.rows.length - LIVE_DOM_CAP;
+      if (tbody.rows.length > cap) {
+        const toRemove = tbody.rows.length - cap;
         const range = document.createRange();
         range.setStartBefore(tbody.rows[0]);
         range.setEndBefore(tbody.rows[toRemove]);
@@ -2028,8 +2034,32 @@ function renderChunk(start) {
   // NOTE: scroll reset intentionally removed — applyFilters handles it explicitly
 }
 
+// The live view keeps only a tail of `filtered` in the DOM (FOLLOW_DOM_CAP rows while
+// pinned), so scrolling near the top pulls older rows back in, PAGE at a time, up to
+// LIVE_DOM_CAP: the same scroll-back as before. Identity lookup (not a stored index)
+// stays correct when retention trims `filtered` from the front.
+function prependOlderRows(t) {
+  const tbody = document.getElementById('tbody');
+  const first = tbody.firstElementChild;
+  if (!first || !first._message || first._message === filtered[0]) return;  // at the head (file mode, after applyFilters)
+  const room = LIVE_DOM_CAP - tbody.rows.length;
+  if (room <= 0) return;
+  const idx = filtered.lastIndexOf(first._message);   // live tail => near the end => cheap
+  if (idx <= 0) return;                                // -1: no longer in `filtered`
+  const start = Math.max(0, idx - Math.min(PAGE, room));
+  const frag = document.createDocumentFragment();
+  for (let i = start; i < idx; i++) frag.appendChild(buildRow(filtered[i], false));
+  const s0 = t.scrollTop, h0 = t.scrollHeight;
+  tbody.insertBefore(frag, first);
+  // Absolute assignment from pre-insert readings: correct whether or not the engine's
+  // scroll anchoring already compensated (Chromium does, WebKit may not).
+  t.scrollTop = s0 + (t.scrollHeight - h0);
+}
+
 document.getElementById('logTable').addEventListener('scroll', function() {
-  if (this.scrollTop + this.clientHeight >= this.scrollHeight - 200 && renderedEnd < filtered.length) renderChunk(renderedEnd);
+  if (renderedEnd < filtered.length) {
+    if (this.scrollTop + this.clientHeight >= this.scrollHeight - 200) renderChunk(renderedEnd);
+  } else if (this.scrollTop < 200) prependOlderRows(this);
 });
 
 // ── Setup modal ──
