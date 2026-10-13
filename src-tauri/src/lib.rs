@@ -142,7 +142,9 @@ pub fn run() {
             }
 
             // iOS bridge → broadcast → WS on :8766.
-            let (ios_tx, _) = tokio::sync::broadcast::channel::<String>(2048);
+            // Sized to ride out ~1.2s of viewer main-thread stall at iOS's ~27k/s burst peak
+            // (e.g. a full 6000-row tail rebuild) without RecvError::Lagged dropping frames.
+            let (ios_tx, _) = tokio::sync::broadcast::channel::<String>(32768);
             bridge::ios::spawn(ios_tx.clone());
             let ios_ws_state = ws_server::WsState {
                 tx: ios_tx,
