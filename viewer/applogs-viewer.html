@@ -1192,7 +1192,7 @@ function handleFile(file) {
       }
 
       document.getElementById('loadingText').textContent = `Rendering ${allMessages.length.toLocaleString()} lines…`;
-      discardedCount = 0; backlogOverflowed = false;
+      discardedCount = 0; backlogOverflowed = false; resetDroppedCounts();
       setTimeout(() => { applyFilters(); showOnly('logWrapper'); updateExportVisibility(); }, 50);
     } catch(err) {
       alert('Failed to parse file: ' + err.message);
@@ -1388,14 +1388,14 @@ function clearDeviceBadge(platform) {
 }
 function toggleIos() { iosLive ? disconnectIos() : connectIos(); }
 
-// Lines the backend discarded for this client because its WS stream fell
+// Lines the backend dropped for this client because its WS stream fell
 // behind the bridge's broadcast buffer (server sends {type:'dropped',count}).
-// Per platform; reset only by Clear. Disconnect/reconnect keeps it because
+// Per platform; reset by Clear and by loading a file. Disconnect/reconnect keeps it because
 // the earlier session's lines (and their gaps) are still in the table.
 // The count covers every lost broadcast frame, so a devices/error update in
 // the gap is included and its effect is lost (e.g. an iOS stall prompt never appears).
-// Clear does not empty pendingBatch, so after a Clear while paused, a gap still
-// queued there is under-reported.
+// Neither Clear nor a file load empties pendingBatch, so after either while paused,
+// a gap still queued there is under-reported.
 const droppedCount = { android: 0, ios: 0 };
 function updateDroppedIndicator(platform) {
   const pre = platform === 'android' ? 'liveBarAndroid' : 'liveBarIos';
@@ -1406,7 +1406,7 @@ function updateDroppedIndicator(platform) {
     `\u26A0 ${n.toLocaleString()} ${n === 1 ? 'line' : 'lines'} dropped`;
   pill.title = `${n.toLocaleString()} ${platform === 'android' ? 'Android' : 'iOS'} ${n === 1 ? 'message' : 'messages'} (log lines, plus any device/status updates in the gap) never reached the viewer: ` +
     'this connection could not keep up with the stream, so the app\'s server-side buffer overflowed ' +
-    'and the oldest unsent messages were discarded. The table and exports have gaps. Resets on Clear.';
+    'and the oldest unsent messages were dropped. The table and exports may have gaps where this happened (unless those lines were later discarded by the viewer\'s retention cap). Resets on Clear or when a file is loaded.';
 }
 function resetDroppedCounts() {
   droppedCount.android = droppedCount.ios = 0;
@@ -1857,10 +1857,14 @@ function toggleExportMenu() {
     document.getElementById('exportFilteredCount').textContent = filtered.length.toLocaleString() + ' lines';
     document.getElementById('exportAllCount').textContent = allMessages.length.toLocaleString() + ' lines';
     const note = document.getElementById('exportNote');
-    note.hidden = !discardedCount;
-    if (discardedCount) note.textContent = backlogOverflowed
-      ? `Exports the lines held before the pause (${allMessages.length.toLocaleString()}). ${discardedCount.toLocaleString()} lines were discarded because the paused backlog exceeded ${MAX_RETAINED.toLocaleString()}; on resume the live lines here are dropped and the view continues from the newest.`
-      : `Exports retained lines only: ${discardedCount.toLocaleString()} older lines were discarded (live view keeps the newest ${MAX_RETAINED.toLocaleString()}).`;
+    const lost = droppedCount.android + droppedCount.ios;
+    note.hidden = !(discardedCount || lost);
+    const parts = [];
+    if (discardedCount) parts.push(backlogOverflowed
+      ? `Exports the lines held before the pause (${allMessages.length.toLocaleString()}). ${discardedCount.toLocaleString()} lines were discarded because the paused backlog exceeded ${MAX_RETAINED.toLocaleString()}; on resume the live lines here are discarded and the view continues from the newest.`
+      : `Exports retained lines only: ${discardedCount.toLocaleString()} older lines were discarded (live view keeps the newest ${MAX_RETAINED.toLocaleString()}).`);
+    if (lost) parts.push(`${lost.toLocaleString()} ${lost === 1 ? 'line' : 'lines'} never reached the viewer (server buffer overflow); the export may have gaps where ${lost === 1 ? 'it' : 'they'} occurred${discardedCount ? ' (unless later discarded by the retention cap)' : ''}.`);
+    note.textContent = parts.join(' ');
     positionExportMenu();
   }
 }
@@ -2095,7 +2099,7 @@ function updateStats() {
     (!discardedCount ? '' : backlogOverflowed ? `, ${discardedCount.toLocaleString()} discarded, resume skips to newest`
                                               : `, ${discardedCount.toLocaleString()} older discarded`);
   const title = !discardedCount ? ''
-    : backlogOverflowed ? `The paused backlog exceeded ${MAX_RETAINED.toLocaleString()} lines, so its oldest frames were dropped. On resume the lines shown now are discarded and the view continues from the newest lines.`
+    : backlogOverflowed ? `The paused backlog exceeded ${MAX_RETAINED.toLocaleString()} lines, so its oldest frames were discarded. On resume the lines shown now are discarded and the view continues from the newest lines.`
     : `Live view keeps the newest ${MAX_RETAINED.toLocaleString()} lines; older lines are discarded to bound memory.`;
   if (el.title !== title) el.title = title;   // avoid an attribute write on every flush
 }
