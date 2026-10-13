@@ -1368,6 +1368,7 @@ function clearDeviceBadge(platform) {
 function toggleIos() { iosLive ? disconnectIos() : connectIos(); }
 
 function handleWsMsg(e, platform) {
+  let flushNow = false;   // flushBatch runs OUTSIDE the try so its errors aren't swallowed
   try {
     const data = JSON.parse(e.data);
     if (data.type === 'devices') {
@@ -1396,12 +1397,18 @@ function handleWsMsg(e, platform) {
       // Always queue — pause only stops the drain, so resume flushes the
       // backlog instead of losing frames.
       pendingBatch.push(data);
-      if (!livePaused && !batchTimer) {
-        // 150ms throttle — accumulates bigger batches so fewer, cheaper DOM updates
-        batchTimer = setTimeout(flushBatch, 150);
-      }
+      if (livePaused) return;
+      // Flush inline if the timer has fallen behind. Covers platforms where
+      // timers are throttled but WS events still arrive (WebView2/Chromium
+      // intensive throttling). On macOS < 14 the default Suspend policy can
+      // suspend the content process entirely; only the visibilitychange
+      // flush helps there.
+      if (performance.now() - lastFlushAt >= MAX_FLUSH_GAP_MS) flushNow = true;
+      // 150ms throttle — accumulates bigger batches so fewer, cheaper DOM updates
+      else if (!batchTimer) batchTimer = setTimeout(flushBatch, FLUSH_INTERVAL_MS);
     }
-  } catch {}
+  } catch (err) { console.error('handleWsMsg', err); }
+  if (flushNow) flushBatch();
 }
 
 // ── iOS pair / unpair / repair ──
@@ -1516,45 +1523,105 @@ function hideStallModal() {
 }
 
 const LIVE_DOM_CAP   = 6000;  // max rows in DOM at once
-const MAX_PER_FLUSH  = 1500;  // max messages processed per flush cycle
+const FLUSH_INTERVAL_MS = 150;   // batch window — bigger batches, fewer DOM updates
+const MAX_FLUSH_GAP_MS  = 1000;  // handleWsMsg flushes inline if no flush ran this long
+const FLUSH_BUDGET_MS   = 50;    // max time per flush chunk before yielding to the event loop
+let lastFlushAt = 0;             // performance.now() of the last completed flush chunk
+let renderFrom  = -1;            // first new filtered index of the in-progress drain cycle (-1 = none)
+let domStale    = false;         // tbody lags `filtered` (rendering was skipped while hidden)
 
+// Drains the whole backlog FIFO, in time-sliced chunks. The old cap (1500 msgs
+// per 150ms tick: nominally ~10k/s, ~5k/s measured once flush time is included)
+// let iOS bursts outrun the drain, and timer throttling while hidden then
+// stretched catch-up to minutes. Data/filter work is O(backlog) but sliced into
+// FLUSH_BUDGET_MS chunks; DOM work is bounded by LIVE_DOM_CAP and skipped while
+// hidden. Under timer throttling setTimeout(0) may clamp to ~1s, but one 50ms
+// chunk handles far more than iOS's ~27k/s peak and the inline WS-path flush
+// keeps draining too, so throughput stays above arrival.
 function flushBatch() {
-  batchTimer = null;
-  if (livePaused) return;          // hold backlog until resume
-  if (!pendingBatch.length) return;
-
-  // ── Process at most MAX_PER_FLUSH; schedule next tick if more remain ──
-  const toProcess = pendingBatch.splice(0, MAX_PER_FLUSH);
-  if (pendingBatch.length > 0)
-    batchTimer = setTimeout(flushBatch, 150);
-
-  const tbody = document.getElementById('tbody');
-  const frag  = document.createDocumentFragment();
-
-  toProcess.forEach(data => {
-    const m = { ts: data.ts, pid: data.pid, tid: data.tid, tag: data.tag,
-                app: data.app||'', lvl: data.lvl, msg: data.msg, platform: data.platform };
-    allMessages.push(m);
-    // No fade-in animation on live rows — at high volume every row would be
-    // opacity:0 and the table appears blank
-    if (passesFilter(m)) { filtered.push(m); frag.appendChild(buildRow(m, false)); }
-  });
-
-  tbody.appendChild(frag);
-
-  // ── Efficient DOM trim: remove a range in one operation (not row-by-row) ──
-  if (tbody.rows.length > LIVE_DOM_CAP) {
-    const toRemove = tbody.rows.length - LIVE_DOM_CAP;
-    const range = document.createRange();
-    range.setStartBefore(tbody.rows[0]);
-    range.setEndBefore(tbody.rows[toRemove]);
-    range.deleteContents();
+  if (batchTimer) { clearTimeout(batchTimer); batchTimer = null; }
+  if (livePaused) return;   // hold backlog until resume
+  if (!pendingBatch.length) {
+    if (domStale && !document.hidden) renderLiveTail(filtered.length);   // repair DOM skipped while hidden
+    return;
   }
 
-  renderedEnd = filtered.length;
+  const batch = pendingBatch; pendingBatch = [];    // O(1) swap, no splice
+  const pass = makeFilter();                        // read filter inputs once per flush, not per row
+  if (renderFrom < 0) renderFrom = filtered.length;
+  const t0 = performance.now();
+  let i = 0;
+  try {
+    // Plain loop: push(...batch) overflows the call stack on big backlogs.
+    for (; i < batch.length; i++) {
+      // Clock check every 2048 frames, not per frame.
+      if (i && !(i & 2047) && performance.now() - t0 > FLUSH_BUDGET_MS) break;
+      const d = batch[i];
+      const m = { ts: d.ts, pid: d.pid, tid: d.tid, tag: d.tag,
+                  app: d.app||'', lvl: d.lvl, msg: d.msg, platform: d.platform };
+      allMessages.push(m);
+      if (pass(m)) filtered.push(m);
+    }
+  } catch (err) {
+    // Don't lose the rest of the backlog; drop only the frame that threw.
+    pendingBatch = batch.slice(i + 1).concat(pendingBatch);
+    throw err;
+  }
+
+  if (i < batch.length) {
+    // Out of budget: requeue the remainder at the FRONT (FIFO), yield, and skip
+    // rendering — only the chunk that empties the queue builds DOM.
+    pendingBatch = batch.slice(i).concat(pendingBatch);
+    batchTimer = setTimeout(flushBatch, 0);
+  } else {
+    renderLiveTail(renderFrom);
+    renderFrom = -1;
+  }
   updateStats(); updateExportVisibility();
+  lastFlushAt = performance.now();   // at the END so a long flush doesn't immediately re-trigger
+}
+
+// Render the rows added to `filtered` since index `firstNew`. While hidden the
+// DOM work is skipped (domStale); the next visible render rebuilds the whole tail.
+function renderLiveTail(firstNew) {
+  renderedEnd = filtered.length;
+  if (document.hidden) { domStale = true; return; }
+  const full = domStale || filtered.length - firstNew >= LIVE_DOM_CAP;   // full = replace tbody, don't append
+  if (full || filtered.length > firstNew) {
+    const tbody = document.getElementById('tbody');
+    // Only build rows that survive LIVE_DOM_CAP — anything older would be trimmed right away.
+    const from = Math.max(full ? 0 : firstNew, filtered.length - LIVE_DOM_CAP);
+    const frag = document.createDocumentFragment();
+    // No fade-in animation on live rows — at high volume every row would be
+    // opacity:0 and the table appears blank
+    for (let i = from; i < filtered.length; i++) frag.appendChild(buildRow(filtered[i], false));
+
+    if (full) {
+      tbody.textContent = '';
+      tbody.appendChild(frag);
+      domStale = false;
+    } else {
+      tbody.appendChild(frag);
+      // ── Efficient DOM trim: remove a range in one operation (not row-by-row) ──
+      if (tbody.rows.length > LIVE_DOM_CAP) {
+        const toRemove = tbody.rows.length - LIVE_DOM_CAP;
+        const range = document.createRange();
+        range.setStartBefore(tbody.rows[0]);
+        range.setEndBefore(tbody.rows[toRemove]);
+        range.deleteContents();
+      }
+    }
+  }
   if (autoScroll) { const t = document.getElementById('logTable'); t.scrollTop = t.scrollHeight; }
 }
+
+// Timers can be throttled/suspended while hidden; drain as soon as we're visible
+// again, and repair a stale DOM even when the queue is empty.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden || livePaused) return;
+  if (pendingBatch.length) flushBatch();
+  else if (domStale) renderLiveTail(filtered.length);
+});
 
 // ── Live controls ──
 function setStatus(platform, state, text) {
@@ -1601,11 +1668,9 @@ function togglePause() {
   const btn = document.getElementById('pauseBtn');
   btn.textContent = livePaused ? '▶ Resume' : '⏸ Pause'; btn.classList.toggle('paused', livePaused);
   // On resume, drain whatever queued during the pause.
-  if (!livePaused && pendingBatch.length > 0 && !batchTimer) {
-    batchTimer = setTimeout(flushBatch, 0);
-  }
+  if (!livePaused) flushBatch();
 }
-function clearLogs() { allMessages = []; filtered = []; document.getElementById('tbody').innerHTML = ''; updateStats(); updateExportVisibility(); }
+function clearLogs() { allMessages = []; filtered = []; renderFrom = -1; domStale = false; document.getElementById('tbody').innerHTML = ''; updateStats(); updateExportVisibility(); }
 
 // ── Export ──
 // Position the export menu against the button's bounding rect, clamped to
@@ -1817,24 +1882,29 @@ function msgMatches(msg, query) {
   return false;
 }
 
-function passesFilter(m) {
-  if (!enabledLevels.has(m.lvl) || !enabledPlatforms.has(m.platform)) return false;
+// Factory so batch callers (flushBatch, applyFilters) read the DOM inputs once
+// per pass instead of once per message.
+function makeFilter() {
   const s = currentSearch;
   const t = document.getElementById('tagFilter').value;
   const p = document.getElementById('pidFilter').value;
   // Tag/PID filters stay simple case-insensitive substrings — matches typical log-tool UX.
   const tLow = t.toLowerCase();
   const pLow = p.toLowerCase();
-  if (s && !msgMatches(m.msg, s))                                          return false;
-  if (t && !m.tag.toLowerCase().includes(tLow))                            return false;
-  if (p && !String(m.pid).includes(p) && !m.app.toLowerCase().includes(pLow)) return false;
-  return true;
+  return m => {
+    if (!enabledLevels.has(m.lvl) || !enabledPlatforms.has(m.platform)) return false;
+    if (s && !msgMatches(m.msg, s))                                          return false;
+    if (t && !m.tag.toLowerCase().includes(tLow))                            return false;
+    if (p && !String(m.pid).includes(p) && !m.app.toLowerCase().includes(pLow)) return false;
+    return true;
+  };
 }
 
 function applyFilters() {
   currentSearch = document.getElementById('search').value;
   searchRegex   = _compileSearchRegex(currentSearch);
-  filtered = allMessages.filter(passesFilter); updateStats();
+  filtered = allMessages.filter(makeFilter()); updateStats();
+  renderFrom = -1; domStale = false;   // this render owns the DOM; allMessages already holds any mid-drain chunks
   renderedEnd = 0; document.getElementById('tbody').innerHTML = '';
   renderChunk(0);
 
@@ -1871,7 +1941,7 @@ let currentSearch = '';
 // Build a DocumentFragment of text + <mark> nodes for the message cell.
 // All log content reaches the DOM exclusively via textContent — no string
 // concatenation into innerHTML, so a hostile log line cannot inject markup.
-// Honors the same compiled regex as `passesFilter` (case + regex toggles).
+// Honors the same compiled regex as `makeFilter` (case + regex toggles).
 function buildMessageNodes(s, q) {
   const frag = document.createDocumentFragment();
   const str = s == null ? '' : String(s);
