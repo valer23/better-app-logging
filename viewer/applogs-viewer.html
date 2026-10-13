@@ -448,6 +448,7 @@
   .export-scope { border-top: 1px solid var(--border); margin-top: 4px; padding: 8px 10px 4px; display: flex; flex-direction: column; gap: 5px; }
   .export-scope label { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 6px; cursor: pointer; }
   .export-scope input[type="radio"] { accent-color: var(--accent); cursor: pointer; }
+  .export-note { border-top: 1px solid var(--border); margin-top: 4px; padding: 6px 10px 4px; font-size: 11px; line-height: 1.35; color: var(--yellow); }
 
   /* ── Loading ── */
   #loading { display: none; align-items: center; justify-content: center; gap: 12px; flex: 1; font-size: 14px; color: var(--muted); }
@@ -536,6 +537,7 @@
           <label><input type="radio" name="exportScope" value="filtered" checked> Filtered view (<span id="exportFilteredCount"></span>)</label>
           <label><input type="radio" name="exportScope" value="all"> All logs (<span id="exportAllCount"></span>)</label>
         </div>
+        <div class="export-note" id="exportNote" hidden></div>
       </div>
     </div>
   </div>
@@ -868,6 +870,17 @@ let pendingBatch = [], batchTimer = null;
 const PAGE = 500;
 let renderedEnd = 0;
 
+// ── Live retention ──
+// Live lines kept in memory; older ones are dropped so long sessions can't grow the heap without
+// bound (~290 B/line → 500k ≈ 145MB). 500k rather than 1M: a 1M-line JSON export approaches V8's
+// ~537M-char string limit (WebView2). `let` so it can be tuned from the console (Infinity = no cap).
+// Loaded-file lines carry no seq and are never counted or trimmed.
+let MAX_RETAINED = 500000;
+const TRIM_FRACTION = 0.1;      // trim to 90% of the cap at once: one sub-ms splice per ~50k lines, not per flush
+let discardedCount = 0;         // live lines dropped since the last Clear / file load
+let nextSeq = 0;                // arrival order of live lines; never reset, so stale references still compare
+let backlogOverflowed = false;  // the paused backlog dropped frames: every retained live line is older than them
+
 // ── Level toggles ──
 LEVELS.forEach(lvl => {
   const btn = document.createElement('button');
@@ -1172,6 +1185,7 @@ function handleFile(file) {
       }
 
       document.getElementById('loadingText').textContent = `Rendering ${allMessages.length.toLocaleString()} lines…`;
+      discardedCount = 0; backlogOverflowed = false;
       setTimeout(() => { applyFilters(); showOnly('logWrapper'); updateExportVisibility(); }, 50);
     } catch(err) {
       alert('Failed to parse file: ' + err.message);
@@ -1397,7 +1411,7 @@ function handleWsMsg(e, platform) {
       // Always queue — pause only stops the drain, so resume flushes the
       // backlog instead of losing frames.
       pendingBatch.push(data);
-      if (livePaused) return;
+      if (livePaused) { if (pendingBatch.length > MAX_RETAINED) trimPausedBacklog(); return; }   // paused backlog is capped too
       // Flush inline if the timer has fallen behind. Covers platforms where
       // timers are throttled but WS events still arrive (WebView2/Chromium
       // intensive throttling). On macOS < 14 the default Suspend policy can
@@ -1563,7 +1577,7 @@ function flushBatch() {
       if (i && !(i & 2047) && performance.now() - t0 > FLUSH_BUDGET_MS) break;
       const d = batch[i];
       const m = { ts: d.ts, pid: d.pid, tid: d.tid, tag: d.tag,
-                  app: d.app||'', lvl: d.lvl, msg: d.msg, platform: d.platform };
+                  app: d.app||'', lvl: d.lvl, msg: d.msg, platform: d.platform, seq: nextSeq++ };
       allMessages.push(m);
       if (pass(m)) filtered.push(m);
     }
@@ -1572,6 +1586,7 @@ function flushBatch() {
     pendingBatch = batch.slice(i + 1).concat(pendingBatch);
     throw err;
   }
+  trimRetained();   // bound memory per chunk, before renderFrom/renderLiveTail use filtered indexes
 
   if (i < batch.length) {
     // Out of budget: requeue the remainder at the FRONT (FIFO), yield, and skip
@@ -1674,9 +1689,89 @@ function togglePause() {
   const btn = document.getElementById('pauseBtn');
   btn.textContent = livePaused ? '▶ Resume' : '⏸ Pause'; btn.classList.toggle('paused', livePaused);
   // On resume, drain whatever queued during the pause.
-  if (!livePaused) flushBatch();
+  if (!livePaused) {
+    // Frames dropped from an overflowing backlog were newer than everything retained; drop those
+    // too so the retained window stays one contiguous run of the newest lines.
+    if (backlogOverflowed) { backlogOverflowed = false; trimRetained(true); }
+    flushBatch();
+  }
 }
-function clearLogs() { allMessages = []; filtered = []; renderFrom = -1; domStale = false; document.getElementById('tbody').innerHTML = ''; updateStats(); updateExportVisibility(); }
+function clearLogs() { allMessages = []; filtered = []; renderFrom = -1; domStale = false; discardedCount = 0; backlogOverflowed = false; document.getElementById('tbody').innerHTML = ''; updateStats(); updateExportVisibility(); }
+
+// ── Live retention ──
+// First index in [lo, arr.length) where pred holds; pred must be monotone (false…false, true…true).
+function firstIndexWhere(arr, lo, pred) {
+  let hi = arr.length;
+  while (lo < hi) { const mid = (lo + hi) >>> 1; if (pred(arr[mid])) hi = mid; else lo = mid + 1; }
+  return lo;
+}
+
+// allMessages and filtered are both [file lines (no seq)] [live lines (ascending seq)], so the
+// trimmed lines are one run in each, found by binary search. dropAllLive: drop every live line
+// (resume after a backlog overflow).
+function trimRetained(dropAllLive = false) {
+  if (!dropAllLive && !(allMessages.length > MAX_RETAINED)) return;   // fast path; NaN/Infinity = no cap
+  const base = firstIndexWhere(allMessages, 0, m => m.seq !== undefined);   // pinned file lines before it
+  const live = allMessages.length - base;
+  if (!dropAllLive && live <= MAX_RETAINED) return;
+  const keep = dropAllLive ? 0 : Math.max(0, Math.floor(MAX_RETAINED * (1 - TRIM_FRACTION)));
+  const drop = live - keep;
+  if (drop <= 0) return;
+  const cut = base + drop;
+  const cutoff = cut < allMessages.length ? allMessages[cut].seq : nextSeq;   // seq of first kept line
+  allMessages.splice(base, drop);
+  const fa = firstIndexWhere(filtered, 0, m => m.seq !== undefined);
+  const fb = firstIndexWhere(filtered, fa, m => m.seq >= cutoff);
+  const fDrop = fb - fa;
+  if (fDrop) {
+    filtered.splice(fa, fDrop);
+    const fix = i => i < fa ? i : Math.max(fa, i - fDrop);   // shift past the run, snap inside it
+    if (renderFrom >= 0) renderFrom = fix(renderFrom);
+    renderedEnd = fix(renderedEnd);
+  }
+  if (selectedMessage && selectedMessage.seq < cutoff) selectedMessage = null;
+  discardedCount += drop;
+  dropTrimmedRows(cutoff);
+  updateStats();
+}
+
+// Remove table rows whose message was trimmed (seq < cutoff). Rows are an ordered subsequence of
+// `filtered`, so they form one contiguous block after any file rows. Hidden/stale DOM is rebuilt
+// from `filtered` on the next visible render instead.
+function dropTrimmedRows(cutoff) {
+  if (document.hidden || domStale) { domStale = true; return; }
+  const tbody = document.getElementById('tbody');
+  const rows = tbody.rows;
+  let a = 0;
+  while (a < rows.length && rows[a]._message && rows[a]._message.seq === undefined) a++;   // file rows stay
+  let b = a;
+  while (b < rows.length && rows[b]._message && rows[b]._message.seq < cutoff) b++;
+  if (b === a) return;
+  const survivor = b < rows.length ? rows[b] : null;
+  const scroller = document.getElementById('logTable');
+  // With auto-scroll off the user is reading mid-buffer: keep the first surviving row where it was.
+  // Chromium's scroll anchoring usually compensates already (delta 0); WebKit may not.
+  const topBefore = (!autoScroll && survivor) ? survivor.getBoundingClientRect().top : 0;
+  const range = document.createRange();
+  range.setStartBefore(rows[a]);
+  if (survivor) range.setEndBefore(survivor); else range.setEndAfter(rows[b - 1]);
+  range.deleteContents();
+  if (!autoScroll && survivor && survivor.isConnected) {
+    scroller.scrollTop += survivor.getBoundingClientRect().top - topBefore;
+  }
+}
+
+// While paused the backlog can't drain: cap it as well, dropping its oldest frames. Retained lines
+// are older still, so they're dropped on resume (togglePause) to keep the window contiguous.
+// The paused screen itself stays frozen for reading; worst case memory is ~2x cap while paused.
+function trimPausedBacklog() {
+  const drop = pendingBatch.length - Math.max(0, Math.floor(MAX_RETAINED * (1 - TRIM_FRACTION)));
+  if (drop <= 0) return;
+  pendingBatch.splice(0, drop);
+  discardedCount += drop;
+  backlogOverflowed = true;
+  updateStats();
+}
 
 // ── Export ──
 // Position the export menu against the button's bounding rect, clamped to
@@ -1712,6 +1807,9 @@ function toggleExportMenu() {
   if (open) {
     document.getElementById('exportFilteredCount').textContent = filtered.length.toLocaleString() + ' lines';
     document.getElementById('exportAllCount').textContent = allMessages.length.toLocaleString() + ' lines';
+    const note = document.getElementById('exportNote');
+    note.hidden = !discardedCount;
+    if (discardedCount) note.textContent = `Exports retained lines only: ${discardedCount.toLocaleString()} older lines were discarded (live view keeps the newest ${MAX_RETAINED.toLocaleString()}).`;
     positionExportMenu();
   }
 }
@@ -1940,7 +2038,13 @@ function applyFilters() {
   document.getElementById('logTable').scrollTop = 0; // explicit reset only on full re-render
 }
 
-function updateStats() { document.getElementById('stats').textContent = `${filtered.length.toLocaleString()} / ${allMessages.length.toLocaleString()} lines`; }
+function updateStats() {
+  const el = document.getElementById('stats');
+  el.textContent = `${filtered.length.toLocaleString()} / ${allMessages.length.toLocaleString()} lines` +
+    (discardedCount ? `, ${discardedCount.toLocaleString()} older discarded` : '');
+  const title = discardedCount ? `Live view keeps the newest ${MAX_RETAINED.toLocaleString()} lines; older lines are discarded to bound memory.` : '';
+  if (el.title !== title) el.title = title;   // avoid an attribute write on every flush
+}
 
 let currentSearch = '';
 
