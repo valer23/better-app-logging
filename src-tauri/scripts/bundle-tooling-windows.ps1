@@ -10,7 +10,8 @@
 # Each tool is resolved in this order; first hit wins:
 #   1. env var override (APPLOGS_VENDOR_ADB_DIR / APPLOGS_VENDOR_IMD_DIR)
 #   2. local install on PATH or in well-known directories
-#   3. network download (Google platform-tools / imobiledevice-net release)
+#   3. network download (versioned Google platform-tools archive / tagged
+#      jrjr/libimobiledevice-windows release asset), SHA-256 verified
 #
 # Run on a Windows host (PowerShell 5.1 or 7+) before `build-tauri.bat`.
 # Re-run whenever you bump android-platform-tools / libimobiledevice-win32
@@ -30,7 +31,7 @@ if (Test-Path $vendor)  { Remove-Item -Recurse -Force $vendor }
 New-Item -ItemType Directory -Path $vendor  | Out-Null
 New-Item -ItemType Directory -Path $staging | Out-Null
 
-# GitHub's API requires TLS 1.2 on PowerShell 5.1 (older default is TLS 1.0/1.1).
+# GitHub and dl.google.com require TLS 1.2 on PowerShell 5.1 (older default is TLS 1.0/1.1).
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 # ─── Pinned download artifacts ────────────────────────────────────────────────
@@ -52,6 +53,8 @@ New-Item -ItemType Directory -Path $staging | Out-Null
 #      cannot poison the pin.
 #   For adb, follow the stricter 'How to bump adb' steps below (Google's
 #   repository2-3.xml gives an independent size + SHA-1 to check against).
+#   For libimobiledevice, follow 'How to bump libimobiledevice' below (tag AND
+#   asset name are pinned; cross-check the hash against GitHub's asset digest).
 
 # adb comes from a VERSIONED platform-tools archive whose bytes never change
 # once Google publishes it, so the SHA-256 below stays valid until someone
@@ -74,11 +77,37 @@ New-Item -ItemType Directory -Path $staging | Out-Null
 $script:AdbZipUrl    = 'https://dl.google.com/android/repository/platform-tools_r37.0.1-win.zip'
 $script:AdbZipSha256 = '45f4d63113e895ebde0c90f194099a4676b6ac653bd28d54314a9e022bbc1a99'  # platform-tools r37.0.1 (8044989 bytes, sha1 e03e78b1d80b396f1c3358e31251cb31740e1110 per repository2-3.xml)
 
-# Pin to a concrete release tag (NOT 'latest') so the asset URL is stable and
-# the recorded SHA-256 below means something. Bump the tag + hash together.
-$script:ImdReleaseTag   = 'v20260426-74585f8'
-$script:ImdAssetPattern = '^libimobile-suite-.*_w64\.zip$'
-$script:ImdZipSha256    = '2985634c50c62b36630d610b6acf3caf5b7f1e6b7480a8877a936965f9810eac'  # libimobile-suite-latest_w64.zip from v20260426-74585f8 (10999780 bytes)
+# libimobiledevice comes from a TAGGED jrjr/libimobiledevice-windows release.
+# Tag AND exact asset file name are pinned, so the download URL is fully
+# determined here and needs no GitHub REST API lookup:
+#   https://github.com/jrjr/libimobiledevice-windows/releases/download/<tag>/<asset>
+# github.com answers that URL with a 302 to its release-assets CDN; it is NOT
+# the REST API, so it is not subject to the anonymous 60 requests/hour/IP
+# limit that GitHub-hosted runners (shared egress IPs) exhaust at random.
+# Do NOT reintroduce a GitHub REST API call in the default path.
+# Upstream names every release's asset 'libimobile-suite-latest_w64.zip'; the
+# tag in the path pins the release and the SHA-256 pins the bytes (a
+# re-uploaded asset fails Assert-Sha256 loudly).
+#
+# How to bump libimobiledevice:
+#   1. Pick the release on https://github.com/jrjr/libimobiledevice-windows/releases
+#      and copy its tag and the exact file name of the *_w64.zip asset.
+#   2. Update ImdReleaseTag and ImdAssetName below.
+#   3. Get the new SHA-256: download the URL above and run
+#      `Get-FileHash -Algorithm SHA256` / `shasum -a 256`, or run this script
+#      once with APPLOGS_BUNDLER_TRUST_ON_FIRST_USE=1 (prints it and aborts).
+#      The script route only works when the download path runs: unset
+#      APPLOGS_VENDOR_IMD_DIR and use a host with no idevicesyslog.exe on
+#      PATH and no C:\libimobiledevice-* install.
+#   4. Cross-check it against GitHub's own asset digest, fetched independently
+#      of the download: `gh api repos/jrjr/libimobiledevice-windows/releases/tags/<tag>
+#      --jq '.assets[] | {name, size, digest}'` (digest is "sha256:<hex>").
+#   5. Update ImdZipSha256 and its trailing comment (asset name, tag, size) in
+#      the same commit as the tag/name bump.
+$script:ImdReleaseTag = 'v20260426-74585f8'
+$script:ImdAssetName  = 'libimobile-suite-latest_w64.zip'
+$script:ImdZipUrl     = "https://github.com/jrjr/libimobiledevice-windows/releases/download/$($script:ImdReleaseTag)/$($script:ImdAssetName)"
+$script:ImdZipSha256  = '2985634c50c62b36630d610b6acf3caf5b7f1e6b7480a8877a936965f9810eac'  # libimobile-suite-latest_w64.zip from v20260426-74585f8 (10999780 bytes, matches GitHub asset digest)
 
 function Assert-Sha256 {
     # Verifies that $Path hashes to $Expected (case-insensitive). Modes:
@@ -216,25 +245,16 @@ function Get-ImdViaDownload {
     # asset per release (tag format `v<date>-<sha>`). This is the same
     # build linked from libimobiledevice.org's Downloads page.
     #
-    # We pin to a specific release tag (NOT 'releases/latest') so that the
-    # asset URL resolves to a SHA-256 we have recorded. Bumping the tag
-    # without bumping the hash will fail the Assert-Sha256 check loudly.
-    $tag     = $script:ImdReleaseTag
-    $api     = "https://api.github.com/repos/jrjr/libimobiledevice-windows/releases/tags/$tag"
+    # The URL is built from the pinned tag + asset name at the top of this
+    # script, so there is no REST API lookup (see the notes there on the
+    # anonymous rate limit). The SHA-256 check below is the integrity
+    # guarantee, as for adb.
+    $url     = $script:ImdZipUrl
     $headers = @{ 'User-Agent' = 'applogs-viewer-bundler' }
-    Write-Host ("[imd] querying GitHub for jrjr/libimobiledevice-windows release {0}..." -f $tag)
-    $release = Invoke-RestMethod -Uri $api -Headers $headers
-    $asset = $release.assets |
-        Where-Object { $_.name -match $script:ImdAssetPattern } |
-        Select-Object -First 1
-    if (-not $asset) {
-        $assetNames = ($release.assets | ForEach-Object { $_.name }) -join ', '
-        throw "no asset matching $($script:ImdAssetPattern) in release $($release.tag_name); assets were: $assetNames"
-    }
-    $zip = Join-Path $Staging 'libimobile-suite-w64.zip'
-    $dir = Join-Path $Staging 'libimobile-suite-extracted'
-    Write-Host ("[imd] downloading {0} from release {1}..." -f $asset.name, $release.tag_name)
-    Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -Headers $headers -UseBasicParsing
+    $zip     = Join-Path $Staging 'libimobile-suite-w64.zip'
+    $dir     = Join-Path $Staging 'libimobile-suite-extracted'
+    Write-Host ("[imd] downloading {0} (release {1})..." -f $url, $script:ImdReleaseTag)
+    Invoke-WebRequest -Uri $url -OutFile $zip -Headers $headers -UseBasicParsing
     # SHA-256 verification (issue H3): refuses to extract a tampered/MITM'd zip.
     Assert-Sha256 -Path $zip -Expected $script:ImdZipSha256 -Label 'imd'
     Expand-Archive -LiteralPath $zip -DestinationPath $dir -Force
