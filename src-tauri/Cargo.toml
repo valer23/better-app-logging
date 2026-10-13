@@ -29,5 +29,15 @@ futures-util = "0.3"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 window-vibrancy = "0.6"
 
+# Windows only: a Job Object kills tool children when the app is hard-killed
+# (see children.rs). 0.61 is already in Cargo.lock via tokio/mio.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
+
 [features]
 custom-protocol = ["tauri/custom-protocol"]
