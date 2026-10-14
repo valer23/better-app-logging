@@ -10,28 +10,43 @@ env:
 
 jobs:
   stale-refs:
-    name: Stale-ref grep + HTML parse
+    name: Stale-ref grep
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
 
+      # -I skips binary files: viewer/assets/fonts/*.woff2 (P1b) could match a pattern by chance.
       - name: No dangling Python-bridge refs
         run: |
-          if grep -rn --exclude-dir=target "launcher\.py\|ios_bridge\.py\|adb_bridge\.py" src-tauri/src/ viewer/; then
+          if grep -rnI --exclude-dir=target "launcher\.py\|ios_bridge\.py\|adb_bridge\.py" src-tauri/src/ viewer/; then
             echo "::error::Found dangling Python-bridge references"
             exit 1
           fi
 
       - name: No dead native-search refs
         run: |
-          if grep -rn --exclude-dir=target "search_shim\|SearchMode\|aho_corasick\|NATIVE_THRESHOLD" src-tauri/src/ src-tauri/Cargo.toml viewer/ src-tauri/README.md; then
+          if grep -rnI --exclude-dir=target "search_shim\|SearchMode\|aho_corasick\|NATIVE_THRESHOLD" src-tauri/src/ src-tauri/Cargo.toml viewer/ src-tauri/README.md; then
             echo "::error::Found dead native-search references"
             exit 1
           fi
 
-      - name: HTML parses
-        run: |
-          python3 -c "from html.parser import HTMLParser; HTMLParser().feed(open('viewer/applogs-viewer.html').read()); print('OK')"
+  # Zero-dependency checks of the viewer page and its assets (tests/viewer/*.test.mjs): HTML
+  # structure, script syntax, the id and handler contracts, XSS and offline lints, the drag-band
+  # selector, CSS layering, the settings store and the legacy parsers. Replaces the Python
+  # HTML parse, which accepted mis-nested tags.
+  viewer:
+    name: Viewer static checks + unit tests (node --test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: node --test
+        run: node --test "tests/viewer/*.test.mjs"
 
   rust:
     name: cargo fmt + check + clippy + test
