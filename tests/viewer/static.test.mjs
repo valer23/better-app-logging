@@ -211,8 +211,8 @@ test('<html> is the foundation root; stylesheets load foundation, legacy, app in
 });
 
 test('the first @layer statement in document order is the foundation order statement', () => {
-  // Stylesheets are scanned in link order; the first block-less `@layer a, b, c;` found fixes the
-  // cascade order, so it must come from foundation.css whichever sheet finishes loading first.
+  // CSS cascade layer order is fixed by the document order of the stylesheets, not by load order:
+  // the first block-less `@layer a, b, c;` found in link (document) order fixes it, so it must come from foundation.css.
   const hrefs = elements(root).filter(el => el.tag === 'link' && el.attrs.rel === 'stylesheet').map(el => el.attrs.href);
   let first = null;
   for (const href of hrefs) {
