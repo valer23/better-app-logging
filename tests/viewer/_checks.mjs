@@ -72,14 +72,23 @@ export function handlerErrors(root, js) {
 // XSS lint: innerHTML may only be cleared; no other HTML-string sinks.
 export function xssErrors(js, filename = 'script', firstLine = 1) {
   const out = [];
+  const lineAt = index => firstLine + (js.slice(0, index).match(/\n/g) || []).length;
+  // .innerHTML or ['innerHTML'] assigned with any assignment operator. Runs over the whole text, not
+  // line by line, so a continuation such as `= ''\n + s` is seen. Only a plain `= ''` that is not
+  // continued by a binary operator is allowed; every compound operator (+=, ||=, &&=, ??=) is an error.
+  for (const m of js.matchAll(/(?:\.innerHTML|\[\s*['"]innerHTML['"]\s*\])\s*(\+=|\|\|=|&&=|\?\?=|=)(?!=)\s*([^;]*)/g)) {
+    const SKIP = /^(?:\s|\/\/[^\n]*|\/\*[\s\S]*?\*\/)*/;
+    const lit = /^(?:''|""|``)/.exec(m[2].replace(SKIP, ''));
+    // After the empty literal the statement must end: nothing, or a char that cannot continue an expression.
+    const cleared = !!lit && !/^[+\-*\/%|&^?:,<>=.\[(`]/.test(m[2].replace(SKIP, '').slice(lit[0].length).replace(SKIP, ''));
+    if (m[1] !== '=' || !cleared) out.push(`${filename}:${lineAt(m.index)}: innerHTML assigned something other than ''`);
+  }
   js.split('\n').forEach((text, i) => {
     const at = `${filename}:${firstLine + i}`;
-    // .innerHTML or ['innerHTML'], with = or +=; += is always an error (it appends markup).
-    for (const m of text.matchAll(/(?:\.innerHTML|\[\s*['"]innerHTML['"]\s*\])\s*(\+?=)(?!=)\s*([^;]*)/g)) {
-      if (m[1] === '+=' || !/^(''|""|``)$/.test(m[2].trim())) out.push(`${at}: innerHTML assigned something other than ''`);
-    }
+    if (/\binnerHTML\s*:/.test(text)) out.push(`${at}: innerHTML set through an object literal`);
+    if (/\.srcdoc\s*(?:[+|&?]{0,2})=(?!=)/.test(text)) out.push(`${at}: srcdoc assignment`);
     if (/\bcreateContextualFragment\s*\(|\bsetHTMLUnsafe\s*\(|\bparseFromString\s*\(/.test(text)) out.push(`${at}: HTML string parsed into nodes`);
-    if (/\.outerHTML\s*=(?!=)/.test(text)) out.push(`${at}: outerHTML assignment`);
+    if (/\.outerHTML\s*(?:[+|&?]{0,2})=(?!=)/.test(text)) out.push(`${at}: outerHTML assignment`);
     if (/\binsertAdjacentHTML\s*\(/.test(text)) out.push(`${at}: insertAdjacentHTML`);
     if (/\bdocument\.write(?:ln)?\s*\(/.test(text)) out.push(`${at}: document.write`);
   });

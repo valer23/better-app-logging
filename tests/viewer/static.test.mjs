@@ -95,6 +95,17 @@ test('the checks reject deliberately broken input', () => {
   assert.notDeepEqual(C.xssErrors('range.createContextualFragment(s);'), []);
   assert.notDeepEqual(C.xssErrors("el.insertAdjacentHTML('beforeend', s);"), []);
   assert.notDeepEqual(C.xssErrors('el.outerHTML = s;'), []);
+  for (const op of ['||=', '&&=', '??=']) assert.notDeepEqual(C.xssErrors(`el.innerHTML ${op} s;`), [], op);
+  assert.notDeepEqual(C.xssErrors('el.outerHTML += s;'), []);
+  assert.notDeepEqual(C.xssErrors("el.innerHTML = ''\n  + s;"), []);
+  assert.notDeepEqual(C.xssErrors("el.innerHTML = '' // clear\n  + s;"), []);
+  assert.deepEqual(C.xssErrors("el.innerHTML = '' // clear\nnext();"), []);
+  assert.deepEqual(C.xssErrors("if (a) { el.innerHTML = '' }"), []);
+  assert.deepEqual(C.xssErrors("a();\nel.innerHTML = '';"), []);
+  assert.deepEqual(C.xssErrors("el.outerHTML === s;"), []);
+  assert.match(C.xssErrors("a();\nb();\nel.innerHTML ||= s;", 'f.js', 10)[0], /^f\.js:12:/);
+  assert.notDeepEqual(C.xssErrors('Object.assign(el, { innerHTML: s });'), []);
+  assert.notDeepEqual(C.xssErrors('frame.srcdoc = s;'), []);
   assert.notDeepEqual(C.dragErrors(h('<div id="topbar"><span tabindex="0">x</span></div>'), "const INTERACTIVE = 'button';", ['topbar']), []);
   assert.deepEqual(C.dragErrors(h('<div id="topbar"><div class="grp"><span role="switch">x</span></div></div>'), "const INTERACTIVE = 'button, .grp';", ['topbar']), []);
   assert.notDeepEqual(C.offlineErrors("@import url('https://fonts.googleapis.com/css2');", 'x.css'), []);
