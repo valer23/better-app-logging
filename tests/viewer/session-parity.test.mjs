@@ -30,6 +30,8 @@ const frame = i => JSON.stringify({
 const fileText = n => Array.from({ length: n },
   (_, i) => `Oct 14 15:53:43.${String(i).padStart(6, '0')} SpringBoard(FrontBoard)[57] <Notice>: file ${i}`).join('\n');
 
+const display = (v, id) => v.doc.getElementById(id).style.display;
+
 function boot() {
   const doc = stickyDocument();
   const { api, run } = loadLegacy(NAMES, { document: doc });
@@ -228,11 +230,19 @@ test('switching back mid-drain resets the drain marker, and the next flush drain
 test('Clear on File empties only the file session, and a second file can be loaded', () => {
   const v = boot();
   v.send(3); v.api.flushBatch();
+  v.drop('ios', 4);
+  v.api.togglePause();
+  v.send(5, 3);                            // a paused backlog and a drop count that Clear on File must not touch
   v.go('toFile');
   v.api.handleFile({ text: fileText(4) });
+  assert.equal(display(v, 'clearBtn'), '', 'Clear is shown on the File tab');
   v.api.clearLogs();
   assert.equal(v.get('fileAll').length, 0);
+  assert.equal(display(v, 'dropzone'), '', 'Clear on File brings the dropzone back');
   assert.equal(v.get('liveAll').length, 3, 'Clear on File leaves live alone');
+  assert.equal(v.run('pendingBatch.length'), 5, 'the paused live backlog survives');
+  assert.equal(v.get('liveDropped').ios, 4, 'so do the #46 drop counts');
+  assert.equal(v.run('liveSession.discarded'), 0);
   v.api.handleFile({ text: fileText(2) });
   assert.equal(v.get('fileAll').length, 2);
 });
@@ -280,7 +290,6 @@ function deferFileIo(v) {
     runTimers: () => v.run('__timers.splice(0).forEach(f => f())'),
   };
 }
-const display = (v, id) => v.doc.getElementById(id).style.display;
 
 test('Clear on File while a file is still being read cancels that load', () => {
   const v = boot();
