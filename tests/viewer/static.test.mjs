@@ -228,3 +228,13 @@ test('offline: no network URL in the page, its CSS or its JS (local WebSockets e
   ];
   assert.deepEqual(problems, []);
 });
+
+test('prefs.js is the only head script: first, synchronous, before every stylesheet', () => {
+  const head = root.children.find(el => el.tag === 'html').children.find(el => el.tag === 'head');
+  const ordered = head.children.filter(el => el.tag === 'script' || el.tag === 'style' || (el.tag === 'link' && el.attrs.rel === 'stylesheet'));
+  const scripts = ordered.filter(el => el.tag === 'script');
+  assert.equal(scripts.length, 1, 'exactly one <script> in <head>');
+  assert.equal(ordered[0], scripts[0], 'prefs.js comes before every stylesheet');
+  assert.equal(scripts[0].attrs.src, 'assets/js/prefs.js');
+  assert.ok(!('async' in scripts[0].attrs) && !('defer' in scripts[0].attrs) && !('type' in scripts[0].attrs));
+});
