@@ -31,9 +31,9 @@ jobs:
           fi
 
   # Zero-dependency checks of the viewer page and its assets (tests/viewer/*.test.mjs): HTML
-  # structure, script syntax, the id and handler contracts, XSS and offline lints, the drag-band
-  # selector, CSS layering, the settings store and the legacy parsers. Replaces the Python
-  # HTML parse, which accepted mis-nested tags.
+  # structure, inline script syntax, the element id and handler contracts, the XSS and drag-band
+  # lints, and asset references. Replaces the Python HTML parse, which accepted mis-nested tags.
+  # Later PRs extend this job (offline lints, CSS layering, settings store, legacy parsers).
   viewer:
     name: Viewer static checks + unit tests (node --test)
     runs-on: ubuntu-latest

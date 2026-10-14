@@ -1,3 +1,3 @@
-# Bundled fonts are binary; their licence texts must stay byte-exact (SHA256SUMS is checked in CI).
+# Bundled fonts are binary; their licence texts must stay byte-exact. The font SHA256SUMS hash check is added later (P1b, when the fonts land).
 *.woff2 binary
 viewer/assets/fonts/OFL-*.txt -text

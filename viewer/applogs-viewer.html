@@ -2441,7 +2441,7 @@ document.getElementById('stallModal').addEventListener('click', e => { if (e.tar
 // script to ship and no code block to copy.
 
 // ?bench=N loads the live-drain throughput bench (assets/js/dev-bench.js). Never loaded otherwise.
-if (/[?&]bench=\d/.test(location.search)) {
+if (/[?&]bench=[1-9]/.test(location.search)) {
   const benchScript = document.createElement('script');
   benchScript.src = 'assets/js/dev-bench.js';
   document.body.appendChild(benchScript);

@@ -16,7 +16,11 @@
 (function () {
   'use strict';
   const q = new URLSearchParams(location.search);
-  const rate = Math.max(1, parseInt(q.get('bench'), 10) || 8000);
+  const rate = parseInt(q.get('bench'), 10);
+  if (!(rate > 0)) {
+    console.warn(`dev-bench: not running, ?bench=${q.get('bench')} is not a positive lines/s rate`);
+    return;
+  }
   const burst = Math.max(0, parseInt(q.get('burst'), 10) || 0);
   const scenario = ['follow', 'read', 'paused'].includes(q.get('scenario')) ? q.get('scenario') : 'follow';
   const secs = Math.min(120, Math.max(5, parseInt(q.get('secs'), 10) || 15));
