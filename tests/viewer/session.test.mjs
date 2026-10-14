@@ -220,6 +220,13 @@ test('each session renders into its own tbody: the legacy script looks #tbody up
   assert.equal(legacy().split("getElementById('tbody')").length - 1, 1);
 });
 
+test('dev-bench.js offers the behind scenario and reports its checks', () => {
+  const src = read(path.join(ASSETS, 'js', 'dev-bench.js'));
+  assert.match(src, /\['follow', 'read', 'paused', 'behind'\]/);
+  for (const key of ['maxLiveRows', 'fileRowsMutated', 'fileHasLiveLines', 'switchLiveMsMax', 'switchFileMsMax',
+    'liveRowsAfterReturn', 'liveTailOk', 'restoreOk']) assert.ok(src.includes(key), `result key ${key}`);
+});
+
 // Source of the top-level function `name` in the legacy script (from its `function` line to the closing brace at column 0).
 function fnSource(name) {
   const code = legacy();

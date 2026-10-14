@@ -6,11 +6,17 @@
      - feed p95 (time per 10 ms tick spent inside handleWsMsg),
      - the largest gap between animation frames (a frozen UI shows up here),
      - the largest and final pendingBatch depth,
-     - the largest DOM row count, next to FOLLOW_DOM_CAP and LIVE_DOM_CAP.
-   Query: ?bench=<lines/s>[&burst=<lines/s during 1 s of every 5 s>][&scenario=follow|read|paused][&secs=<5..120>]
+     - the largest DOM row count of the shown table and of the live session's own tbody, next to
+       FOLLOW_DOM_CAP and LIVE_DOM_CAP.
+   Query: ?bench=<lines/s>[&burst=<lines/s during 1 s of every 5 s>][&scenario=follow|read|paused|behind][&secs=<5..120>]
      follow  Follow on (auto-scroll), the default.
      read    Follow off after 2 s with the table scrolled to the middle (frozen reading window, #54).
      paused  Pause on from the start, MAX_RETAINED lowered to 50 000 so the backlog overflows.
+     behind  A 50 000-line file session is shown (scrolled to the middle, one line selected) while
+             live streams into the detached live session (P2). Records how many rows of the file
+             table changed (must be 0), then switches Live and File five times each and records
+             the slowest switch, the live rows after each return, whether the live tail ends at the
+             newest line, and whether the file view came back at the same row with its selection.
    The first second is warm-up and is not counted. Results: the overlay, window.__benchResult and
    the console. Reload the page before the next run. */
 (function () {
@@ -22,7 +28,7 @@
     return;
   }
   const burst = Math.max(0, parseInt(q.get('burst'), 10) || 0);
-  const scenario = ['follow', 'read', 'paused'].includes(q.get('scenario')) ? q.get('scenario') : 'follow';
+  const scenario = ['follow', 'read', 'paused', 'behind'].includes(q.get('scenario')) ? q.get('scenario') : 'follow';
   const secs = Math.min(120, Math.max(5, parseInt(q.get('secs'), 10) || 15));
   const WARMUP_MS = 1000;
   const TICK_MS = 10;
@@ -49,7 +55,8 @@
   let start = 0;
   const flushes = [];   // [startedAt, ms]
   const feeds = [];     // [startedAt, ms]
-  let maxGap = 0, maxPending = 0, maxRows = 0, sent = 0, carry = 0;
+  let maxGap = 0, maxPending = 0, maxRows = 0, maxLiveRows = 0, sent = 0, carry = 0;
+  let fileMutations = 0, fileObserver = null;
   // flushBatch is a top-level function declaration, so every call site (timer, inline flush,
   // requeue, visibilitychange) resolves it through the global object and picks up this wrapper.
   const realFlush = flushBatch;
@@ -88,6 +95,7 @@
     if (elapsed > WARMUP_MS) {
       maxPending = Math.max(maxPending, pendingBatch.length);
       maxRows = Math.max(maxRows, cur.tbody.rows.length);
+      maxLiveRows = Math.max(maxLiveRows, liveSession.tbody.rows.length);
     }
     if (scenario === 'read' && cur.follow && elapsed > 2000) {
       toggleAutoScroll();
@@ -97,8 +105,47 @@
     if (elapsed >= secs * 1000) finish();
   }
 
+  // The first row of the shown table in view, and its offset from the top of the scroller.
+  function firstVisible() {
+    const t = document.getElementById('logTable'), top = t.getBoundingClientRect().top;
+    for (const r of cur.tbody.rows) {
+      const b = r.getBoundingClientRect();
+      if (b.bottom > top) return { msg: r._message, off: b.top - top };
+    }
+    return { msg: null, off: 0 };
+  }
+
+  // scenario=behind: switch Live and File five times each and check what comes back.
+  function switchChecks() {
+    fileObserver.disconnect();
+    const t = document.getElementById('logTable');
+    const before = firstVisible(), sel = fileSession.sel;
+    let switchLiveMsMax = 0, switchFileMsMax = 0, liveRowsAfterReturn = 0, liveTailOk = true;
+    for (let k = 0; k < 5; k++) {
+      let t0 = performance.now();
+      selectSession(liveSession); void t.scrollHeight;   // include the layout the switch forces
+      switchLiveMsMax = Math.max(switchLiveMsMax, performance.now() - t0);
+      const rows = liveSession.tbody.rows, last = liveSession.filtered[liveSession.filtered.length - 1];
+      liveRowsAfterReturn = Math.max(liveRowsAfterReturn, rows.length);
+      if (!rows.length || rows[rows.length - 1]._message !== last) liveTailOk = false;
+      t0 = performance.now();
+      selectSession(fileSession); void t.scrollHeight;
+      switchFileMsMax = Math.max(switchFileMsMax, performance.now() - t0);
+    }
+    const after = firstVisible(), selRow = fileSession.tbody.querySelector('tr.selected');
+    return {
+      fileRowsMutated: fileMutations, fileLines: fileSession.all.length,
+      fileHasLiveLines: fileSession.all.some(m => m.seq !== undefined),
+      switchLiveMsMax: +switchLiveMsMax.toFixed(1), switchFileMsMax: +switchFileMsMax.toFixed(1),
+      liveRowsAfterReturn, liveTailOk,
+      restoreOk: sel !== null && after.msg === before.msg && Math.abs(after.off - before.off) <= 1
+        && selRow !== null && selRow._message === sel,
+    };
+  }
+
   function finish() {
     clearInterval(timer);
+    const behind = scenario === 'behind' ? switchChecks() : {};
     const result = {
       scenario, rate, burst, secs, sent,
       flushes: flushes.length,
@@ -106,8 +153,9 @@
       feedP95Ms: pct(feeds, 0.95),
       maxRafGapMs: +maxGap.toFixed(1),
       maxPending, finalPending: pendingBatch.length,
-      maxDomRows: maxRows, followDomCap: FOLLOW_DOM_CAP, liveDomCap: LIVE_DOM_CAP,
+      maxDomRows: maxRows, maxLiveRows, followDomCap: FOLLOW_DOM_CAP, liveDomCap: LIVE_DOM_CAP,
       retained: liveSession.all.length, discarded: liveSession.discarded,
+      ...behind,
       userAgent: navigator.userAgent,
     };
     start = 0;   // stops the rAF loop
@@ -119,6 +167,22 @@
   iosLive = true;          // show the live table without a device
   refreshLiveView();
   if (scenario === 'paused') { MAX_RETAINED = 50000; togglePause(); }
+  if (scenario === 'behind') {
+    const lines = [];
+    for (let i = 0; i < 50000; i++) {
+      lines.push({ ts: `2026 Oct 14 15:5${i % 10}:00.${String(i).padStart(6, '0')}`, pid: 50 + (i % 9), tid: 0,
+        tag: TAGS[i % TAGS.length], app: '', lvl: LEVELS[i % LEVELS.length], msg: `file line ${i}`, platform: 'ios' });
+    }
+    discardBacklog(fileSession);              // what handleFile does with a parsed file
+    ALV.session.reset(fileSession, lines);
+    fileSession.query = -1;
+    selectSession(fileSession);               // refilters and renders the first page
+    const t = document.getElementById('logTable');
+    t.scrollTop = Math.floor(t.scrollHeight / 2);
+    fileSession.tbody.rows[Math.floor(fileSession.tbody.rows.length / 2)].click();   // select a line mid-window
+    fileObserver = new MutationObserver(recs => { for (const r of recs) fileMutations += r.addedNodes.length + r.removedNodes.length; });
+    fileObserver.observe(fileSession.tbody, { childList: true });
+  }
   start = performance.now();
   lastTick = start;
   requestAnimationFrame(frame);
