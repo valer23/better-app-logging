@@ -596,8 +596,13 @@ function saveScroll(s, t) {
 // Puts `s` back on screen once selectSession has attached its tbody.
 function restoreView(s, t) {
   if (s.query !== filterGen) {              // the filter changed while `s` was away (or a file was just loaded)
-    applyFilters();                         // refilters `s` and renders around its selection
-    if (s.follow) { s.domStale = true; renderLiveTail(s, s.filtered.length); s.renderFrom = -1; }
+    if (s.follow) {                         // pinned to the newest lines: refilter, then rebuild just the tail.
+      refilterSession(s);                   // (applyFilters would build a page around the selection, throw it away
+      updateStats();                        // and queue a rAF that centres the selection, unpinning the tail)
+      s.domStale = true; renderLiveTail(s, s.filtered.length); s.renderFrom = -1;
+    } else {
+      applyFilters();                       // refilters `s` and renders around its selection
+    }
     return;
   }
   if (s.follow || s.domStale) {             // the followed tail, or a reading window trimmed whole while away
@@ -1829,12 +1834,17 @@ function makeFilter() {
 function queryChanged() { filterGen++; applyFilters(); }
 
 // Refilters and re-renders the session on screen with the current filter inputs.
-function applyFilters() {
-  const s = cur;
+// Recompiles the search and rebuilds `s.filtered` for the current filter generation; no DOM work.
+function refilterSession(s) {
   s.query = filterGen;
   currentSearch = document.getElementById('search').value;
   searchRegex   = _compileSearchRegex(currentSearch);
-  s.filtered = s.all.filter(makeFilter()); updateStats();
+  s.filtered = s.all.filter(makeFilter());
+}
+
+function applyFilters() {
+  const s = cur;
+  refilterSession(s); updateStats();
   s.renderFrom = -1; s.domStale = false;   // this render owns the DOM; s.all already holds any mid-drain chunks
   // Preserve the user's clicked row across filter changes. The window is rebuilt as about PAGE
   // rows either side of the selection, wherever it sits in the history, and the reader slides on

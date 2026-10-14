@@ -342,3 +342,49 @@ test('Clear on Live while a file is being read does not cancel the load', () => 
   io.finishRead(0);
   assert.equal(v.get('fileAll').length, 4);
 });
+
+// Change 5: following Live comes back pinned to the newest line, also after the filter changed on File.
+// More than PAGE lines, so a render from the head (a refilter's first page) and the re-pinned tail differ.
+function followedLiveBehindAFilterChange(v, { sel = -1 } = {}) {
+  v.doc.hidden = false;
+  v.send(1200); v.api.flushBatch();
+  if (sel >= 0) v.run(`liveSession.sel = liveSession.all[${sel}]`);   // Follow stays on (Jump to latest keeps the selection)
+  v.go('toFile');
+  v.doc.getElementById('search').value = 'line';
+  v.run('queryChanged()');
+  v.send(10, 1200); v.api.flushBatch();
+}
+
+test('Live followed behind a filter change on File comes back with its window at the newest line', () => {
+  const v = boot();
+  followedLiveBehindAFilterChange(v);
+  v.go('toLive');
+  assert.equal(v.run('liveSession.filtered.length'), 1210);
+  assert.equal(v.run('liveSession.renderedEnd'), 1210);
+  assert.equal(v.run('liveSession.follow'), true);
+  assert.equal(v.run('liveSession.domStale'), false);
+});
+
+test('Live followed with a selection behind a filter change: no selection-centred render unpins the tail', () => {
+  const v = boot();
+  v.run('globalThis.__raf = []; requestAnimationFrame = f => (__raf.push(f), 0); globalThis.__built = 0');
+  followedLiveBehindAFilterChange(v, { sel: 1195 });   // among the newest 300
+  v.run('{ const real = buildRow; buildRow = (...a) => (__built++, real(...a)); }');
+  v.run('__built = 0');
+  v.go('toLive');
+  assert.equal(v.run('__raf.length'), 0, 'a rAF would centre the selected row and leave the tail unpinned');
+  assert.equal(v.run('__built'), 300, 'only the pinned FOLLOW_DOM_CAP tail is built, not a throwaway page around the selection');
+  assert.equal(v.run('liveSession.renderedEnd'), 1210);
+  assert.equal(v.run('liveSession.follow'), true);
+});
+
+test('Live reading (Follow off) behind a filter change still renders around its selection', () => {
+  const v = boot();
+  v.run('globalThis.__raf = []; requestAnimationFrame = f => (__raf.push(f), 0)');
+  followedLiveBehindAFilterChange(v, { sel: 600 });
+  v.run('liveSession.follow = false');
+  v.run('__raf.length = 0');
+  v.go('toLive');
+  assert.equal(v.run('__raf.length'), 1, 'the reader is brought back to the selected row');
+  assert.equal(v.run('liveSession.renderedEnd') < 1210, true);
+});
