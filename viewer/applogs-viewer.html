@@ -318,7 +318,7 @@
      .connecting, but static: it is a persistent fact, not an in-progress state. */
   .status-pill.dropped { color: var(--yellow); border-color: var(--yellow); background: #e3b34110; display: none; cursor: help; }
   .status-pill.dropped.visible { display: inline-flex; }
-  /* "N newer lines" pill over the bottom of the log table (live mode, auto-scroll off). A sibling of the
+  /* "N lines below" pill over the bottom of the log table (live mode, auto-scroll off). A sibling of the
      scroller, so repainting it never relayouts the rows or changes #logTable.scrollHeight. bottom: 18px
      also clears the horizontal scrollbar shown below 960px. No transition: nothing animates per flush. */
   .newer-pill { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 6; display: none; align-items: center; gap: 8px; padding: 5px 12px; line-height: 16px; border-radius: 999px; border: 1px solid var(--accent); background: var(--surface); color: var(--text); font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; font-weight: 600; white-space: nowrap; cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,.35); }
@@ -336,6 +336,13 @@
      last line), not the count, so the content end does not jump as the count crosses 0. While armed the
      200px end-detection in extendReadingWindow and the scroll handler is effectively ~144px from the last row. */
   #logTable.newer-room::after { content: ''; display: block; height: 56px; }
+  /* "lines X–Y of Z" (updateReadingWindowHint) over the right end of the sticky header. A sibling of the
+     scroller like .newer-pill, so its per-flush text change never relayouts the rows; inside the header's
+     height it can't cover row text, and the header's own surface/muted pair keeps it legible in every theme.
+     top 4px + 18px tall fits the fixed-size header (~27px, independent of the log zoom); right 14px clears
+     the vertical scrollbar. */
+  .reading-window-hint { position: absolute; top: 4px; right: 14px; z-index: 6; display: none; padding: 1px 8px; line-height: 14px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--muted); font-family: 'JetBrains Mono', monospace; font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; cursor: help; }
+  .reading-window-hint.visible { display: inline-block; }
   .status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
   .status-pill.connecting .status-dot { animation: blink 1s ease-in-out infinite; }
   @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
@@ -391,7 +398,7 @@
   .ts-manual pre .cmt { color: var(--muted); }
 
   /* ── Log table ── */
-  #logWrapper { flex: 1; overflow: hidden; display: none; flex-direction: column; position: relative; /* anchor for .newer-pill */ }
+  #logWrapper { flex: 1; overflow: hidden; display: none; flex-direction: column; position: relative; /* anchor for .newer-pill and .reading-window-hint */ }
   #logWrapper.visible { display: flex; }
   #logTable { flex: 1; overflow-y: auto; overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
   /* `--log-font-size` is set on `:root` by the zoom buttons / keyboard
@@ -696,6 +703,7 @@
     </table>
   </div>
   <button type="button" class="newer-pill" id="newerPill" onclick="jumpToLatest(event)" aria-label="" title="Jump to the newest line and turn auto-scroll back on"><span class="newer-count" id="newerPillCount"></span><span class="newer-sep" aria-hidden="true">·</span><span class="newer-action">Jump to latest ↓</span></button>
+  <span id="readingWindowHint" class="reading-window-hint" title="The scrollbar covers only the loaded window of the history, not every line. Scroll near the top or bottom of the table to load more."></span>
 </div>
 
 <!-- Setup modal -->
@@ -895,9 +903,10 @@ let pendingBatch = [], batchTimer = null;
 const PAGE = 500;
 let renderedEnd = 0;
 
-// ── "N newer lines" pill ──
+// ── "N lines below" pill ──
 // Since #54 the table is frozen while auto-scroll is off, so newer lines don't appear on their own.
-// The pill says how many filtered lines lie past the rendered window and re-pins on click. Cheap by
+// The pill says how many filtered lines lie past the rendered window (including lines slid out below
+// it while scrolling back) and re-pins on click. Cheap by
 // design: O(1) arithmetic on filtered.length/renderedEnd, no layout reads, DOM writes only when the
 // value changes, nothing while the window is hidden (visibilitychange refreshes it). Declared here, not
 // next to togglePause, because the top-level switchMode('live') call reaches it before later `let`s run.
@@ -905,8 +914,30 @@ const newerPill = document.getElementById('newerPill'), newerPillCount = documen
 let newerPillShown = -1;      // count on screen; 0 = hidden, -1 = unknown (forces a write)
 let newerPillArmed = null;    // spacer class state on #logTable
 let newerPillJumpAt = -Infinity;   // when the pill last re-pinned; see the tbody click guard
+// ── Reading-window position hint ──
+// Since #58 the DOM holds at most LIVE_DOM_CAP rows of `filtered` while reading (auto-scroll off, or the
+// File tab), so the scrollbar thumb measures that window, not the history; the hint says which slice is
+// loaded. Same cost rules as the pill: arithmetic on renderedEnd and the row count (a DOM count, not a
+// layout read), a write only when a number changes, nothing while hidden. Called from updateNewerPill:
+// every point that moves renderedEnd, filtered or the row count already ends there, so the two can't drift.
+const readingWindowHint = document.getElementById('readingWindowHint');
+let hintFrom = 0, hintTo = 0, hintOf = 0;   // slice on screen (1-based, inclusive); hintOf 0 = hidden
+function updateReadingWindowHint() {
+  if (document.hidden) return;   // visibilitychange → updateNewerPill refreshes it
+  const rows = document.getElementById('tbody').rows, n = rows.length, start = renderedEnd - n;
+  // n > 0 first: the top-level switchMode('live') runs this before `let domStale` (flush state, below) is initialized.
+  // The identity check mirrors prependOlderRows: never show positions for a DOM that doesn't match `filtered`.
+  const shown = n > 0 && n < filtered.length && (currentMode === 'file' || !autoScroll)
+    && !domStale && start >= 0 && rows[0]._message === filtered[start];
+  const of = shown ? filtered.length : 0;
+  if (of === hintOf && (!of || (start + 1 === hintFrom && renderedEnd === hintTo))) return;
+  if (!of !== !hintOf) readingWindowHint.classList.toggle('visible', of > 0);
+  hintFrom = start + 1; hintTo = renderedEnd; hintOf = of;
+  if (of) readingWindowHint.textContent = `lines ${hintFrom.toLocaleString()}–${hintTo.toLocaleString()} of ${of.toLocaleString()}`;
+}
 function updateNewerPill() {
   if (document.hidden) return;
+  updateReadingWindowHint();   // same triggers: see its comment
   // Armed = the same live-table test toggleAutoScroll uses to re-pin; a file-only table never shows it.
   const armed = currentMode === 'live' && !autoScroll && filtered.length > 0 && filtered[filtered.length - 1].seq !== undefined;
   if (armed !== newerPillArmed) { newerPillArmed = armed; document.getElementById('logTable').classList.toggle('newer-room', armed); }
@@ -917,17 +948,19 @@ function updateNewerPill() {
   if (!n && document.activeElement === newerPill) document.getElementById('autoScrollBtn').focus({ preventScroll: true });
   newerPill.classList.toggle('visible', n > 0);
   if (!n) return;
-  const lines = `${n.toLocaleString()} newer ${n === 1 ? 'line' : 'lines'}`;
+  const lines = `${n.toLocaleString()} ${n === 1 ? 'line' : 'lines'} below`;
   newerPillCount.textContent = lines;
-  newerPill.setAttribute('aria-label', `${lines} below. Jump to latest and turn auto-scroll back on`);
+  newerPill.setAttribute('aria-label', `${lines}. Jump to latest and turn auto-scroll back on`);
 }
 // The pill is a sibling of the scroller, so its wheel would otherwise chain to the overflow:hidden #logWrapper.
-newerPill.addEventListener('wheel', e => {
+function forwardWheelToTable(e) {
   if (e.ctrlKey) return;   // pinch / Ctrl+wheel is zoom, not a table scroll
   const t = document.getElementById('logTable');
   const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? t.clientHeight : 1;
   t.scrollTop += e.deltaY * k; t.scrollLeft += e.deltaX * k;
-}, { passive: true });
+}
+newerPill.addEventListener('wheel', forwardWheelToTable, { passive: true });
+readingWindowHint.addEventListener('wheel', forwardWheelToTable, { passive: true });
 function jumpToLatest(e) {
   const hadFocus = document.activeElement === newerPill;
   newerPillJumpAt = performance.now();
@@ -1646,7 +1679,14 @@ function hideStallModal() {
   document.getElementById('stallModal').classList.remove('visible');
 }
 
-const LIVE_DOM_CAP   = 6000;  // max live rows in the DOM: the reading window while auto-scroll is off (grown by prependOlderRows and extendReadingWindow) and the prependOlderRows ceiling
+// Max rows in the DOM in every mode except the 300-row followed tail. The reading window slides
+// past it in both directions (down via extendReadingWindow/dropTopRows, up via prependOlderRows;
+// file mode shares it), so the whole retained history is reachable. The scrollbar thumb therefore
+// measures the window (at most this many rows), not the history, and moves by about a page whenever
+// a slide adds rows above; the "N lines below" pill gives the distance to the newest line. Kept at
+// 6000: a cap of 3000 measured p95 34.6ms against 46.3ms per slide, not half the cost, and it
+// would double the number of slides.
+const LIVE_DOM_CAP   = 6000;
 // While auto-scroll is pinned only the last screenful is visible, and table layout cost
 // scales with the rows in the <table> (~55-100ms per flush at 6000 rows even for a 14-row
 // append, a few ms at 300), so keep just a short tail. 300 rows is >3 screenfuls even at the
@@ -1760,33 +1800,40 @@ function renderLiveTail(firstNew) {
   if (autoScroll) { const t = document.getElementById('logTable'); t.scrollTop = t.scrollHeight; }
 }
 
-// With auto-scroll off the DOM holds one contiguous run of `filtered` ending at renderedEnd, and
-// newer lines are appended only while the end of the table is within 200px of view: PAGE rows at
-// a time, dropping the oldest rows past LIVE_DOM_CAP. They stop once ~200px have piled up below
-// the reader, until they scroll down. Appending every flush cost a relayout of the whole
-// table (~240ms per flush at 20k lines/s with 6000 rows in WebKit) and, at that cap, evicted the
-// rows being read within ~0.3s. Runs from flushBatch and from the scroll handler (reader
-// scrolled down to the end).
+// The slide-down half of the reading window (prependOlderRows is the slide-up half). The DOM
+// holds one contiguous run of `filtered` ending at renderedEnd, and newer lines are appended only
+// while the end of the table is within 200px of view: PAGE rows at a time, dropping the oldest
+// rows past LIVE_DOM_CAP. They stop once ~200px have piled up below the reader, until they scroll
+// down. Appending every flush cost a relayout of the whole table (~240ms per flush at 20k
+// lines/s with 6000 rows in WebKit) and, at that cap, evicted the rows being read within ~0.3s.
+// Runs from flushBatch and from the scroll handler, which also calls it in file mode and while
+// pinned (when no drain is running), not only with auto-scroll off.
 function extendReadingWindow() {
   const t = document.getElementById('logTable'), tbody = document.getElementById('tbody');
   if (domStale || document.hidden) return;   // stale: the next render rebuilds it
-  // applyFilters can render up to RENDER_CAP rows to reach a selection, and a frozen window is
-  // never trimmed otherwise. The selection sits in the last rendered chunk, so it survives.
-  if (tbody.rows.length > LIVE_DOM_CAP) dropTopRows(t, tbody, tbody.rows.length - LIVE_DOM_CAP);
   if (renderedEnd >= filtered.length) return;
   if (t.scrollTop + t.clientHeight < t.scrollHeight - 200) return;   // reading further up: stay put
   const excess = tbody.rows.length + Math.min(PAGE, filtered.length - renderedEnd) - LIVE_DOM_CAP;
   if (excess > 0) dropTopRows(t, tbody, excess, () => renderChunk(renderedEnd));
   else renderChunk(renderedEnd);
 }
-// Deletes the first n rows and keeps the first surviving row where it is (WebKit has no scroll
-// anchoring). Its position is read before mutating, so only the post-mutation read forces a layout.
+// Runs mutate() (rows inserted/removed around `row`, which must survive it) and keeps `row` where
+// it is on screen: WebKit has no scroll anchoring. The first read is cheap (layout is clean in a
+// scroll handler or before mutating); only the second forces a layout. The delta is 0 where
+// Chromium's anchoring already compensated.
+function keepRowInPlace(t, row, mutate) {
+  const top0 = row.getBoundingClientRect().top;
+  mutate();
+  t.scrollTop += row.getBoundingClientRect().top - top0;
+}
+// Deletes the first n rows and keeps the first surviving row where it is.
 function dropTopRows(t, tbody, n, mutate) {
-  const survivor = tbody.rows[n], topBefore = survivor.getBoundingClientRect().top;
-  const range = document.createRange();
-  range.setStartBefore(tbody.rows[0]); range.setEndBefore(survivor); range.deleteContents();
-  if (mutate) mutate();
-  t.scrollTop += survivor.getBoundingClientRect().top - topBefore;
+  const survivor = tbody.rows[n];
+  keepRowInPlace(t, survivor, () => {
+    const range = document.createRange();
+    range.setStartBefore(tbody.rows[0]); range.setEndBefore(survivor); range.deleteContents();
+    if (mutate) mutate();
+  });
 }
 
 // Timers can be throttled/suspended while hidden; drain as soon as we're visible
@@ -2200,33 +2247,26 @@ function applyFilters() {
   searchRegex   = _compileSearchRegex(currentSearch);
   filtered = allMessages.filter(makeFilter()); updateStats();
   renderFrom = -1; domStale = false;   // this render owns the DOM; allMessages already holds any mid-drain chunks
-  renderedEnd = 0; document.getElementById('tbody').innerHTML = '';
-  renderChunk(0);
+  // Preserve the user's clicked row across filter changes. The window is rebuilt as about PAGE
+  // rows either side of the selection, wherever it sits in the history, and the reader slides on
+  // from there. (Rendering forward from the head stopped at 30000 rows and left them all in the DOM.)
+  const idx = selectedMessage ? filtered.indexOf(selectedMessage) : -1;
+  renderedEnd = Math.max(0, idx - PAGE); document.getElementById('tbody').innerHTML = '';
+  renderChunk(renderedEnd);
+  if (idx >= 0) renderChunk(renderedEnd);   // second page: the selection can sit just past the first, and this keeps ~PAGE rows below it
   updateNewerPill();   // renderedEnd was just reset: with auto-scroll off the count is large again
-
-  // Preserve user's clicked row across filter changes: render forward chunks
-  // until the selected message is in the DOM, then center it.
-  if (selectedMessage) {
-    const idx = filtered.indexOf(selectedMessage);
-    if (idx >= 0) {
-      // Bound how far we'll render to keep this responsive at high message counts.
-      const RENDER_CAP = 30000;
-      while (renderedEnd <= idx && renderedEnd < filtered.length && renderedEnd < RENDER_CAP) {
-        renderChunk(renderedEnd);
-      }
-      updateNewerPill();
-      // Defer scroll until layout settles.
-      requestAnimationFrame(() => {
-        const tbody = document.getElementById('tbody');
-        for (const tr of tbody.rows) {
-          if (tr._message === selectedMessage) {
-            tr.scrollIntoView({ block: 'center', behavior: 'auto' });
-            return;
-          }
+  if (idx >= 0) {
+    // Defer scroll until layout settles.
+    requestAnimationFrame(() => {
+      const tbody = document.getElementById('tbody');
+      for (const tr of tbody.rows) {
+        if (tr._message === selectedMessage) {
+          tr.scrollIntoView({ block: 'center', behavior: 'auto' });
+          return;
         }
-      });
-      return; // skip the default scrollTop=0 below
-    }
+      }
+    });
+    return; // skip the default scrollTop=0 below
   }
   document.getElementById('logTable').scrollTop = 0; // explicit reset only on full re-render
 }
@@ -2334,26 +2374,36 @@ function renderChunk(start) {
   // NOTE: scroll reset intentionally removed — applyFilters handles it explicitly
 }
 
-// The live view keeps only a tail of `filtered` in the DOM (FOLLOW_DOM_CAP rows while
-// pinned), so scrolling near the top pulls older rows back in, PAGE at a time, up to
-// LIVE_DOM_CAP: the same scroll-back as before. Identity lookup (not a stored index)
-// stays correct when retention trims `filtered` from the front.
+// The slide-up half of the reading window (extendReadingWindow is the slide-down half). Near the
+// top it pulls PAGE older rows back in and, past LIVE_DOM_CAP, drops as many from the bottom in
+// the same layout pass, so the reader can walk back through every retained line with the DOM
+// still bounded. Works in live and file mode and while pinned (scroll-back from the 300-row tail).
+// The window start is derived from the invariant "the tbody is filtered[renderedEnd - rows,
+// renderedEnd)" (every writer keeps it), which is O(1) where an identity search from the end
+// would be O(distance) and walk 500k entries once the window sits at the head. The first row is
+// cross-checked against it so a broken invariant stops the slide instead of building duplicates
+// or gaps. The scrollbar thumb measures this window (at most LIVE_DOM_CAP rows), not the whole
+// history: it jumps back by about a page whenever a slide adds rows above.
 function prependOlderRows(t) {
-  const tbody = document.getElementById('tbody');
-  const first = tbody.firstElementChild;
-  if (!first || !first._message || first._message === filtered[0]) return;  // at the head (file mode, after applyFilters)
-  const room = LIVE_DOM_CAP - tbody.rows.length;
-  if (room <= 0) return;
-  const idx = filtered.lastIndexOf(first._message);   // live tail => near the end => cheap
-  if (idx <= 0) return;                                // -1: no longer in `filtered`
-  const start = Math.max(0, idx - Math.min(PAGE, room));
+  if (domStale || document.hidden) return;   // tbody doesn't match renderedEnd; the next render rebuilds it
+  const tbody = document.getElementById('tbody'), rows = tbody.rows, first = rows[0];
+  const start = renderedEnd - rows.length;          // the DOM is filtered[start, renderedEnd)
+  if (!first || start <= 0) return;                 // at the oldest retained line
+  if (first._message !== filtered[start]) return;   // out of sync: never build a duplicate or a gap
+  const from = Math.max(0, start - PAGE);
   const frag = document.createDocumentFragment();
-  for (let i = start; i < idx; i++) frag.appendChild(buildRow(filtered[i], false));
-  const s0 = t.scrollTop, h0 = t.scrollHeight;
-  tbody.insertBefore(frag, first);
-  // Absolute assignment from pre-insert readings: correct whether or not the engine's
-  // scroll anchoring already compensated (Chromium does, WebKit may not).
-  t.scrollTop = s0 + (t.scrollHeight - h0);
+  for (let i = from; i < start; i++) frag.appendChild(buildRow(filtered[i], false));
+  const excess = rows.length + (start - from) - LIVE_DOM_CAP;   // read before mutating
+  // The relative compensation in keepRowInPlace stays right when the bottom drop shrinks
+  // scrollHeight in the same mutation, which an absolute scrollTop + height delta would not.
+  keepRowInPlace(t, first, () => { tbody.insertBefore(frag, first); if (excess > 0) dropBottomRows(tbody, excess); });
+  updateNewerPill();   // renderedEnd moved back: the rows slid out below count as lines below again
+}
+// Deletes the last n rows (far below the reader, who is near the top) and moves the window end back.
+function dropBottomRows(tbody, n) {
+  const rows = tbody.rows, range = document.createRange();
+  range.setStartBefore(rows[rows.length - n]); range.setEndAfter(rows[rows.length - 1]); range.deleteContents();
+  renderedEnd -= n;
 }
 
 document.getElementById('logTable').addEventListener('scroll', function() {
@@ -2361,9 +2411,9 @@ document.getElementById('logTable').addEventListener('scroll', function() {
   // renderLiveTail, so lazy-loading them here would duplicate them (trims delete rows mid-drain and
   // fire clamp-driven scroll events). extendReadingWindow also appends from renderedEnd, but
   // renderLiveTail never appends while auto-scroll is off, so it can't duplicate rows mid-drain.
+  // Every downward lazy load is the capped slide, so file mode and pinned scroll-back can't grow the DOM past LIVE_DOM_CAP.
   if (renderedEnd < filtered.length && this.scrollTop + this.clientHeight >= this.scrollHeight - 200) {
-    if (currentMode === 'live' && !autoScroll) { extendReadingWindow(); updateNewerPill(); }   // renderedEnd advanced
-    else if (renderFrom < 0) renderChunk(renderedEnd);
+    if ((currentMode === 'live' && !autoScroll) || renderFrom < 0) { extendReadingWindow(); updateNewerPill(); }   // renderedEnd advanced
   } else if (this.scrollTop < 200) prependOlderRows(this);
 });
 
