@@ -229,7 +229,10 @@ function stripCssComments(css) { return css.replace(/\/\*[\s\S]*?\*\//g, ''); }
 // hashes what is listed, so an unlisted .woff2 would otherwise ship unchecked. files: asset paths
 // relative to viewer/assets ("fonts/geist-5.3.0-latin.woff2"); sums: the SHA256SUMS text.
 export function fontManifestErrors(files, sums) {
-  const onDisk = new Set(files.filter(f => /^fonts\/(?:[^/]+\.woff2|OFL-[^/]+\.txt)$/.test(f)).map(f => f.slice('fonts/'.length)));
+  // Every .woff2 and OFL-*.txt at any depth under fonts/, any case. SHA256SUMS is flat, so a
+  // nested file shows up here as "sub/x.woff2" and is reported as unlisted.
+  const isFontFile = f => /^fonts\//.test(f) && (/\.woff2$/i.test(f) || /^OFL-.*\.txt$/i.test(f.slice(f.lastIndexOf('/') + 1)));
+  const onDisk = new Set(files.filter(isFontFile).map(f => f.slice('fonts/'.length)));
   const listed = new Set();
   const errors = [];
   for (const line of sums.split('\n')) {

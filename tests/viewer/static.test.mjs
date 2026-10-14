@@ -137,6 +137,11 @@ test('the checks reject deliberately broken input', () => {
   assert.notDeepEqual(C.fontManifestErrors(['fonts/a.woff2'], `${H}  a.woff2\n${H}  gone.woff2\n`), []);
   assert.notDeepEqual(C.fontManifestErrors(['fonts/a.woff2'], `${H}  a.woff2\n${H}  a.woff2\n`), []);
   assert.notDeepEqual(C.fontManifestErrors(['fonts/OFL-a.txt'], ''), []);
+  // Any depth and any case: an unlisted font must not slip past the manifest by its name or folder.
+  assert.notDeepEqual(C.fontManifestErrors(['fonts/a.woff2', 'fonts/Sneaky.WOFF2'], `${H}  a.woff2\n`), []);
+  assert.notDeepEqual(C.fontManifestErrors(['fonts/a.woff2', 'fonts/sub/x.woff2'], `${H}  a.woff2\n`), []);
+  assert.notDeepEqual(C.fontManifestErrors(['fonts/a.woff2', 'fonts/sub/OFL-x.txt'], `${H}  a.woff2\n`), []);
+  assert.notDeepEqual(C.fontManifestErrors(['fonts/a.woff2', 'fonts/ofl-x.TXT'], `${H}  a.woff2\n`), []);
 });
 
 test('every assets/ reference resolves to a file, and every asset file is referenced', () => {
