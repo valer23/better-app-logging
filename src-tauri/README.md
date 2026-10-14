@@ -242,7 +242,6 @@ The icon masters are four SVGs in `icons/source/`:
 
 - `app-icon-macos.svg`: the macOS master, on Apple's icon grid (an 824×824 body at 100,100 on a 1024 canvas, with the template drop shadow). It is used only for `icon.icns`.
 - `app-icon.svg`: the full-bleed variant (tile inset 32), used for everything else: `.ico`, the Windows Store logos, the Linux PNGs, iOS and Android.
-
 - `app-icon-16.svg` and `app-icon-macos-16.svg`: the same mark hand-drawn on a 16×16 pixel grid (full-bleed, and inset one pixel for macOS). They exist only for the 16 px entries.
 
 The rows of the 1024 masters sit on a 32-unit grid, so they land on whole pixels at 32 px. At 16 px every edge falls on a half pixel and the rows smear, so the 16 px entries are not rasterised from them. `app-icon-16.svg` is also the viewer favicon and the topbar mark in `viewer/applogs-viewer.html`, drawn inline.
