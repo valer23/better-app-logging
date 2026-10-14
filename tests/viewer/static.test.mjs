@@ -117,6 +117,13 @@ test('the checks reject deliberately broken input', () => {
   assert.deepEqual(C.dragErrors(h('<div id="topbar"><div class="grp"><span role="switch">x</span></div></div>'), "const INTERACTIVE = 'button, .grp';", ['topbar']), []);
   assert.notDeepEqual(C.offlineErrors("@import url('https://fonts.googleapis.com/css2');", 'x.css'), []);
   assert.deepEqual(C.offlineErrors("new WebSocket('ws://localhost:8765')", 'x.js'), []);
+  assert.notDeepEqual(C.lgScopeSpecificityErrors('.lg-scope * { margin: 0 }'), []);
+  assert.notDeepEqual(C.lgScopeSpecificityErrors('html, .lg-scope { margin: 0 }'), []);
+  assert.notDeepEqual(C.lgScopeSpecificityErrors('.lg-scope input[type="text"] { padding: 0 }'), []);
+  assert.notDeepEqual(C.lgScopeSpecificityErrors(':is(.lg-scope) a { padding: 0 }'), []);
+  assert.deepEqual(C.lgScopeSpecificityErrors('html, :where(.lg-scope, .lg-scope *) { margin: 0 }'), []);
+  assert.deepEqual(C.lgScopeSpecificityErrors(':where(.lg-scope) input[type="text"]:focus { margin: 0 }'), []);
+  assert.deepEqual(C.lgScopeSpecificityErrors('/* .lg-scope */ .lg-scoped { margin: 0 }'), []);
   assert.notDeepEqual(C.cssBraceErrors('a { b: c; '), []);
   assert.notDeepEqual(C.cssBraceErrors('a { } }'), []);
   assert.deepEqual([...C.cssClassSelectors('.a .b:hover, x.c { transition: .5s } @media (x) { .d { } }')].sort(), ['a', 'b', 'c', 'd']);
@@ -149,6 +156,12 @@ test('legacy.css shares no class with the foundation and declares only --lg-* to
   assert.deepEqual([...C.cssClassSelectors(legacy)].filter(c => foundationClasses.has(c)), []);
   assert.deepEqual([...C.cssPropsDeclared(legacy)].filter(p => !p.startsWith('--lg-')), []);
   assert.match(legacy, /^@layer legacy \{$/m);
+});
+
+test('legacy.css keeps its old specificity: .lg-scope only ever appears inside :where()', () => {
+  assert.deepEqual(cssFiles.flatMap(f => C.lgScopeSpecificityErrors(f.text, f.path)), []);
+  // Not vacuous: the scoped rules are really there.
+  assert.match(read(path.join(ASSETS, 'css', 'legacy.css')), /:where\(\.lg-scope/);
 });
 
 test('no inline <style> is left in the page', () => {

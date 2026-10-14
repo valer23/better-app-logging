@@ -175,6 +175,26 @@ export function cssClassSelectors(css) {
   }
   return out;
 }
+// `.lg-scope` must only appear inside :where(...). A bare .lg-scope adds a class to the specificity
+// of every rule it scopes, so the move into legacy.css would silently outrank type-only and
+// single-class rules (td padding, .zoom-btn, mark ...) that the old unscoped selectors lost to.
+export function lgScopeSpecificityErrors(css, filename = 'css') {
+  // Comments are blanked but keep their newlines, so reported lines match the file.
+  const s = stripCss(css.replace(/\/\*[\s\S]*?\*\//g, c => c.replace(/[^\n]/g, ' ')));
+  const stack = [];
+  const out = [];
+  let line = 1;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === '\n') line++;
+    else if (ch === '(') stack.push(s.slice(Math.max(0, i - 6), i) === ':where');
+    else if (ch === ')') stack.pop();
+    else if (ch === '.' && s.startsWith('.lg-scope', i) && !/[\w-]/.test(s[i + 9] || '') && !stack.includes(true)) {
+      out.push(`${filename}:${line}: .lg-scope outside :where() raises specificity`);
+    }
+  }
+  return out;
+}
 export function cssPropsDeclared(text) {
   return new Set([...stripCss(text).matchAll(/(--[\w-]+)\s*:/g)].map(m => m[1]));
 }
