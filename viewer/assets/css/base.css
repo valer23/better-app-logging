@@ -1,0 +1,7 @@
+/* App-layer rules shared by every redesigned region. Colours come from foundation tokens only. */
+@layer app {
+  /* The foundation's glass --app-bg is the mockup's stand-in for a desktop. In the app the native
+     material behind the transparent window (POST /window/glass-mode) is the backdrop, so the root
+     stays clear and the translucent chrome shows it. */
+  .app[data-material="glass"] { --app-bg: transparent; }
+}

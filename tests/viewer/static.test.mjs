@@ -124,3 +124,17 @@ test('the checks reject deliberately broken input', () => {
   assert.deepEqual(C.jsAssetRefs("s.src = 'assets/js/dev-bench.js';"), ['js/dev-bench.js']);
   assert.deepEqual([...C.cssVarsUsed('a { color: var(--x, red); b: var( --y ) }')], ['--x', '--y']);
 });
+
+test('every assets/ reference resolves to a file, and every asset file is referenced', () => {
+  const files = new Set(assetFiles);
+  const refs = [
+    ...C.htmlAssetRefs(root),
+    ...allJs.flatMap(s => C.jsAssetRefs(s.code)),
+    ...cssFiles.flatMap(f => C.cssAssetRefs(f.text, f.path)),
+  ];
+  assert.deepEqual(refs.filter(r => !files.has(r)), [], 'references to missing files');
+  // Licence texts and font provenance ship in the repo without being referenced by the page.
+  const UNREFERENCED_OK = [/^fonts\/OFL-[\w-]+\.txt$/, /^fonts\/SOURCES\.md$/, /^fonts\/SHA256SUMS$/];
+  const orphans = assetFiles.filter(f => !refs.includes(f) && !UNREFERENCED_OK.some(re => re.test(f)));
+  assert.deepEqual(orphans, [], 'asset files nothing references');
+});
