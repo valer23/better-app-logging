@@ -138,3 +138,19 @@ test('every assets/ reference resolves to a file, and every asset file is refere
   const orphans = assetFiles.filter(f => !refs.includes(f) && !UNREFERENCED_OK.some(re => re.test(f)));
   assert.deepEqual(orphans, [], 'asset files nothing references');
 });
+
+test('every stylesheet has balanced braces', () => {
+  assert.deepEqual(cssFiles.flatMap(f => C.cssBraceErrors(f.text, f.path)), []);
+});
+
+test('legacy.css shares no class with the foundation and declares only --lg-* tokens', () => {
+  const legacy = read(path.join(ASSETS, 'css', 'legacy.css'));
+  const foundationClasses = C.cssClassSelectors(read(path.join(ROOT, 'docs', 'design', 'ui-redesign-foundation.css')));
+  assert.deepEqual([...C.cssClassSelectors(legacy)].filter(c => foundationClasses.has(c)), []);
+  assert.deepEqual([...C.cssPropsDeclared(legacy)].filter(p => !p.startsWith('--lg-')), []);
+  assert.match(legacy, /^@layer legacy \{$/m);
+});
+
+test('no inline <style> is left in the page', () => {
+  assert.equal(elements(root).filter(el => el.tag === 'style').length, 0);
+});
