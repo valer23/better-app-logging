@@ -87,6 +87,8 @@ test('the checks reject deliberately broken input', () => {
   assert.deepEqual(C.handlerErrors(h('<button onclick="yes(1)">x</button>'), 'function yes() {}'), []);
   assert.notDeepEqual(C.handlerErrors(h('<button onclick="yes(); x.innerHTML = s">x</button>'), 'function yes() {}'), []);
   assert.notDeepEqual(C.handlerErrors(h('<button onclick="yes(1) + other()">x</button>'), 'function yes() {}'), []);
+  assert.notDeepEqual(C.handlerErrors(h('<button onclick="yes(el.innerHTML = s)">x</button>'), 'function yes() {}'), []);
+  assert.notDeepEqual(C.handlerErrors(h('<button onclick="yes(document.body.outerHTML = location.hash)">x</button>'), 'function yes() {}'), []);
   assert.deepEqual(C.handlerErrors(h(`<button onclick="yes('a)b', &quot;c&quot;)">x</button>`), 'function yes() {}'), []);
   assert.notDeepEqual(C.xssErrors('el.innerHTML = userText;'), []);
   assert.notDeepEqual(C.xssErrors("el.innerHTML = '<b>' + s;"), []);

@@ -61,10 +61,13 @@ export function handlerErrors(root, js) {
   for (const el of elements(root)) {
     for (const [name, value] of Object.entries(el.attrs)) {
       if (!name.startsWith('on')) continue;
-      // Handler bodies are JavaScript the XSS lint never scans, so the whole value must be exactly one call.
+      // Handler bodies are JavaScript the page-script scan never sees. The value must be exactly one call
+      // (arguments may still contain '=', so an HTML sink can hide inside them), and the XSS lint is run
+      // over the value too, so a sink in an argument is caught.
       const m = /^\s*([A-Za-z_$][\w$]*)\s*\((?:[^()'"]|'[^']*'|"[^"]*")*\)\s*;?\s*$/.exec(value);
       if (!m) out.push(`line ${el.line}: ${name}="${value}" is not a single plain function call`);
       else if (!globals.has(m[1])) out.push(`line ${el.line}: ${name} calls ${m[1]}(), which is not a global function`);
+      out.push(...xssErrors(value, `line ${el.line} ${name}`));
     }
   }
   return out;
