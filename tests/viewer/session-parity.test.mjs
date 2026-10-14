@@ -22,7 +22,7 @@ const PINNED = {
   dropTooltipEnd: 'Resets on Clear.',
 };
 
-const NAMES = ['handleWsMsg', 'flushBatch', 'togglePause', 'toggleAutoScroll', 'clearLogs', 'handleFile', 'updateNewerPill'];
+const NAMES = ['handleWsMsg', 'flushBatch', 'togglePause', 'toggleAutoScroll', 'clearLogs', 'handleFile', 'updateNewerPill', 'doExport'];
 const frame = i => JSON.stringify({
   type: 'log', ts: `2026 Oct 14 15:53:43.${String(i).padStart(6, '0')}`,
   pid: 57, tid: 0, tag: 'SpringBoard', app: '', lvl: 'INFO', msg: `line ${i}`,
@@ -387,4 +387,35 @@ test('Live reading (Follow off) behind a filter change still renders around its 
   v.go('toLive');
   assert.equal(v.run('__raf.length'), 1, 'the reader is brought back to the selected row');
   assert.equal(v.run('liveSession.renderedEnd') < 1210, true);
+});
+
+// Change 1: the File tab shows only the loaded file, so #stats and Export count and write only it.
+test('File tab: #stats and Export cover only the file; Live keeps its own counts', async () => {
+  const v = boot();
+  v.send(3); v.api.flushBatch();
+  v.run('setTimeout = f => (f(), 0)');          // the file render timer runs at once
+  v.run('globalThis.__saved = null; legacyDownload = (name, content) => { __saved = content; }');
+  v.go('toFile');
+  v.api.handleFile({ text: fileText(4) });
+  assert.equal(v.text('stats'), '4 / 4 lines');
+  assert.equal(display(v, 'exportWrap'), '');
+  for (const scope of ['all', 'filtered']) {
+    v.doc.querySelector = () => ({ value: scope });
+    v.run('__saved = null');
+    await v.api.doExport('txt');
+    const lines = v.run('__saved').split('\n');
+    assert.equal(lines.length, 4, `export (${scope}) writes the 4 file lines`);
+    assert.ok(lines.every(l => l.includes('file ')) && !lines.some(l => l.includes('line ')), `export (${scope}) holds no live line`);
+  }
+  v.go('toLive');
+  assert.equal(v.text('stats'), '3 / 3 lines');
+  v.run('__saved = null');
+  await v.api.doExport('txt');
+  assert.equal(v.run('__saved').split('\n').length, 3, 'on Live, Export writes the live lines');
+  v.go('toFile');
+  v.api.clearLogs();                            // Clear on File: nothing left to export there
+  assert.equal(v.text('stats'), '0 / 0 lines');
+  assert.equal(display(v, 'exportWrap'), 'none');
+  v.go('toLive');
+  assert.equal(display(v, 'exportWrap'), '', 'live still has lines to export');
 });
