@@ -20,6 +20,16 @@ const jsText = allJs.map(s => s.code).join('\n');
 const cssFiles = assetFiles.filter(p => p.endsWith('.css')).map(p => ({ path: p, text: read(path.join(ASSETS, p)) }));
 // Ids that JS creates at runtime (createElement + id) and therefore are not in the HTML. None today.
 const DYNAMIC_IDS = [];
+// Ids the JS resolves through getElementById but only as indirect string literals (arrays passed to
+// forEach / showOnly / runPairAction, a status-pill map, 'liveBar' + platform + 'Dropped'), which
+// referencedIds cannot see. Listed by hand so renaming one in a redesign still fails CI.
+const INDIRECT_IDS = [
+  'autoScrollBtn', 'pauseBtn', 'clearBtn',
+  'dropzone', 'livePanel', 'loading', 'logWrapper',
+  'iosRepairBtn', 'setupRepairBtn', 'setupUnpairBtn', 'setupPairBtn', 'stallRepairBtn',
+  'androidStatus', 'androidStatusText', 'iosStatus', 'iosStatusText',
+  'liveBarAndroidDropped', 'liveBarAndroidDroppedText', 'liveBarIosDropped', 'liveBarIosDroppedText',
+];
 
 test('page HTML is well formed: tags balance, no duplicate attributes', () => {
   assert.deepEqual(parseErrors, []);
@@ -35,6 +45,14 @@ test('ids are unique', () => {
 
 test('every id the JS looks up exists in the page', () => {
   assert.deepEqual(C.missingIds(root, jsText, DYNAMIC_IDS), []);
+});
+
+test('every indirectly-resolved id exists in the page', () => {
+  assert.deepEqual(C.missingIds(root, INDIRECT_IDS.map(id => `getElementById('${id}')`).join('\n')), []);
+});
+
+test('the id check is not vacuous: it sees a healthy number of literal lookups', () => {
+  assert.ok(C.referencedIds(jsText).size >= 50, `only ${C.referencedIds(jsText).size} ids found`);
 });
 
 test('every inline on*= handler calls a defined global function', () => {
