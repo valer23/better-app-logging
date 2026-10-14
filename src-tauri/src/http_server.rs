@@ -51,7 +51,7 @@ pub async fn serve(app: AppHandle, ready_tx: Sender<()>) -> Result<(), String> {
         .allow_headers([header::CONTENT_TYPE]);
     let router: Router<AppHandle> = Router::new()
         .route("/", get(serve_index))
-        .route("/assets/*path", get(serve_asset))
+        .merge(asset_routes())
         .route("/devices/android", get(android_devices))
         .route("/devices/ios", get(ios_devices))
         .route("/ios-driver-status", get(ios_driver_status))
@@ -86,6 +86,12 @@ async fn serve_index() -> Response {
         .header(header::EXPIRES, "0")
         .body(Body::from(VIEWER_HTML))
         .expect("static response")
+}
+
+/// The viewer asset route, built here so `serve` and the router tests share one route string.
+/// Stateless, so it merges into any `Router<S>`.
+fn asset_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
+    Router::new().route("/assets/*path", get(serve_asset))
 }
 
 /// `GET /assets/*path`: an exact match in the embedded table or 404. Fonts have versioned names
@@ -588,14 +594,26 @@ async fn set_glass_mode(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::http::Request;
+    use tower::ServiceExt;
 
-    async fn get_asset(path: &str) -> Response {
-        serve_asset(Path(path.to_string())).await
+    /// Send `GET <uri>` through the real asset router (route registration, prefix stripping and
+    /// percent-decoding included), not straight into the handler.
+    async fn get_uri(uri: &str) -> Response {
+        asset_routes::<()>()
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("infallible")
     }
 
     #[tokio::test]
     async fn serves_css_with_type_nosniff_and_no_store() {
-        let res = get_asset("css/base.css").await;
+        let res = get_uri("/assets/css/base.css").await;
         assert_eq!(res.status(), StatusCode::OK);
         let h = res.headers();
         assert_eq!(h[header::CONTENT_TYPE], "text/css; charset=utf-8");
@@ -617,17 +635,16 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_and_traversal_paths_are_404() {
-        for path in [
-            "nope.css",
-            "../applogs-viewer.html",
-            "../../src-tauri/Cargo.toml",
-            "css/../css/base.css",
+        for uri in [
+            "/assets/nope.css",
+            "/assets/../applogs-viewer.html",
+            "/assets/%2e%2e/applogs-viewer.html",
+            "/assets/css%2F..%2F..%2Fapplogs-viewer.html",
+            "/assets/css/../css/base.css/..",
+            "/assets//css/base.css",
+            "/assets/",
         ] {
-            assert_eq!(
-                get_asset(path).await.status(),
-                StatusCode::NOT_FOUND,
-                "{path}"
-            );
+            assert_eq!(get_uri(uri).await.status(), StatusCode::NOT_FOUND, "{uri}");
         }
     }
 }
