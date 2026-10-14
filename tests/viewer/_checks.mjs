@@ -30,7 +30,7 @@ export function duplicateIds(root) {
 // querySelector / querySelectorAll / closest selector strings.
 export function referencedIds(js) {
   const ids = new Set();
-  const byId = /getElementById\(\s*(?:[^()?'"`]*\?\s*)?(['"])([\w-]+)\1\s*(?::\s*(['"])([\w-]+)\3\s*)?\)/g;
+  const byId = /getElementById\(\s*(?:(?:[^()?'"`]|'[^']*'|"[^"]*")*\?\s*)?(['"])([\w-]+)\1\s*(?::\s*(['"])([\w-]+)\3\s*)?\)/g;
   for (const m of js.matchAll(byId)) { ids.add(m[2]); if (m[4]) ids.add(m[4]); }
   const bySel = /(?:querySelector(?:All)?|closest)\(\s*(['"])([^'"]*)\1/g;
   for (const m of js.matchAll(bySel)) for (const h of m[2].matchAll(/#([\w-]+)/g)) ids.add(h[1]);

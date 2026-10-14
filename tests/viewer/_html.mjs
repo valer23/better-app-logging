@@ -1,6 +1,6 @@
 // Small HTML tokenizer and element tree for the viewer's static checks.
 // Not an HTML5 parser: it knows void elements, raw-text elements, comments, quoted attributes
-// and `/>` on foreign (SVG) elements, and it REPORTS structure errors instead of recovering
+// and `/>` on foreign (SVG/MathML) elements only, and it REPORTS structure errors instead of recovering
 // from them. That is the point: `<div><span></div>` is an error here, while Python's
 // HTMLParser (the old CI check) accepts it.
 
@@ -15,6 +15,11 @@ function countNl(s) {
 
 // Returns { root, errors }. Every element is { tag, attrs, children, parent, line, text? }.
 // `text` is set on raw-text elements (script, style, textarea, title) and holds their content.
+function inForeign(el) {
+  for (let n = el; n; n = n.parent) if (n.tag === 'svg' || n.tag === 'math') return true;
+  return false;
+}
+
 export function parseHtml(src) {
   const lower = src.toLowerCase();
   const root = { tag: '#root', attrs: {}, children: [], parent: null, line: 1 };
@@ -33,7 +38,12 @@ export function parseHtml(src) {
       i = end + 3;
       continue;
     }
-    if (src.startsWith('<!', lt)) { i = src.indexOf('>', lt) + 1; continue; }   // <!DOCTYPE html>
+    if (src.startsWith('<!', lt)) {   // <!DOCTYPE html>
+      const gt = src.indexOf('>', lt);
+      if (gt < 0) { errors.push(`line ${line}: unterminated <!...>`); break; }
+      i = gt + 1;
+      continue;
+    }
     if (src[lt + 1] === '/') {
       const m = /^<\/([a-zA-Z][\w-]*)\s*>/.exec(src.slice(lt, lt + 80));
       if (!m) { errors.push(`line ${line}: malformed end tag`); i = lt + 2; continue; }
@@ -84,13 +94,21 @@ export function parseHtml(src) {
     }
     const el = { tag, attrs, children: [], parent: cur, line: startLine };
     cur.children.push(el);
+    // Browsers ignore the slash on HTML elements (`<script src=x />` and `<div/>` stay open), so
+    // only SVG/MathML elements may self-close; a void element's slash is harmless.
+    if (selfClose && !VOID.has(tag) && !inForeign(el)) {
+      errors.push(`line ${startLine}: "/>" on non-void HTML element <${tag}> is ignored by browsers`);
+      selfClose = false;
+    }
     if (RAW.has(tag) && !selfClose) {
       const close = lower.indexOf(`</${tag}`, j);
       if (close < 0) { errors.push(`line ${startLine}: <${tag}> is never closed`); break; }
       el.text = src.slice(j, close);
       el.textLine = line;
       line += countNl(el.text);
-      i = src.indexOf('>', close) + 1;
+      const gt = src.indexOf('>', close);
+      if (gt < 0) { errors.push(`line ${line}: unterminated </${tag}`); break; }
+      i = gt + 1;
       continue;
     }
     if (!VOID.has(tag) && !selfClose) cur = el;

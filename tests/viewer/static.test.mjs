@@ -56,7 +56,15 @@ test('the checks reject deliberately broken input', () => {
   assert.notDeepEqual(C.scriptSyntaxErrors([{ code: 'function (', filename: 'bad.js' }]), []);
   assert.notDeepEqual(C.duplicateIds(h('<p id="a"></p><i id="a"></i>')), []);
   assert.notDeepEqual(C.missingIds(h('<p id="a"></p>'), "document.getElementById('b')"), []);
-  assert.deepEqual(C.missingIds(h('<p id="a"></p><p id="b"></p>'), "getElementById(x === 'q' ? 'a' : 'b')"), []);
+  const ternary = "getElementById(x === 'q' ? 'a' : 'b')";
+  assert.deepEqual([...C.referencedIds(ternary)].sort(), ['a', 'b']);
+  assert.deepEqual(C.missingIds(h('<p id="a"></p><p id="b"></p>'), ternary), []);
+  assert.notDeepEqual(C.missingIds(h('<p id="a"></p>'), ternary), []);
+  assert.notDeepEqual(parseHtml('<div></div><!DOCTYPE html').errors, []);
+  assert.notDeepEqual(parseHtml('<script>x</script').errors, []);
+  assert.notDeepEqual(parseHtml('<body><script src="a.js" /><div></div></body>').errors, []);
+  assert.notDeepEqual(parseHtml('<div/><span></span>').errors, []);
+  assert.deepEqual(parseHtml('<svg><path d="M0 0"/></svg><br/><img src="x"/>').errors, []);
   assert.notDeepEqual(C.handlerErrors(h('<button onclick="nope()">x</button>'), 'function yes() {}'), []);
   assert.deepEqual(C.handlerErrors(h('<button onclick="yes(1)">x</button>'), 'function yes() {}'), []);
   assert.notDeepEqual(C.xssErrors('el.innerHTML = userText;'), []);
