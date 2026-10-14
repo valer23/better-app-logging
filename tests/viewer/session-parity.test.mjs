@@ -13,13 +13,13 @@ const VIEW = {
   liveRenderedEnd: 'liveSession.renderedEnd',
   liveDiscarded: 'liveSession.discarded',
   liveDropped: 'liveSession.dropped',
-  fileAll: 'liveSession.all',           // the buffer the File tab shows (still the one buffer)
-  toFile: "switchMode('file')",
-  toLive: "switchMode('live')",
+  fileAll: 'fileSession.all',           // the buffer the File tab shows
+  toFile: 'selectSession(fileSession)',
+  toLive: 'selectSession(liveSession)',
 };
-// Behaviour P2 changes on purpose (Task 8 flips these).
+// Behaviour P2 changed on purpose: a loaded file no longer resets the live drop counts.
 const PINNED = {
-  dropTooltipEnd: 'Resets on Clear or when a file is loaded.',
+  dropTooltipEnd: 'Resets on Clear.',
 };
 
 const NAMES = ['handleWsMsg', 'flushBatch', 'togglePause', 'toggleAutoScroll', 'clearLogs', 'handleFile', 'updateNewerPill'];
@@ -108,7 +108,7 @@ test('#46: server drops are counted per platform on the live bar and reset by Cl
   assert.equal(v.text('liveBarAndroidDroppedText'), '⚠ 0 lines dropped');
 });
 
-test('#55 as shipped before P2: a file load discards the paused live backlog and the drop counts', () => {
+test('#55 per session: a file load keeps the paused live backlog and drop counts; Clear on Live still discards them', () => {
   const v = boot();
   v.send(3); v.api.flushBatch();
   v.drop('ios', 4);
@@ -116,12 +116,22 @@ test('#55 as shipped before P2: a file load discards the paused live backlog and
   v.send(10, 3);
   v.go('toFile');
   v.api.handleFile({ text: fileText(4) });
+  assert.equal(v.run('pendingBatch.length'), 10);
+  assert.equal(v.get('liveDropped').ios, 4);
+  assert.equal(v.get('fileAll').length, 4);
+  v.go('toLive');
+  v.api.togglePause();                     // Resume drains the backlog into the live session
+  assert.equal(v.get('liveAll').length, 13);
+  v.api.togglePause();
+  v.send(5, 13);
+  v.api.clearLogs();                       // Clear on Live (#55)
   assert.equal(v.run('pendingBatch.length'), 0);
   assert.equal(v.get('liveDropped').ios, 0);
-  assert.equal(v.get('fileAll').length, 4);
+  assert.equal(v.get('liveAll').length, 0);
+  assert.equal(v.get('fileAll').length, 4, 'Clear on Live leaves the file session alone');
 });
 
-test('a live flush while the File tab is shown leaves the file buffer alone (known bug, fixed in P2 Task 8)', { todo: 'P2 Task 8' }, () => {
+test('a live flush while the File tab is shown leaves the file buffer alone', () => {
   const v = boot();
   v.go('toFile');
   v.api.handleFile({ text: fileText(4) });
@@ -142,6 +152,89 @@ test('#54 and #57: with Follow off the window stays put and the pill counts the 
   v.doc.hidden = false;
   v.api.updateNewerPill();
   assert.equal(v.text('newerPillCount'), '7 lines below');
+});
+
+test('#57: lines that arrive while the file session is shown count as lines below on return', () => {
+  const v = boot();
+  v.doc.hidden = false;
+  v.send(5); v.api.flushBatch();
+  v.api.toggleAutoScroll();
+  v.doc.hidden = true;
+  v.go('toFile');
+  v.send(9, 5); v.api.flushBatch();
+  v.go('toLive');
+  assert.equal(v.get('liveRenderedEnd'), 5);
+  v.doc.hidden = false;
+  v.api.updateNewerPill();
+  assert.equal(v.text('newerPillCount'), '9 lines below');
+});
+
+test('the retention cap trims the live session while the file session is shown, and never the file', () => {
+  const v = boot();
+  v.go('toFile');
+  v.api.handleFile({ text: fileText(4) });
+  v.run('MAX_RETAINED = 100');
+  v.send(150); v.api.flushBatch();
+  assert.equal(v.get('liveAll').length, 90);
+  assert.equal(v.get('liveDiscarded'), 60);
+  assert.equal(v.get('fileAll').length, 4);
+  assert.equal(v.run('fileSession.discarded'), 0);
+});
+
+test('a filter change while the file session is shown leaves live stale; showing live refilters it', () => {
+  const v = boot();
+  v.send(4); v.api.flushBatch();
+  v.go('toFile');
+  v.doc.getElementById('search').value = 'line 1';
+  v.run('queryChanged()');
+  v.send(10, 4); v.api.flushBatch();
+  assert.equal(v.run('liveSession.filtered.length'), 4, 'not filtered while stale');
+  assert.notEqual(v.run('liveSession.query'), v.run('filterGen'));
+  assert.equal(v.run('fileSession.query'), v.run('filterGen'));
+  v.go('toLive');
+  assert.equal(v.run('liveSession.query'), v.run('filterGen'));
+  assert.deepEqual([...v.run('liveSession.filtered.map(m => m.msg)')], ['line 1', 'line 10', 'line 11', 'line 12', 'line 13']);
+});
+
+test('a switch does not reset the live selection or Follow; a file session never follows', () => {
+  const v = boot();
+  v.send(5); v.api.flushBatch();
+  v.run('liveSession.sel = liveSession.all[2]; liveSession.follow = false;');
+  v.go('toFile');
+  assert.equal(v.run('cur === fileSession'), true);
+  assert.equal(v.run('fileSession.follow'), false);
+  v.go('toLive');
+  assert.equal(v.run('cur === liveSession'), true);
+  assert.equal(v.run('liveSession.sel === liveSession.all[2]'), true);
+  assert.equal(v.run('liveSession.follow'), false);
+});
+
+test('switching back mid-drain resets the drain marker, and the next flush drains the rest', () => {
+  const v = boot();
+  v.send(5000);
+  v.run('performance.now = (() => { let t = 0; return () => (t += 30); })()');   // 50 ms budget runs out at frame 4096
+  v.api.flushBatch();
+  assert.equal(v.run('pendingBatch.length'), 904);
+  assert.ok(v.run('liveSession.renderFrom') >= 0, 'a drain is in progress');
+  v.go('toFile');
+  v.go('toLive');
+  assert.equal(v.run('liveSession.renderFrom'), -1);
+  v.api.flushBatch();
+  assert.equal(v.run('pendingBatch.length'), 0);
+  assert.equal(v.get('liveAll').length, 5000);
+  assert.equal(v.run('liveSession.renderFrom'), -1);
+});
+
+test('Clear on File empties only the file session, and a second file can be loaded', () => {
+  const v = boot();
+  v.send(3); v.api.flushBatch();
+  v.go('toFile');
+  v.api.handleFile({ text: fileText(4) });
+  v.api.clearLogs();
+  assert.equal(v.get('fileAll').length, 0);
+  assert.equal(v.get('liveAll').length, 3, 'Clear on File leaves live alone');
+  v.api.handleFile({ text: fileText(2) });
+  assert.equal(v.get('fileAll').length, 2);
 });
 
 // offscreen(s) is `s !== cur || document.hidden`. These tests keep the window visible (hidden = false),

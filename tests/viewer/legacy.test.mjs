@@ -121,9 +121,9 @@ async function roundTrip(fmt, messages) {
        saveFile = async (name, content) => { globalThis.__saved = { name, content }; };`);
   await api.doExport(fmt);
   const saved = run('globalThis.__saved');
-  run('liveSession.all = [];');
+  run('ALV.session.reset(fileSession, []);');   // an unrecognised file leaves the file session as it was
   api.handleFile({ text: saved.content });
-  return { name: saved.name, content: saved.content, parsed: JSON.parse(JSON.stringify(run('liveSession.all'))) };
+  return { name: saved.name, content: saved.content, parsed: JSON.parse(JSON.stringify(run('fileSession.all'))) };
 }
 
 test('TXT export of iOS lines re-imports unchanged', async () => {

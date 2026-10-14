@@ -30,8 +30,8 @@
     </svg>
     AppLogs<span>Viewer</span>
   </div>
-  <button class="mode-tab"        id="tabFile" onclick="switchMode('file')">📂 File Import</button>
-  <button class="mode-tab active" id="tabLive" onclick="switchMode('live')">📱 Live Devices</button>
+  <button class="mode-tab"        id="tabFile" onclick="selectSession(fileSession)">📂 File Import</button>
+  <button class="mode-tab active" id="tabLive" onclick="selectSession(liveSession)">📱 Live Devices</button>
   <div class="topbar-spacer"></div>
   <div class="zoom-group">
     <button class="zoom-btn" onclick="setLogZoom(-1)" title="Zoom out (Ctrl+-)">A−</button>
@@ -57,11 +57,11 @@
 </div>
 
 <div class="lg-scope" id="filterbar">
-  <input type="text" id="search"    placeholder="🔍 Search message…" oninput="applyFilters()">
+  <input type="text" id="search"    placeholder="🔍 Search message…" oninput="queryChanged()">
   <button class="search-mod" id="searchCaseBtn"  onclick="toggleSearchMod('case')"  title="Case-sensitive search">Aa</button>
   <button class="search-mod" id="searchRegexBtn" onclick="toggleSearchMod('regex')" title="Regex search">.*</button>
-  <input type="text" id="tagFilter" placeholder="Tag / Process…"      oninput="applyFilters()">
-  <input type="text" id="pidFilter" placeholder="PID / App…"          oninput="applyFilters()">
+  <input type="text" id="tagFilter" placeholder="Tag / Process…"      oninput="queryChanged()">
+  <input type="text" id="pidFilter" placeholder="PID / App…"          oninput="queryChanged()">
   <div class="sep"></div>
   <div class="toggle-group" id="levelToggles"></div>
   <div class="sep"></div>
@@ -425,15 +425,17 @@ const enabledLevels   = new Set(LEVELS);
 const enabledPlatforms = new Set(['android','ios']);
 
 // ── State ──
-// The table shows one session (`cur`). Its buffer, reading window, selection, Follow flag and loss
-// counters live on the session object (assets/js/session.js). Only the live session ingests: drain
-// code hoists `liveSession`, view code hoists `cur`. Until the file session exists both are one object.
+// The table shows one session (`cur`). Each session (assets/js/session.js) holds its own buffer,
+// reading window, selection, Follow flag, loss counters and <tbody>. Only the live session ingests,
+// also while the file session is shown: drain code hoists `liveSession`, view code hoists `cur`.
 const liveSession = ALV.session.create('live', 'Live session');
+const fileSession = ALV.session.create('file', 'File');
 let cur = liveSession;
 liveSession.tbody = document.getElementById('tbody');   // the shown session's tbody carries id="tbody"
+fileSession.tbody = document.createElement('tbody');
+let filterGen = 0;   // bumped by queryChanged(); a session whose `query` differs is refiltered when shown
 // A session's DOM work is skipped while it is off screen: hidden window, or another session shown.
 function offscreen(s) { return s !== cur || document.hidden; }
-let currentMode = 'live';
 let wsAndroid = null, wsIos = null;
 let androidLive = false, iosLive = false;
 let livePaused = false;
@@ -446,7 +448,7 @@ const PAGE = 500;
 // it while scrolling back) and re-pins on click. Cheap by
 // design: O(1) arithmetic on filtered.length/renderedEnd, no layout reads, DOM writes only when the
 // value changes, nothing while the window is hidden (visibilitychange refreshes it). Declared here, not
-// next to togglePause, because the top-level switchMode('live') call reaches it before later `let`s run.
+// next to togglePause, because the top-level selectSession(liveSession) call reaches it before later `let`s run.
 const newerPill = document.getElementById('newerPill'), newerPillCount = document.getElementById('newerPillCount');
 let newerPillShown = -1;      // count on screen; 0 = hidden, -1 = unknown (forces a write)
 let newerPillArmed = null;    // spacer class state on #logTable
@@ -464,7 +466,7 @@ function updateReadingWindowHint() {
   const s = cur, filtered = s.filtered;
   const rows = s.tbody.rows, n = rows.length, start = s.renderedEnd - n;
   // The identity check mirrors prependOlderRows: never show positions for a DOM that doesn't match `filtered`.
-  const shown = n > 0 && n < filtered.length && (currentMode === 'file' || !s.follow)
+  const shown = n > 0 && n < filtered.length && !s.follow   // a file session never follows
     && !s.domStale && start >= 0 && rows[0]._message === filtered[start];
   const of = shown ? filtered.length : 0;
   if (of === hintOf && (!of || (start + 1 === hintFrom && s.renderedEnd === hintTo))) return;
@@ -477,7 +479,7 @@ function updateNewerPill() {
   updateReadingWindowHint();   // same triggers: see its comment
   // Armed = the same live-table test toggleAutoScroll uses to re-pin; a file-only table never shows it.
   const s = cur, filtered = s.filtered;
-  const armed = currentMode === 'live' && !s.follow && filtered.length > 0 && filtered[filtered.length - 1].seq !== undefined;
+  const armed = s.kind === 'live' && !s.follow && filtered.length > 0 && filtered[filtered.length - 1].seq !== undefined;
   if (armed !== newerPillArmed) { newerPillArmed = armed; document.getElementById('logTable').classList.toggle('newer-room', armed); }
   const n = armed ? Math.max(0, filtered.length - s.renderedEnd) : 0;   // max(): never negative even if renderedEnd overshoots
   if (n === newerPillShown) return;
@@ -529,7 +531,7 @@ LEVELS.forEach(lvl => {
   const btn = document.createElement('button');
   btn.className = 'lvl-btn active'; btn.dataset.lvl = lvl;
   btn.textContent = LEVEL_CHAR[lvl]; btn.title = lvl;
-  btn.onclick = () => { enabledLevels.has(lvl) ? enabledLevels.delete(lvl) : enabledLevels.add(lvl); btn.classList.toggle('active', enabledLevels.has(lvl)); applyFilters(); };
+  btn.onclick = () => { enabledLevels.has(lvl) ? enabledLevels.delete(lvl) : enabledLevels.add(lvl); btn.classList.toggle('active', enabledLevels.has(lvl)); queryChanged(); };
   document.getElementById('levelToggles').appendChild(btn);
 });
 
@@ -537,26 +539,76 @@ LEVELS.forEach(lvl => {
 [['android','🤖 Android'],['ios','🍎 iOS']].forEach(([plat, label]) => {
   const btn = document.createElement('button');
   btn.className = 'plat-btn active'; btn.dataset.plat = plat; btn.textContent = label;
-  btn.onclick = () => { enabledPlatforms.has(plat) ? enabledPlatforms.delete(plat) : enabledPlatforms.add(plat); btn.classList.toggle('active', enabledPlatforms.has(plat)); applyFilters(); };
+  btn.onclick = () => { enabledPlatforms.has(plat) ? enabledPlatforms.delete(plat) : enabledPlatforms.add(plat); btn.classList.toggle('active', enabledPlatforms.has(plat)); queryChanged(); };
   document.getElementById('platToggles').appendChild(btn);
 });
 
-// ── Mode switching ──
-function switchMode(mode) {
-  currentMode = mode;
-  document.getElementById('tabFile').classList.toggle('active', mode === 'file');
-  document.getElementById('tabLive').classList.toggle('active', mode === 'live');
-  ['autoScrollBtn','pauseBtn','clearBtn'].forEach(id => document.getElementById(id).style.display = mode === 'live' ? '' : 'none');
-  if (mode === 'file') {
-    document.getElementById('liveBar').classList.remove('visible');
-    showOnly(cur.all.length ? 'logWrapper' : 'dropzone');
-  } else {
+// ── Sessions ──
+// The File Import / Live Devices tabs pick the session on screen (the sidebar SESSIONS list replaces
+// them in P4). Each session keeps its own <tbody>: the shown one sits in #logTableEl with id="tbody",
+// the others stay detached with their rows, so switching back brings back the same window, its
+// selection and (through the saved anchor row) its scroll position. The live session keeps ingesting
+// while detached: following, its DOM work is skipped (domStale) and the tail is rebuilt on return;
+// reading, its window stays frozen and the lines below it are counted. A session whose `query` lags
+// filterGen (the filter changed while it was away) is refiltered when shown. Nothing is discarded.
+function selectSession(next) {
+  const prev = cur, t = document.getElementById('logTable');
+  if (next !== prev) {
+    saveScroll(prev, t);
+    prev.tbody.removeAttribute('id');
+    prev.tbody.replaceWith(next.tbody);
+    next.tbody.id = 'tbody';
+    cur = next;
+  }
+  const live = next.kind === 'live';
+  document.getElementById('tabFile').classList.toggle('active', !live);
+  document.getElementById('tabLive').classList.toggle('active', live);
+  ['autoScrollBtn','pauseBtn'].forEach(id => document.getElementById(id).style.display = live ? '' : 'none');
+  document.getElementById('clearBtn').style.display = '';   // Clear empties the session on screen; on File it brings the dropzone back
+  document.getElementById('autoScrollBtn').classList.toggle('active', next.follow);
+  if (live) {
     refreshLiveView();
     // Populate device dropdowns from native /devices/* endpoints.
     loadAndroidDevices();
     loadIosDevices();
+  } else {
+    document.getElementById('liveBar').classList.remove('visible');
+    showOnly(next.all.length ? 'logWrapper' : 'dropzone');
   }
+  if (next !== prev) { restoreView(next, t); updateStats(); updateExportVisibility(); }
   updateNewerPill();
+}
+
+// Where the reader is in `s`, saved before another session takes the table: the scroll offsets and
+// the first row in view with its distance from the top of the scroller, so restoreView can put that
+// row back even if retention trims removed rows above it meanwhile. Layout reads happen here, once
+// per switch, never per flush.
+function saveScroll(s, t) {
+  const sc = s.scroll, rows = s.tbody.rows;
+  sc.top = t.scrollTop; sc.left = t.scrollLeft; sc.anchor = null; sc.anchorTop = 0;
+  if (s.follow || s.domStale || !rows.length || offscreen(s)) return;   // rebuilt or re-pinned on return (s is still `cur` here, so this is the hidden-window test)
+  const top = t.getBoundingClientRect().top;
+  const i = Math.min(rows.length - 1, ALV.session.firstIndexWhere(rows, 0, r => r.getBoundingClientRect().bottom > top));
+  sc.anchor = rows[i];
+  sc.anchorTop = rows[i].getBoundingClientRect().top - top;
+}
+
+// Puts `s` back on screen once selectSession has attached its tbody.
+function restoreView(s, t) {
+  if (s.query !== filterGen) {              // the filter changed while `s` was away (or a file was just loaded)
+    applyFilters();                         // refilters `s` and renders around its selection
+    if (s.follow) { s.domStale = true; renderLiveTail(s, s.filtered.length); s.renderFrom = -1; }
+    return;
+  }
+  if (s.follow || s.domStale) {             // the followed tail, or a reading window trimmed whole while away
+    renderLiveTail(s, s.filtered.length);   // rebuilds a stale tbody; pins the tail when following
+    s.renderFrom = -1;                      // an in-progress drain renders only what it adds from now on
+    return;
+  }
+  const sc = s.scroll;
+  t.scrollTop = sc.top; t.scrollLeft = sc.left;
+  if (sc.anchor && sc.anchor.isConnected) t.scrollTop += sc.anchor.getBoundingClientRect().top - t.getBoundingClientRect().top - sc.anchorTop;
+  sc.anchor = null;   // never hold a row past its restore
 }
 
 function _deviceLabel(d) {
@@ -664,7 +716,7 @@ async function checkIosDriverStatus() {
 }
 
 function refreshLiveView() {
-  if (currentMode !== 'live') return;
+  if (cur.kind !== 'live') return;
   const anyConnected = androidLive || iosLive;
   document.getElementById('liveBar').classList.toggle('visible', anyConnected);
   showOnly(anyConnected ? 'logWrapper' : 'livePanel');
@@ -771,7 +823,7 @@ document.getElementById('logTable').addEventListener('click', e => {
 });
 
 // Open on the Live Devices tab — most common starting point for new sessions.
-switchMode('live');
+selectSession(liveSession);
 
 // ── File import ──
 const dropzone = document.getElementById('dropzone');
@@ -781,19 +833,23 @@ dropzone.addEventListener('drop',      e => { e.preventDefault(); dropzone.class
 document.getElementById('fileInput').addEventListener('change', e => handleFile(e.target.files[0]));
 dropzone.addEventListener('click', e => { if (!['LABEL','INPUT'].includes(e.target.tagName)) document.getElementById('fileInput').click(); });
 
+// A loaded file becomes the file session (P4 lists several; P2 has one slot, replaced on each load).
+// The live session is not touched: it keeps its lines, its paused backlog and its drop counts, and
+// keeps ingesting while the file is shown.
 function handleFile(file) {
   if (!file) return;
   showOnly('loading');
   const reader = new FileReader();
   reader.onload = ev => {
     const text = ev.target.result;
+    let msgs;
     try {
       const trimmed = text.replace(/^﻿/, '').trimStart();
       if (trimmed.startsWith('{')) {
         const json = JSON.parse(trimmed);
         if (json && json.source === 'device-log-viewer' && Array.isArray(json.messages)) {
           document.getElementById('loadingText').textContent = 'Parsing viewer JSON…';
-          cur.all = json.messages.map(m => ({
+          msgs = json.messages.map(m => ({
             ts: m.timestamp || '', pid: m.pid || 0, tid: m.tid || 0,
             tag: m.tag || '', app: m.app || '',
             lvl: m.level || 'INFO', msg: m.message || '',
@@ -801,7 +857,7 @@ function handleFile(file) {
           }));
         } else if (Array.isArray(json.logcatMessages)) {
           document.getElementById('loadingText').textContent = 'Parsing Android JSON…';
-          cur.all = json.logcatMessages.map(m => ({
+          msgs = json.logcatMessages.map(m => ({
             ts: formatTs(m.header.timestamp), pid: m.header.pid, tid: m.header.tid,
             tag: m.header.tag || '', app: m.header.applicationId || m.header.processName || '',
             lvl: m.header.logLevel || 'VERBOSE', msg: m.message || '', platform: 'android'
@@ -813,28 +869,30 @@ function handleFile(file) {
         const firstLine = trimmed.split('\n', 1)[0].trimEnd();
         if (firstLine === EXPORTED_CSV_HEADER) {
           document.getElementById('loadingText').textContent = 'Parsing viewer CSV…';
-          cur.all = parseExportedCsv(text);
+          msgs = parseExportedCsv(text);
         } else if (EXPORTED_TXT_RE.test(firstLine)) {
           document.getElementById('loadingText').textContent = 'Parsing viewer text export…';
-          cur.all = parseExportedTxt(text);
+          msgs = parseExportedTxt(text);
         } else {
           document.getElementById('loadingText').textContent = 'Parsing iOS syslog…';
-          cur.all = parseIosText(text);
+          msgs = parseIosText(text);
         }
       }
 
-      if (cur.all.length === 0) {
+      if (msgs.length === 0) {
         alert('No log lines found — file format not recognized.');
-        showOnly('dropzone');
+        if (cur === fileSession) showOnly('dropzone');
         return;
       }
 
-      document.getElementById('loadingText').textContent = `Rendering ${cur.all.length.toLocaleString()} lines…`;
-      discardBacklog(cur);
-      setTimeout(() => { applyFilters(); showOnly('logWrapper'); updateExportVisibility(); }, 50);
+      document.getElementById('loadingText').textContent = `Rendering ${msgs.length.toLocaleString()} lines…`;
+      discardBacklog(fileSession);
+      ALV.session.reset(fileSession, msgs);
+      fileSession.query = -1;   // not filtered yet: rendered below, or by selectSession if the user switched away meanwhile
+      setTimeout(() => { if (cur !== fileSession) return; applyFilters(); showOnly('logWrapper'); updateExportVisibility(); }, 50);
     } catch(err) {
       alert('Failed to parse file: ' + err.message);
-      showOnly('dropzone');
+      if (cur === fileSession) showOnly('dropzone');
     }
   };
   reader.readAsText(file);
@@ -1028,8 +1086,9 @@ function toggleIos() { iosLive ? disconnectIos() : connectIos(); }
 
 // Lines the backend dropped for this client because its WS stream fell
 // behind the bridge's broadcast buffer (server sends {type:'dropped',count}).
-// Per platform; reset by Clear and by loading a file. Disconnect/reconnect keeps it because
-// the earlier session's lines (and their gaps) are still in the table.
+// Per platform, held on the live session; reset by Clear on Live (a loaded file is its own session
+// and leaves it alone). Disconnect/reconnect keeps it because the earlier lines (and their gaps)
+// are still in the table.
 // The count covers every lost broadcast frame, so a devices/error update in
 // the gap is included and its effect is lost (e.g. an iOS stall prompt never appears).
 function updateDroppedIndicator(platform) {
@@ -1041,7 +1100,7 @@ function updateDroppedIndicator(platform) {
     `\u26A0 ${n.toLocaleString()} ${n === 1 ? 'line' : 'lines'} dropped`;
   pill.title = `${n.toLocaleString()} ${platform === 'android' ? 'Android' : 'iOS'} ${n === 1 ? 'message' : 'messages'} (log lines, plus any device/status updates in the gap) never reached the viewer: ` +
     'this connection could not keep up with the stream, so the app\'s server-side buffer overflowed ' +
-    'and the oldest unsent messages were dropped. The table and exports may have gaps where this happened (unless those lines were later discarded by the viewer\'s retention cap). Resets on Clear or when a file is loaded.';
+    'and the oldest unsent messages were dropped. The table and exports may have gaps where this happened (unless those lines were later discarded by the viewer\'s retention cap). Resets on Clear.';
 }
 
 function handleWsMsg(e, platform) {
@@ -1245,7 +1304,9 @@ function flushBatch() {
   }
 
   const batch = pendingBatch; pendingBatch = [];    // O(1) swap, no splice
-  const pass = makeFilter();                        // read filter inputs once per flush, not per row
+  // While another session is shown and the filter changed (stale query), new lines skip the filter:
+  // `filtered` stops growing until restoreView refilters the live session.
+  const pass = s.query === filterGen ? makeFilter() : null;   // read filter inputs once per flush, not per row
   const all = s.all, filtered = s.filtered;         // trims splice in place, so both stay valid for the chunk
   if (s.renderFrom < 0) s.renderFrom = filtered.length;
   const t0 = performance.now();
@@ -1259,7 +1320,7 @@ function flushBatch() {
       const m = { ts: d.ts, pid: d.pid, tid: d.tid, tag: d.tag,
                   app: d.app||'', lvl: d.lvl, msg: d.msg, platform: d.platform, seq: nextSeq++ };
       all.push(m);
-      if (pass(m)) filtered.push(m);
+      if (pass !== null && pass(m)) filtered.push(m);
     }
   } catch (err) {
     // Don't lose the rest of the backlog; drop only the frame that threw.
@@ -1293,7 +1354,7 @@ function flushBatch() {
 // (see extendReadingWindow).
 function renderLiveTail(s, firstNew) {
   // A stale DOM still gets the full rebuild below.
-  if (!s.follow && !s.domStale) { if (s === cur && currentMode === 'live') extendReadingWindow(); return; }
+  if (!s.follow && !s.domStale) { if (s === cur) extendReadingWindow(); return; }
   const filtered = s.filtered, prevEnd = s.renderedEnd;
   s.renderedEnd = filtered.length;
   if (offscreen(s)) { s.domStale = true; return; }
@@ -1421,7 +1482,7 @@ function toggleAutoScroll() {
   // Re-pinning leaves the reading window behind: rebuild the followed tail now (also mid-drain or paused).
   // renderFrom = -1 so an in-progress drain renders only lines it adds after this. Only when the table
   // holds live lines: file lines carry no seq, and a file-only table must keep its head and lazy append.
-  if (s.follow && currentMode === 'live' && s.filtered.length && s.filtered[s.filtered.length - 1].seq !== undefined) { s.domStale = true; renderLiveTail(s, s.filtered.length); s.renderFrom = -1; }
+  if (s.follow && s.kind === 'live' && s.filtered.length && s.filtered[s.filtered.length - 1].seq !== undefined) { s.domStale = true; renderLiveTail(s, s.filtered.length); s.renderFrom = -1; }
   updateNewerPill();
 }
 function togglePause() {
@@ -1441,11 +1502,12 @@ function togglePause() {
   }
   updateNewerPill();
 }
-// Clear and a file load both start a fresh view. Frames still queued (a paused backlog or the
-// rest of an in-progress drain) arrived before it, so they go too, along with the counters
-// describing earlier losses; otherwise Resume re-rendered cleared lines and the drop pill
-// under-reported a gap still queued. New frames keep flowing: batchTimer is null, so the next
-// handleWsMsg re-arms it.
+// Resets of one session: Clear (the session on screen) and a file load (the file session). Frames
+// still queued for the live session (a paused backlog or the rest of an in-progress drain) arrived
+// before a Clear on Live, so they go too, along with the counters describing earlier losses;
+// otherwise Resume re-rendered cleared lines and the drop pill under-reported a gap still queued.
+// A file load or a session switch never touches the live backlog. New frames keep flowing:
+// batchTimer is null, so the next handleWsMsg re-arms it.
 function discardBacklog(s) {
   if (s === liveSession) {
     pendingBatch = [];
@@ -1459,6 +1521,7 @@ function clearLogs() {
   discardBacklog(s);
   ALV.session.reset(s, []);
   s.tbody.innerHTML = '';
+  if (s.kind === 'file') showOnly('dropzone');   // Clear on File: the dropzone is the only way to load another file
   updateStats(); updateExportVisibility(); updateNewerPill();
 }
 
@@ -1699,7 +1762,7 @@ let searchRegex         = null; // compiled regex for current query (null when i
 function toggleSearchMod(kind) {
   if (kind === 'case')  { searchCaseSensitive = !searchCaseSensitive; document.getElementById('searchCaseBtn').classList.toggle('active', searchCaseSensitive); }
   if (kind === 'regex') { searchRegexMode     = !searchRegexMode;     document.getElementById('searchRegexBtn').classList.toggle('active', searchRegexMode); }
-  applyFilters();
+  queryChanged();
 }
 
 function _compileSearchRegex(query) {
@@ -1751,8 +1814,14 @@ function makeFilter() {
   };
 }
 
+// The filter inputs changed: every session's `filtered` is out of date. The shown one is refiltered
+// now; the others when they are shown again (restoreView compares their `query` with filterGen).
+function queryChanged() { filterGen++; applyFilters(); }
+
+// Refilters and re-renders the session on screen with the current filter inputs.
 function applyFilters() {
   const s = cur;
+  s.query = filterGen;
   currentSearch = document.getElementById('search').value;
   searchRegex   = _compileSearchRegex(currentSearch);
   s.filtered = s.all.filter(makeFilter()); updateStats();
@@ -1924,7 +1993,7 @@ document.getElementById('logTable').addEventListener('scroll', function() {
   // Every downward lazy load is the capped slide, so file mode and pinned scroll-back can't grow the DOM past LIVE_DOM_CAP.
   const s = cur;
   if (s.renderedEnd < s.filtered.length && this.scrollTop + this.clientHeight >= this.scrollHeight - 200) {
-    if ((currentMode === 'live' && !s.follow) || s.renderFrom < 0) { extendReadingWindow(); updateNewerPill(); }   // renderedEnd advanced
+    if ((s.kind === 'live' && !s.follow) || s.renderFrom < 0) { extendReadingWindow(); updateNewerPill(); }   // renderedEnd advanced
   } else if (this.scrollTop < 200) prependOlderRows(this);
 });
 

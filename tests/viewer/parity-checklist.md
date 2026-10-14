@@ -55,8 +55,8 @@ the PR body says which part landed. P16 requires every box ticked, except rows b
 ## In-flight behaviour that must survive
 
 - [ ] **#45 retention cap: "N older discarded" / "N discarded, resume skips to newest" with tooltip** → status bar Retained text; `#exportNote` stays inside the Export menu _(P4, P11)_
-- [ ] **#46 server drops per platform, tooltip, reset on Clear and file load** → status bar drops button, sidebar device rows, gap rows _(P4, P10)_
+- [ ] **#46 server drops per platform, tooltip, reset on Clear (since P2 a loaded file is its own session and leaves the live counts alone)** → status bar drops button, sidebar device rows, gap rows _(P4, P10)_
 - [ ] **#54 Follow off freezes the table; new lines load only at the bottom** → unchanged semantics under Follow _(P5)_
-- [ ] **#55 Clear, Undo, file load and session switch go through `discardBacklog()`** → every reset path _(P2, P12)_
+- [ ] **#55 every reset goes through `discardBacklog(s)` for the session it resets: Clear (the shown session), file load (the file session), Undo; a session switch resets nothing and the live backlog survives a file load** → every reset path _(P2 done for Clear, file load and switch; P12 Undo)_
 - [ ] **#57 "N lines below · Jump to latest" pill, `updateNewerPill()` single hook, 56 px spacer** → jump pill, bottom-centre, portalled _(P5)_
 - [ ] **#58 sliding scroll-back through the retained history and "lines X–Y of Z" hint** → hint in the status bar while Follow is off _(P4, P5)_
