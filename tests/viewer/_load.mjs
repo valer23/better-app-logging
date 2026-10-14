@@ -33,6 +33,14 @@ export function inlineScripts(html = read(HTML_PATH)) {
     .map(el => ({ code: el.text, line: el.textLine }));
 }
 
+// The page's <script src> files in document order, as paths under viewer/ ("assets/js/prefs.js").
+export function pageScriptSrcs(html = read(HTML_PATH)) {
+  const { root } = parseHtml(html);
+  return elements(root)
+    .filter(el => el.tag === 'script' && 'src' in el.attrs)
+    .map(el => el.attrs.src);
+}
+
 // In-memory Storage. `throwing: true` makes every access throw, like a WebView with storage blocked.
 export function memoryStorage(initial = {}, { throwing = false } = {}) {
   const map = new Map(Object.entries(initial));
@@ -108,18 +116,38 @@ export function deepStub(name = 'stub') {
   });
 }
 
-// Loads the legacy inline <script> (the last one on the page) the way the page does: prefs.js
-// first (booted against a fake <html>), then the legacy code with stubbed browser globals.
-// Returns { api, run } where api holds the requested top-level bindings and run(code) evaluates
-// more code in the same global scope (to read or assign top-level `let`s such as allMessages).
-// `now` pins Date (ms since epoch) so year-dependent parsers are deterministic.
+// A deepStub document whose getElementById returns the same stub for an id every time, so a test
+// can read back what the legacy script wrote (textContent, title, value). `hidden` is a plain
+// writable flag: true (the default) keeps the live drain on its data-only path (renderLiveTail only
+// marks the DOM stale), false runs the render paths against stubs. `values` seeds input values.
+export function stickyDocument({ hidden = true, values = { search: '', tagFilter: '', pidFilter: '' } } = {}) {
+  const els = new Map();
+  const doc = deepStub('document');
+  doc.hidden = hidden;
+  doc.getElementById = id => {
+    if (!els.has(id)) {
+      const el = deepStub(`#${id}`);
+      if (Object.prototype.hasOwnProperty.call(values, id)) el.value = values[id];
+      els.set(id, el);
+    }
+    return els.get(id);
+  };
+  return doc;
+}
+
+// Loads the legacy inline <script> (the last one on the page) the way the page does: every
+// <script src> first, in page order (prefs.js booted against a fake <html>), then the legacy code
+// with stubbed browser globals. Returns { api, run } where api holds the requested top-level
+// bindings and run(code) evaluates more code in the same global scope (to read or assign top-level
+// bindings). `now` pins Date (ms since epoch) so year-dependent parsers are deterministic.
+// `document` replaces the default deepStub (see stickyDocument).
 // Deleted in P13 together with the last of the legacy inline script.
-export function loadLegacy(names, { now = Date.UTC(2026, 9, 14, 13, 53, 43, 120) } = {}) {
+export function loadLegacy(names, { now = Date.UTC(2026, 9, 14, 13, 53, 43, 120), document = deepStub('document') } = {}) {
   const scripts = inlineScripts();
   const main = scripts[scripts.length - 1];
   const sandbox = {
     console: { log() {}, info() {}, warn() {}, error() {}, debug() {} },
-    document: deepStub('document'),
+    document,
     navigator: { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)' },
     localStorage: memoryStorage(),
     location: { search: '' },
@@ -143,11 +171,14 @@ export function loadLegacy(names, { now = Date.UTC(2026, 9, 14, 13, 53, 43, 120)
       static now() { return FIXED; }
     };
   })();`, ctx);
-  vm.runInContext(read(path.join(ASSETS, 'js', 'prefs.js')), ctx, { filename: 'prefs.js' });
-  sandbox.ALV.prefs = sandbox.ALV.createPrefs({
-    storage: sandbox.localStorage, matchMedia: sandbox.matchMedia, userAgent: sandbox.navigator.userAgent,
-  });
-  sandbox.ALV.prefs.boot(fakeRoot());
+  for (const src of pageScriptSrcs()) {
+    vm.runInContext(read(path.join(VIEWER, src)), ctx, { filename: src });
+    if (src !== 'assets/js/prefs.js') continue;
+    sandbox.ALV.prefs = sandbox.ALV.createPrefs({
+      storage: sandbox.localStorage, matchMedia: sandbox.matchMedia, userAgent: sandbox.navigator.userAgent,
+    });
+    sandbox.ALV.prefs.boot(fakeRoot());
+  }
   const exportList = names.map(n => `${JSON.stringify(n)}: (typeof ${n} === 'undefined' ? undefined : ${n})`).join(', ');
   vm.runInContext(`${main.code}\n;globalThis.__api = { ${exportList} };`, ctx, {
     filename: 'applogs-viewer.html', lineOffset: main.line - 1,

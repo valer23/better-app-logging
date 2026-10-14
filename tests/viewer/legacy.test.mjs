@@ -4,7 +4,7 @@
 // prove parity. Deleted with the legacy inline script in P13 (P11 moves the parser tests first).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadLegacy } from './_load.mjs';
+import { loadLegacy, pageScriptSrcs, stickyDocument } from './_load.mjs';
 
 process.env.TZ = 'UTC';   // formatTs formats in local time
 
@@ -53,6 +53,24 @@ test('the legacy bindings dev-bench.js uses exist and the reassigned ones are no
   for (const name of BENCH_REASSIGNED) {
     assert.doesNotThrow(() => run(`${name} = ${name}`), `${name} must be reassignable (not const)`);
   }
+});
+
+test('pageScriptSrcs lists the <script src> files in page order and skips inline scripts', () => {
+  const html = '<head><script src="assets/js/a.js"></script></head><body><script>x()</script><script src="assets/js/b.js"></script></body>';
+  assert.deepEqual(pageScriptSrcs(html), ['assets/js/a.js', 'assets/js/b.js']);
+  assert.equal(pageScriptSrcs()[0], 'assets/js/prefs.js');
+});
+
+test('a sticky document hands out one stub per id, keeps what the legacy script writes, and has a writable hidden flag', () => {
+  const doc = stickyDocument();
+  assert.equal(doc.getElementById('stats'), doc.getElementById('stats'));
+  assert.equal(doc.getElementById('search').value, '');
+  assert.equal(doc.hidden, true);
+  doc.hidden = false;
+  assert.equal(doc.hidden, false);
+  const { run } = loadLegacy([], { document: doc });
+  run('updateStats()');
+  assert.equal(doc.getElementById('stats').textContent, '0 / 0 lines');
 });
 
 test('firstIndexWhere finds the first index where a monotone predicate holds', () => {
