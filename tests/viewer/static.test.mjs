@@ -167,3 +167,45 @@ test('legacy.css keeps its old specificity: .lg-scope only ever appears inside :
 test('no inline <style> is left in the page', () => {
   assert.equal(elements(root).filter(el => el.tag === 'style').length, 0);
 });
+
+test('foundation.css is the design file, verbatim, inside @layer foundation, after the layer order', () => {
+  const css = read(path.join(ASSETS, 'css', 'foundation.css'));
+  const m = /^\/\*[\s\S]*?\*\/\n@layer foundation, legacy, app;\n@layer foundation \{\n([\s\S]*)\n\}\n$/.exec(css);
+  assert.ok(m, 'expected: header comment, "@layer foundation, legacy, app;", then "@layer foundation {" … "}"');
+  const design = read(path.join(ROOT, 'docs', 'design', 'ui-redesign-foundation.css'));
+  assert.equal(m[1], design.replace(/\n$/, ''), 'regenerate foundation.css from docs/design/ui-redesign-foundation.css');
+});
+
+test('<html> is the foundation root; stylesheets load foundation, legacy, app in that order', () => {
+  const htmlEl = root.children.find(el => el.tag === 'html');
+  assert.ok((htmlEl.attrs.class || '').split(/\s+/).includes('app'), '<html class="app">');
+  const sheets = elements(root).filter(el => el.tag === 'link' && el.attrs.rel === 'stylesheet').map(el => el.attrs.href);
+  const order = ['assets/css/foundation.css', 'assets/css/legacy.css', 'assets/css/base.css'];
+  assert.deepEqual(sheets.filter(h => order.includes(h)), order);
+  assert.match(read(path.join(ASSETS, 'css', 'base.css')), /^@layer app \{$/m);
+});
+
+test('the first @layer statement in document order is the foundation order statement', () => {
+  // Stylesheets are scanned in link order; the first block-less `@layer a, b, c;` found fixes the
+  // cascade order, so it must come from foundation.css whichever sheet finishes loading first.
+  const hrefs = elements(root).filter(el => el.tag === 'link' && el.attrs.rel === 'stylesheet').map(el => el.attrs.href);
+  let first = null;
+  for (const href of hrefs) {
+    const p = path.join(ASSETS, ...href.replace(/^assets\//, '').split('/'));
+    let text;
+    try { text = read(p); } catch (_) { continue; }
+    const m = /@layer\s+[\w-]+(?:\s*,\s*[\w-]+)*\s*;/.exec(text.replace(/\/\*[\s\S]*?\*\//g, ''));
+    if (m) { first = { href, statement: m[0] }; break; }
+  }
+  assert.ok(first, 'no @layer order statement found in any linked stylesheet');
+  assert.equal(first.href, 'assets/css/foundation.css');
+  assert.equal(first.statement, '@layer foundation, legacy, app;');
+});
+
+test('every var(--x) used in CSS or inline styles is declared in CSS or set from JS', () => {
+  const declared = new Set(cssFiles.flatMap(f => [...C.cssPropsDeclared(f.text)]));
+  for (const m of jsText.matchAll(/setProperty\(\s*'(--[\w-]+)'/g)) declared.add(m[1]);
+  const styleAttrs = elements(root).map(el => el.attrs.style || '').join('\n');
+  const used = new Set([...cssFiles.flatMap(f => [...C.cssVarsUsed(f.text)]), ...C.cssVarsUsed(styleAttrs)]);
+  assert.deepEqual([...used].filter(v => !declared.has(v)).sort(), []);
+});

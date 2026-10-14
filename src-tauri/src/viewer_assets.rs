@@ -25,7 +25,12 @@ macro_rules! embed {
 }
 
 /// Paths are relative to `viewer/assets/`, with `/` separators, sorted.
-pub static FILES: &[(&str, &[u8])] = embed!["css/base.css", "css/legacy.css", "js/dev-bench.js"];
+pub static FILES: &[(&str, &[u8])] = embed![
+    "css/base.css",
+    "css/foundation.css",
+    "css/legacy.css",
+    "js/dev-bench.js",
+];
 
 /// Files under `viewer/assets/` that are kept in the repo but never served.
 #[cfg(test)]
