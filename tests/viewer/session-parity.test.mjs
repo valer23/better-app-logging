@@ -428,3 +428,53 @@ test('File tab: #stats and Export cover only the file; Live keeps its own counts
   v.go('toLive');
   assert.equal(display(v, 'exportWrap'), '', 'live still has lines to export');
 });
+
+// Change 4: each tab keeps its own selection and Follow. The delegated row click on #logTable reads the
+// shown session (_load.mjs records the listeners the page registers), so a click on File cannot touch Live.
+function clickRow(v, message) {
+  const rowClass = new Set();
+  const tr = {
+    _message: message,
+    parentElement: { querySelector: () => null },
+    classList: { add: c => rowClass.add(c), remove: c => rowClass.delete(c) },
+  };
+  for (const fn of v.doc.listeners.get('logTable:click')) fn({ target: { closest: () => tr }, detail: 1 });
+  return rowClass;
+}
+
+test('a row click on File selects in the file session and leaves live Follow and selection alone', () => {
+  const v = boot();
+  v.send(3); v.api.flushBatch();
+  assert.equal(v.run('liveSession.follow'), true);
+  v.go('toFile');
+  v.api.handleFile({ text: fileText(4) });
+  const msg = v.run('fileSession.all[1]');
+  assert.ok(clickRow(v, msg).has('selected'));
+  assert.equal(v.run('fileSession.sel === fileSession.all[1]'), true);
+  assert.equal(v.run('liveSession.sel'), null);
+  assert.equal(v.run('liveSession.follow'), true, 'the click stopped no live auto-scroll');
+  assert.equal(clickRow(v, msg).has('selected'), false, 'a second click deselects');
+  assert.equal(v.run('fileSession.sel'), null);
+});
+
+test('a row click on Live selects in the live session and turns its Follow off; File is untouched', () => {
+  const v = boot();
+  v.send(3); v.api.flushBatch();
+  v.go('toFile');
+  v.api.handleFile({ text: fileText(4) });
+  v.go('toLive');
+  clickRow(v, v.run('liveSession.all[2]'));
+  assert.equal(v.run('liveSession.sel === liveSession.all[2]'), true);
+  assert.equal(v.run('liveSession.follow'), false);
+  assert.equal(v.run('fileSession.sel'), null);
+});
+
+test('the frozen-row guard reads the shown session: a trimmed live row is ignored on Live', () => {
+  const v = boot();
+  v.send(3); v.api.flushBatch();
+  const msg = v.run('liveSession.all[0]');
+  v.run('liveSession.seqFloor = 100');       // every retained row is below the floor: frozen rows of trimmed lines
+  clickRow(v, msg);
+  assert.equal(v.run('liveSession.sel'), null);
+  assert.equal(v.run('liveSession.follow'), true);
+});

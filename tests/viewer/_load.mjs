@@ -132,10 +132,19 @@ export function stickyDocument({ hidden = true, values = { search: '', tagFilter
   const els = new Map();
   const doc = deepStub('document');
   doc.hidden = hidden;
+  // addEventListener on a sticky element records its listeners here as `${id}:${type}` -> [fn], so a
+  // test can call a handler the page registered (a delegated click on #logTable, say).
+  const listeners = new Map();
+  doc.listeners = listeners;
   doc.getElementById = id => {
     if (!els.has(id)) {
       const el = deepStub(`#${id}`);
       if (Object.prototype.hasOwnProperty.call(values, id)) el.value = values[id];
+      el.addEventListener = (type, fn) => {
+        const k = `${id}:${type}`;
+        if (!listeners.has(k)) listeners.set(k, []);
+        listeners.get(k).push(fn);
+      };
       els.set(id, el);
     }
     return els.get(id);
