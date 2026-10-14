@@ -10,7 +10,7 @@ export const DESIGN = path.join(ROOT, 'docs', 'design', 'ui-redesign-foundation.
 export const OUT = path.join(ROOT, 'viewer', 'assets', 'css', 'foundation.css');
 export const REGEN_CMD = 'node tests/viewer/gen-foundation.mjs';
 
-const HEADER = `/* GENERATED from docs/design/ui-redesign-foundation.css (v1.1): do not edit here. Change the design
+const HEADER = `/* GENERATED from docs/design/ui-redesign-foundation.css (v1.2): do not edit here. Change the design
    file (re-measure contrast), then regenerate this file with: ${REGEN_CMD} */
 @layer foundation, legacy, app;
 @layer foundation {

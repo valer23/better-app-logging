@@ -125,6 +125,22 @@ test('the checks reject deliberately broken input', () => {
   assert.deepEqual(C.lgScopeSpecificityErrors('html, :where(.lg-scope, .lg-scope *) { margin: 0 }'), []);
   assert.deepEqual(C.lgScopeSpecificityErrors(':where(.lg-scope) input[type="text"]:focus { margin: 0 }'), []);
   assert.deepEqual(C.lgScopeSpecificityErrors('/* .lg-scope */ .lg-scoped { margin: 0 }'), []);
+  for (const bad of ['.app * { }', '.app *::before { }', '.app ::selection { }', '::-webkit-scrollbar { }',
+    '.app :where(button, input) { }', '* { }', '.a, .b :hover { }', '@media (x) { .a ::after { } }']) {
+    assert.notDeepEqual(C.universalSelectorErrors(bad), [], bad);
+  }
+  for (const ok of ['.app::selection { }', 'button, input { }', ':where(.app) button { }', '.scroll::-webkit-scrollbar-thumb { }',
+    ':where(.lg-scope) button { }', ':where(.lg-scope) { }', '.switch::after { }', 'td:not(table td) { }', '[data-glass="on"] tbody td { }',
+    ':root { }', '@keyframes k { from { } to { } }', '@media (x) { .a .b { } }', '@supports (hanging-punctuation: first) { .app ::selection { } }']) {
+    assert.deepEqual(C.universalSelectorErrors(ok), [], ok);
+  }
+  assert.deepEqual(C.universalSelectorErrors('.app * { }', 'x.css', ['.app *']), []);
+  assert.match(C.universalSelectorErrors('a { }\n\n.app ::after { }', 'x.css')[0], /^x\.css:3: \.app ::after$/);
+  assert.notDeepEqual(C.motionTokenErrors('.x { transition: color .2s }'), []);
+  assert.notDeepEqual(C.motionTokenErrors('.x { animation: spin 900ms linear infinite }'), []);
+  assert.notDeepEqual(C.motionTokenErrors('.x { transition-duration: 1s }'), []);
+  assert.deepEqual(C.motionTokenErrors('.x { transition: background var(--t-fast) var(--ease), color var(--t-fast) }'), []);
+  assert.deepEqual(C.motionTokenErrors('.x { animation: row-in var(--t-arrival) var(--ease); transition: none }'), []);
   assert.notDeepEqual(C.cssBraceErrors('a { b: c; '), []);
   assert.notDeepEqual(C.cssBraceErrors('a { } }'), []);
   assert.deepEqual([...C.cssClassSelectors('.a .b:hover, x.c { transition: .5s } @media (x) { .d { } }')].sort(), ['a', 'b', 'c', 'd']);
@@ -197,8 +213,50 @@ test('legacy regions opt out of the foundation root\'s font smoothing and contro
   const legacy = read(path.join(ASSETS, 'css', 'legacy.css')).replace(/\/\*[\s\S]*?\*\//g, '');
   assert.match(legacy, /:where\(\.lg-scope\)\s*\{[^}]*-webkit-font-smoothing:\s*auto\b/,
     'foundation sets antialiased on .app (<html>); legacy regions keep the platform default');
-  assert.match(legacy, /:where\(\.lg-scope\)\s+:where\(button,\s*input,\s*select,\s*textarea\)\s*\{[^}]*font:\s*revert\b/,
+  assert.match(legacy, /:where\(\.lg-scope\)\s+button,\s*:where\(\.lg-scope\)\s+input,\s*:where\(\.lg-scope\)\s+select,\s*:where\(\.lg-scope\)\s+textarea\s*\{[^}]*font:\s*revert\b/,
     'foundation sets font: inherit on controls; legacy controls keep the browser default control font');
+});
+
+// Universal-bucket selectors left on purpose, by exact text (see universalSelectorErrors).
+const UNIVERSAL_OK = [
+  '.app *',                         // box-sizing + scrollbar-width: one attempt per element, nothing else
+  '.app :focus', '.app :focus-visible', // fail on the rightmost compound; Chromium files them by focus
+  '.log-row > *',                   // one parent step, no walk to the root
+  ':where(.lg-scope, .lg-scope *)', // main's * reset, scoped to the legacy regions; leaves with legacy.css (P13)
+];
+
+test('no stylesheet puts a selector in the universal bucket or hangs a pseudo-element off one', () => {
+  assert.deepEqual(cssFiles.flatMap(f => C.universalSelectorErrors(f.text, `viewer/assets/${f.path}`, UNIVERSAL_OK)), []);
+});
+
+test('transitions and animations take their duration from a --t-* token (Reduce motion zeroes them)', () => {
+  // legacy.css keeps its literal times until the region PRs replace it; main never reduced them either.
+  assert.deepEqual(cssFiles.filter(f => !f.path.endsWith('legacy.css'))
+    .flatMap(f => C.motionTokenErrors(f.text, `viewer/assets/${f.path}`)), []);
+});
+
+test('both Reduce motion rules zero every --t-* token', () => {
+  const design = C.stripCss(read(path.join(ROOT, 'docs', 'design', 'ui-redesign-foundation.css')));
+  const tokens = [...new Set([...design.matchAll(/(--t-[\w-]+)\s*:/g)].map(m => m[1]))];
+  assert.ok(tokens.length >= 5, `only ${tokens.length} --t-* tokens found`);
+  // stripCss blanks strings, so [data-motion="off"] reads [data-motion=""] here.
+  for (const sel of ['.app:not([data-motion=""])', '.app[data-motion=""]']) {
+    const rule = design.split(sel + ' {')[1];
+    assert.ok(rule, `missing rule: ${sel}`);
+    const body = rule.slice(0, rule.indexOf('}'));
+    for (const t of tokens) assert.match(body, new RegExp(`${t}\\s*:\\s*0s\\b`), `${sel} must set ${t}: 0s`);
+  }
+});
+
+test('foundation pseudo-elements that set padding or a border declare their own box-sizing', () => {
+  // .app * gives elements border-box; pseudo-elements keep content-box since v1.2.
+  const css = C.stripCss(read(path.join(ASSETS, 'css', 'foundation.css')));
+  const bad = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .filter(([, sel, body]) => /::(?:before|after)\b/.test(sel)
+      && /(?:^|;)\s*(?:padding|border(?:-(?:top|right|bottom|left))?(?:-width)?)\s*:\s*(?!0(?:px)?\s*(?:;|$)|none\b)/.test(body)
+      && !/box-sizing\s*:/.test(body))
+    .map(([, sel]) => sel.trim());
+  assert.deepEqual(bad, []);
 });
 
 test('<html> is the foundation root; stylesheets load foundation, legacy, app in that order', () => {

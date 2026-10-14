@@ -1,8 +1,8 @@
-/* GENERATED from docs/design/ui-redesign-foundation.css (v1.1): do not edit here. Change the design
+/* GENERATED from docs/design/ui-redesign-foundation.css (v1.2): do not edit here. Change the design
    file (re-measure contrast), then regenerate this file with: node tests/viewer/gen-foundation.mjs */
 @layer foundation, legacy, app;
 @layer foundation {
-/* ===== AppLogsViewer FOUNDATION v1.1 — design tokens and component reference =====
+/* ===== AppLogsViewer FOUNDATION v1.2 — design tokens and component reference =====
    Companion to ui-redesign.md (approved 2026-10-14).
    Scope: the reference implementation the mockup was built on. It defines every colour, size and
    component state the design doc names; screen layout (sidebar, toolbar, grid columns, sheets) is
@@ -17,7 +17,17 @@
    Contrast: every text and boundary pair was measured (design doc, "Contrast"). Change a token, re-measure.
    v1.1 over the mockup paste: :where() reset, pressed ring, badge/kbd size tokens, density, increase
    contrast, motion "off", 7 px inset on marker/gap/event rows, .ctx-dim/.ctx-target, platform column
-   track that follows --log-fs, hover on W/E/F rows, forced-colors rules. */
+   track that follows --log-fs, hover on W/E/F rows, forced-colors rules.
+   v1.2 (style-recalc cost, same rendering): a selector whose rightmost compound names no type, class,
+   id or attribute is tried on every element and, with .app on <html>, walks every ancestor; a
+   pseudo-element on one (.app ::selection, *::before) makes Chromium resolve that pseudo-element for
+   every element as well. So: resets are filed under their tag (:where(.app) button); inherited
+   behaviour sits on .app itself (scrollbar-color; ::selection, which Chromium passes down); the
+   per-element ::selection and ::-webkit-scrollbar rules WebKit still needs sit in
+   @supports (hanging-punctuation: first), a WebKit-only feature; Reduce motion zeroes the --t-*
+   duration tokens, so every transition and animation takes its duration from one. The only
+   universal selectors left are .app * (box-sizing, scrollbar width), the :focus pair and
+   .log-row > *. tests/viewer/static.test.mjs enforces both rules. */
 /* ---------- Theme: dark (default) ---------- */
 .app, .app[data-theme="dark"] {
   color-scheme: dark;
@@ -120,6 +130,7 @@
   --log-fs: 13px; --titlebar-h: 52px; --row-k: 1.6;
   --log-cols: calc(max(18px, var(--log-fs) * 1.3) + 10px) 13ch 3ch 18ch 20ch 11ch minmax(0, 1fr);
   --ease: cubic-bezier(.2, .8, .2, 1); --t-fast: 120ms; --t-med: 160ms;
+  --t-arrival: 600ms; --t-pulse: 1.6s; --t-spin: 900ms;
   font-family: var(--font-ui); font-size: var(--ui-fs); line-height: 1.45; color: var(--text);
   background: var(--app-bg); -webkit-font-smoothing: antialiased; box-sizing: border-box; overflow: hidden;
 }
@@ -128,15 +139,18 @@
   --font-log: "Atkinson Hyperlegible Mono", ui-monospace, monospace;
 }
 .app[data-density="compact"] { --row-k: 1.4; }
-.app *, .app *::before, .app *::after { box-sizing: border-box; }
-.app :where(button, input, select, textarea) { font: inherit; color: inherit; }
-.app :where(button) { cursor: pointer; background: none; border: 0; padding: 0; }
-.app :where(a) { color: var(--accent); text-underline-offset: 2px; }
+/* Pseudo-elements keep content-box: none of the foundation's sets padding or border. */
+.app * { box-sizing: border-box; scrollbar-width: thin; }
+:where(.app) button, :where(.app) input, :where(.app) select, :where(.app) textarea { font: inherit; color: inherit; }
+:where(.app) button { cursor: pointer; background: none; border: 0; padding: 0; }
+:where(.app) a { color: var(--accent); text-underline-offset: 2px; }
 .app svg { flex: none; }
 .app :focus { outline: none; }
 .app :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
-.app ::selection { background: var(--row-sel); color: var(--text); }
-.app ::placeholder { color: var(--text-2); opacity: 1; }
+.app::selection { background: var(--row-sel); color: var(--text); }
+/* WebKit does not pass ::selection down to descendants, so it keeps the per-element rule. */
+@supports (hanging-punctuation: first) { .app ::selection { background: var(--row-sel); color: var(--text); } }
+:where(.app) input::placeholder, :where(.app) textarea::placeholder { color: var(--text-2); opacity: 1; }
 .mono { font-family: var(--font-log); }
 .num { font-variant-numeric: tabular-nums; }
 .t2 { color: var(--text-2); } .t3 { color: var(--text-3); }
@@ -258,9 +272,9 @@
 .status-ok { --st: var(--ok); } .status-warn { --st: var(--warn); } .status-err { --st: var(--err); }
 .status-info { --st: var(--info); } .status-idle { --st: var(--text-2); } .status-accent { --st: var(--accent); }
 .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
-.dot.pulse { animation: dot-pulse 1.6s var(--ease) infinite; }
+.dot.pulse { animation: dot-pulse var(--t-pulse) var(--ease) infinite; }
 @keyframes dot-pulse { 0%, 100% { box-shadow: 0 0 0 0 currentColor; } 50% { box-shadow: 0 0 0 3px transparent; } }
-.spin { animation: spin 900ms linear infinite; }
+.spin { animation: spin var(--t-spin) linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 /* ---------- Switch & slider ---------- */
 .switch {
@@ -363,7 +377,7 @@
 .log-row.ctx-dim .meta, .log-row.ctx-dim .lvl, .log-row.ctx-dim .msg { color: var(--text-2); }
 .log-row.ctx-target { outline: 1px dashed var(--accent); outline-offset: -1px; }
 .log-row.ctx-target:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
-.log-row.is-new { animation: row-in 600ms var(--ease); }
+.log-row.is-new { animation: row-in var(--t-arrival) var(--ease); }
 @keyframes row-in { from { background: var(--accent-subtle); } }
 .log-row mark, .match { background: var(--match-bg); color: var(--match-fg); border-radius: 2px; }
 .log-row.marker {
@@ -403,15 +417,21 @@
 .check-item .state { width: 20px; height: 20px; flex: none; color: var(--text-2); }
 .check-item.done .state { color: var(--ok); } .check-item.wait .state { color: var(--accent); } .check-item.fail .state { color: var(--err); }
 /* ---------- Scrollbars ---------- */
-.app * { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) transparent; }
-.app ::-webkit-scrollbar { width: 10px; height: 10px; }
-.app ::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
-.app ::-webkit-scrollbar-track { background: transparent; }
-/* ---------- Reduced motion (OS setting unless Settings says Off; On sets data-motion="reduce") ---------- */
-@media (prefers-reduced-motion: reduce) {
-  .app:not([data-motion="off"]) *, .app:not([data-motion="off"]) *::before, .app:not([data-motion="off"]) *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+/* scrollbar-color inherits from .app; scrollbar-width: thin is in the .app * rule under Base.
+   Chromium ignores ::-webkit-scrollbar once scrollbar-color is set, so those rules are WebKit-only. */
+.app { scrollbar-color: var(--scroll-thumb) transparent; }
+@supports (hanging-punctuation: first) {
+  .app ::-webkit-scrollbar { width: 10px; height: 10px; }
+  .app ::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+  .app ::-webkit-scrollbar-track { background: transparent; }
 }
-.app[data-motion="reduce"] *, .app[data-motion="reduce"] *::before, .app[data-motion="reduce"] *::after { animation: none !important; transition: none !important; }
+/* ---------- Reduced motion (OS setting unless Settings says Off; On sets data-motion="reduce") ----------
+   Every transition and animation takes its duration from a --t-* token, so zeroing the tokens on the
+   root removes them all (an infinite animation with a 0s duration has no active duration). */
+@media (prefers-reduced-motion: reduce) {
+  .app:not([data-motion="off"]) { --t-fast: 0s; --t-med: 0s; --t-arrival: 0s; --t-pulse: 0s; --t-spin: 0s; }
+}
+.app[data-motion="reduce"] { --t-fast: 0s; --t-med: 0s; --t-arrival: 0s; --t-pulse: 0s; --t-spin: 0s; }
 /* ---------- Windows High Contrast: selection and state must not rely on background colour or box-shadow ---------- */
 @media (forced-colors: active) {
   .log-row[aria-selected="true"], .nav-item[aria-current="page"], .nav-item[aria-current="true"], .menu-item[aria-selected="true"],

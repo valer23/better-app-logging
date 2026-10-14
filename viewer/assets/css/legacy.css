@@ -9,10 +9,11 @@
 @layer legacy {
   /* The foundation types <html class="app"> at 13px / 1.45 with antialiased smoothing and
      `font: inherit` on controls; legacy regions keep the browser defaults. `revert` skips every
-     author layer back to the user-agent control font, and at zero specificity each explicit
-     legacy font rule below still wins. */
+     author layer back to the user-agent control font. Each control tag is its own selector so the
+     rule is filed under that tag rather than tried on every element; at (0,0,1), first in the layer,
+     every explicit legacy font rule below still wins. */
   :where(.lg-scope) { font-size: 16px; line-height: normal; -webkit-font-smoothing: auto; }
-  :where(.lg-scope) :where(button, input, select, textarea) { font: revert; }
+  :where(.lg-scope) button, :where(.lg-scope) input, :where(.lg-scope) select, :where(.lg-scope) textarea { font: revert; }
 
   :root {
     --lg-bg:       #0d1117;

@@ -246,3 +246,96 @@ export function fontManifestErrors(files, sums) {
   for (const f of listed) if (!onDisk.has(f)) errors.push(`${f} is listed in SHA256SUMS but is not a font or licence file on disk`);
   return errors;
 }
+
+// Universal-bucket selectors. A selector whose rightmost compound names no type, class, id or
+// attribute is tried on every element, and with .app on <html> its descendant combinator then walks
+// every ancestor to the root. A pseudo-element on such a compound (.app ::selection, *::before) costs
+// more again: Chromium also resolves that pseudo-element's style for every element, which doubles
+// the matching work of every other rule. Returns "file:line: selector" for each one outside
+// @keyframes / @font-face and outside @supports (hanging-punctuation: first), the WebKit-only block
+// (foundation header), unless its exact text is in `allow`.
+const WEBKIT_ONLY = /^@supports \(\s*hanging-punctuation\s*:\s*first\s*\)$/;
+// Splits on `sep` characters that sit outside () and [].
+function splitTop(text, sep) {
+  const out = [];
+  let depth = 0;
+  let from = 0;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '(' || ch === '[') depth++;
+    else if (ch === ')' || ch === ']') depth--;
+    else if (depth === 0 && sep.test(ch)) { out.push(text.slice(from, i)); from = i + 1; }
+  }
+  out.push(text.slice(from));
+  return out.map(s => s.trim()).filter(Boolean);
+}
+// True when the compound names a type, .class, #id, [attr] or :root outside any (), or is a
+// :where()/:is() whose single argument is itself one such compound.
+function compoundHasKey(compound) {
+  if (/^[a-zA-Z]/.test(compound)) return true;
+  let depth = 0;
+  for (let i = 0; i < compound.length; i++) {
+    const ch = compound[i];
+    if (ch === '(') {
+      if (depth === 0 && /:(?:where|is)$/.test(compound.slice(0, i))) {
+        let d = 0;
+        let close = i;
+        for (; close < compound.length; close++) {
+          if (compound[close] === '(') d++;
+          else if (compound[close] === ')' && --d === 0) break;
+        }
+        const arg = compound.slice(i + 1, close);
+        if (splitTop(arg, /,/).length === 1 && splitTop(arg, /[\s>+~]/).length === 1 && compoundHasKey(arg.trim())) return true;
+        i = close;
+        continue;
+      }
+      depth++;
+    } else if (ch === ')') depth--;
+    else if (depth === 0 && (ch === '.' || ch === '#' || ch === '[')) return true;
+    else if (depth === 0 && compound.startsWith(':root', i) && !/[\w-]/.test(compound[i + 5] || '')) return true;
+  }
+  return false;
+}
+export function universalSelectorErrors(css, filename = 'css', allow = []) {
+  // Comments are blanked but keep their newlines, so reported lines match the file.
+  const s = stripCss(css.replace(/\/\*[\s\S]*?\*\//g, c => c.replace(/[^\n]/g, ' ')));
+  const exempt = []; // one flag per open block: true when nothing inside it is checked
+  const out = [];
+  let line = 1;
+  let start = 0;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === '\n') line++;
+    else if (ch === '{') {
+      const prelude = s.slice(start, i).trim().replace(/\s+/g, ' ');
+      if (prelude.startsWith('@')) {
+        exempt.push(exempt.includes(true) || WEBKIT_ONLY.test(prelude) || /^@(?:-webkit-)?(?:keyframes|font-face)\b/.test(prelude));
+      } else {
+        if (!exempt.includes(true)) {
+          for (const sel of splitTop(prelude, /,/)) {
+            const parts = splitTop(sel, /[\s>+~]/);
+            if (!compoundHasKey(parts[parts.length - 1] || '') && !allow.includes(sel)) out.push(`${filename}:${line}: ${sel}`);
+          }
+        }
+        exempt.push(true); // declarations
+      }
+      start = i + 1;
+    } else if (ch === '}') { exempt.pop(); start = i + 1; }
+    else if (ch === ';') start = i + 1;
+  }
+  return out;
+}
+
+// Reduce motion zeroes the foundation's --t-* duration tokens rather than matching every element,
+// so a transition or animation with a literal time would ignore it. Returns "file:line: declaration"
+// for each transition / animation / *-duration value that holds a literal time outside var().
+export function motionTokenErrors(css, filename = 'css') {
+  const s = stripCss(css.replace(/\/\*[\s\S]*?\*\//g, c => c.replace(/[^\n]/g, ' ')));
+  const out = [];
+  for (const m of s.matchAll(/(?<![\w-])(?:transition|animation)(?:-duration)?\s*:([^;{}]*)/g)) {
+    if (/(?<![\w.-])\d*\.?\d+m?s\b/.test(m[1].replace(/var\([^)]*\)/g, ''))) {
+      out.push(`${filename}:${s.slice(0, m.index).split('\n').length}: ${m[0].trim()}`);
+    }
+  }
+  return out;
+}
