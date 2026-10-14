@@ -91,7 +91,7 @@
       maxPending = Math.max(maxPending, pendingBatch.length);
       maxRows = Math.max(maxRows, tbody.rows.length);
     }
-    if (scenario === 'read' && autoScroll && elapsed > 2000) {
+    if (scenario === 'read' && cur.follow && elapsed > 2000) {
       toggleAutoScroll();
       const t = document.getElementById('logTable');
       t.scrollTop = Math.floor(t.scrollHeight / 2);
@@ -109,7 +109,7 @@
       maxRafGapMs: +maxGap.toFixed(1),
       maxPending, finalPending: pendingBatch.length,
       maxDomRows: maxRows, followDomCap: FOLLOW_DOM_CAP, liveDomCap: LIVE_DOM_CAP,
-      retained: allMessages.length, discarded: discardedCount,
+      retained: liveSession.all.length, discarded: liveSession.discarded,
       userAgent: navigator.userAgent,
     };
     start = 0;   // stops the rAF loop

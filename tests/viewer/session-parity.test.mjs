@@ -9,11 +9,11 @@ import { loadLegacy, stickyDocument } from './_load.mjs';
 
 // Where each piece of state lives, as an expression in the legacy script's global scope.
 const VIEW = {
-  liveAll: 'allMessages',
-  liveRenderedEnd: 'renderedEnd',
-  liveDiscarded: 'discardedCount',
-  liveDropped: 'droppedCount',
-  fileAll: 'allMessages',               // the buffer the File tab shows
+  liveAll: 'liveSession.all',
+  liveRenderedEnd: 'liveSession.renderedEnd',
+  liveDiscarded: 'liveSession.discarded',
+  liveDropped: 'liveSession.dropped',
+  fileAll: 'liveSession.all',           // the buffer the File tab shows (still the one buffer)
   toFile: "switchMode('file')",
   toLive: "switchMode('live')",
 };

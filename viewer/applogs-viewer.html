@@ -425,14 +425,17 @@ const enabledLevels   = new Set(LEVELS);
 const enabledPlatforms = new Set(['android','ios']);
 
 // ── State ──
+// The table shows one session (`cur`). Its buffer, reading window, selection, Follow flag and loss
+// counters live on the session object (assets/js/session.js). Only the live session ingests: drain
+// code hoists `liveSession`, view code hoists `cur`. Until the file session exists both are one object.
+const liveSession = ALV.session.create('live', 'Live session');
+let cur = liveSession;
 let currentMode = 'live';
-let allMessages = [], filtered = [];
 let wsAndroid = null, wsIos = null;
 let androidLive = false, iosLive = false;
-let livePaused = false, autoScroll = true;
-let pendingBatch = [], batchTimer = null;
+let livePaused = false;
+let pendingBatch = [], batchTimer = null;   // the live ingest queue: one drain, into the live session
 const PAGE = 500;
-let renderedEnd = 0;
 
 // ── "N lines below" pill ──
 // Since #54 the table is frozen while auto-scroll is off, so newer lines don't appear on their own.
@@ -455,24 +458,25 @@ const readingWindowHint = document.getElementById('readingWindowHint');
 let hintFrom = 0, hintTo = 0, hintOf = 0;   // slice on screen (1-based, inclusive); hintOf 0 = hidden
 function updateReadingWindowHint() {
   if (document.hidden) return;   // visibilitychange → updateNewerPill refreshes it
-  const rows = document.getElementById('tbody').rows, n = rows.length, start = renderedEnd - n;
-  // n > 0 first: the top-level switchMode('live') runs this before `let domStale` (flush state, below) is initialized.
+  const s = cur, filtered = s.filtered;
+  const rows = document.getElementById('tbody').rows, n = rows.length, start = s.renderedEnd - n;
   // The identity check mirrors prependOlderRows: never show positions for a DOM that doesn't match `filtered`.
-  const shown = n > 0 && n < filtered.length && (currentMode === 'file' || !autoScroll)
-    && !domStale && start >= 0 && rows[0]._message === filtered[start];
+  const shown = n > 0 && n < filtered.length && (currentMode === 'file' || !s.follow)
+    && !s.domStale && start >= 0 && rows[0]._message === filtered[start];
   const of = shown ? filtered.length : 0;
-  if (of === hintOf && (!of || (start + 1 === hintFrom && renderedEnd === hintTo))) return;
+  if (of === hintOf && (!of || (start + 1 === hintFrom && s.renderedEnd === hintTo))) return;
   if (!of !== !hintOf) readingWindowHint.classList.toggle('visible', of > 0);
-  hintFrom = start + 1; hintTo = renderedEnd; hintOf = of;
+  hintFrom = start + 1; hintTo = s.renderedEnd; hintOf = of;
   if (of) readingWindowHint.textContent = `lines ${hintFrom.toLocaleString()}–${hintTo.toLocaleString()} of ${of.toLocaleString()}`;
 }
 function updateNewerPill() {
   if (document.hidden) return;
   updateReadingWindowHint();   // same triggers: see its comment
   // Armed = the same live-table test toggleAutoScroll uses to re-pin; a file-only table never shows it.
-  const armed = currentMode === 'live' && !autoScroll && filtered.length > 0 && filtered[filtered.length - 1].seq !== undefined;
+  const s = cur, filtered = s.filtered;
+  const armed = currentMode === 'live' && !s.follow && filtered.length > 0 && filtered[filtered.length - 1].seq !== undefined;
   if (armed !== newerPillArmed) { newerPillArmed = armed; document.getElementById('logTable').classList.toggle('newer-room', armed); }
-  const n = armed ? Math.max(0, filtered.length - renderedEnd) : 0;   // max(): never negative even if renderedEnd overshoots
+  const n = armed ? Math.max(0, filtered.length - s.renderedEnd) : 0;   // max(): never negative even if renderedEnd overshoots
   if (n === newerPillShown) return;
   newerPillShown = n;
   // Hiding a focused button would drop focus on <body>; park it on the Auto-scroll toggle (the pill already had it, so nothing is stolen).
@@ -497,11 +501,11 @@ function jumpToLatest(e) {
   newerPillJumpAt = performance.now();
   // Pointer activation (detail !== 0) drops the pill's focus first: Chromium focuses a clicked button, and
   // parking focus on Auto-scroll then would let a later Space unpin. Keyboard activation keeps it, so the
-  // hide in updateNewerPill moves focus to Auto-scroll instead of <body>. The `if (!autoScroll)` guard only
+  // hide in updateNewerPill moves focus to Auto-scroll instead of <body>. The `if (!cur.follow)` guard only
   // stops a repeat activation of the pill itself; the pill hides at once, so the second click of a double
   // click lands on the row underneath, which the tbody click handler ignores for a short window after a jump.
   if (hadFocus && e && e.detail !== 0) newerPill.blur();
-  if (!autoScroll) toggleAutoScroll();
+  if (!cur.follow) toggleAutoScroll();
 }
 // Focus is parked on Auto-scroll after a keyboard jump and Enter activates on keydown, so a held key's
 // auto-repeat would keep toggling it.
@@ -514,10 +518,8 @@ document.getElementById('autoScrollBtn').addEventListener('keydown', e => { if (
 // Loaded-file lines carry no seq and are never counted or trimmed.
 let MAX_RETAINED = 500000;
 const TRIM_FRACTION = 0.1;      // trim to 90% of the cap at once: ~1-2ms splice per ~50k lines (V8), not per flush
-let discardedCount = 0;         // live lines dropped since the last Clear / file load
 let nextSeq = 0;                // arrival order of live lines; never reset, so stale references still compare
-let backlogOverflowed = false;  // the paused backlog dropped frames: every retained live line is older than them
-let liveSeqFloor = 0;           // seq of the oldest retained live line; rows below it are trimmed
+// The loss counters (discarded, overflowed, seqFloor, dropped) are per session: see session.js.
 
 // ── Level toggles ──
 LEVELS.forEach(lvl => {
@@ -544,7 +546,7 @@ function switchMode(mode) {
   ['autoScrollBtn','pauseBtn','clearBtn'].forEach(id => document.getElementById(id).style.display = mode === 'live' ? '' : 'none');
   if (mode === 'file') {
     document.getElementById('liveBar').classList.remove('visible');
-    showOnly(allMessages.length ? 'logWrapper' : 'dropzone');
+    showOnly(cur.all.length ? 'logWrapper' : 'dropzone');
   } else {
     refreshLiveView();
     // Populate device dropdowns from native /devices/* endpoints.
@@ -743,22 +745,22 @@ document.getElementById('tbody').addEventListener('click', e => {
   // interval can exceed 500 ms, so a multi-click is swallowed for longer; plain row clicks are unaffected.
   const dt = performance.now() - newerPillJumpAt;
   if (dt < 500 || (e.detail >= 2 && dt < 2000)) return;
-  const tr = e.target.closest('tr');
-  if (!tr || !tr._message || tr._message.seq < liveSeqFloor) return;   // frozen row of a trimmed line (resume drain after a backlog overflow)
+  const s = cur, tr = e.target.closest('tr');
+  if (!tr || !tr._message || tr._message.seq < s.seqFloor) return;   // frozen row of a trimmed line (resume drain after a backlog overflow)
   const tbody = tr.parentElement;
-  if (selectedMessage === tr._message) {
-    selectedMessage = null;
+  if (s.sel === tr._message) {
+    s.sel = null;
     tr.classList.remove('selected');
     return;
   }
   // Clear any previously-selected row in the DOM.
   const prev = tbody.querySelector('tr.selected');
   if (prev) prev.classList.remove('selected');
-  selectedMessage = tr._message;
+  s.sel = tr._message;
   tr.classList.add('selected');
   // Stop auto-scroll so the view stays put around the selection.
-  if (autoScroll) {
-    autoScroll = false;
+  if (s.follow) {
+    s.follow = false;
     document.getElementById('autoScrollBtn').classList.toggle('active', false);
     updateNewerPill();
   }
@@ -787,7 +789,7 @@ function handleFile(file) {
         const json = JSON.parse(trimmed);
         if (json && json.source === 'device-log-viewer' && Array.isArray(json.messages)) {
           document.getElementById('loadingText').textContent = 'Parsing viewer JSON…';
-          allMessages = json.messages.map(m => ({
+          cur.all = json.messages.map(m => ({
             ts: m.timestamp || '', pid: m.pid || 0, tid: m.tid || 0,
             tag: m.tag || '', app: m.app || '',
             lvl: m.level || 'INFO', msg: m.message || '',
@@ -795,7 +797,7 @@ function handleFile(file) {
           }));
         } else if (Array.isArray(json.logcatMessages)) {
           document.getElementById('loadingText').textContent = 'Parsing Android JSON…';
-          allMessages = json.logcatMessages.map(m => ({
+          cur.all = json.logcatMessages.map(m => ({
             ts: formatTs(m.header.timestamp), pid: m.header.pid, tid: m.header.tid,
             tag: m.header.tag || '', app: m.header.applicationId || m.header.processName || '',
             lvl: m.header.logLevel || 'VERBOSE', msg: m.message || '', platform: 'android'
@@ -807,24 +809,24 @@ function handleFile(file) {
         const firstLine = trimmed.split('\n', 1)[0].trimEnd();
         if (firstLine === EXPORTED_CSV_HEADER) {
           document.getElementById('loadingText').textContent = 'Parsing viewer CSV…';
-          allMessages = parseExportedCsv(text);
+          cur.all = parseExportedCsv(text);
         } else if (EXPORTED_TXT_RE.test(firstLine)) {
           document.getElementById('loadingText').textContent = 'Parsing viewer text export…';
-          allMessages = parseExportedTxt(text);
+          cur.all = parseExportedTxt(text);
         } else {
           document.getElementById('loadingText').textContent = 'Parsing iOS syslog…';
-          allMessages = parseIosText(text);
+          cur.all = parseIosText(text);
         }
       }
 
-      if (allMessages.length === 0) {
+      if (cur.all.length === 0) {
         alert('No log lines found — file format not recognized.');
         showOnly('dropzone');
         return;
       }
 
-      document.getElementById('loadingText').textContent = `Rendering ${allMessages.length.toLocaleString()} lines…`;
-      discardBacklog();
+      document.getElementById('loadingText').textContent = `Rendering ${cur.all.length.toLocaleString()} lines…`;
+      discardBacklog(cur);
       setTimeout(() => { applyFilters(); showOnly('logWrapper'); updateExportVisibility(); }, 50);
     } catch(err) {
       alert('Failed to parse file: ' + err.message);
@@ -1026,11 +1028,10 @@ function toggleIos() { iosLive ? disconnectIos() : connectIos(); }
 // the earlier session's lines (and their gaps) are still in the table.
 // The count covers every lost broadcast frame, so a devices/error update in
 // the gap is included and its effect is lost (e.g. an iOS stall prompt never appears).
-const droppedCount = { android: 0, ios: 0 };
 function updateDroppedIndicator(platform) {
   const pre = platform === 'android' ? 'liveBarAndroid' : 'liveBarIos';
   const pill = document.getElementById(pre + 'Dropped');
-  const n = droppedCount[platform];
+  const n = liveSession.dropped[platform];
   pill.classList.toggle('visible', n > 0);
   document.getElementById(pre + 'DroppedText').textContent =
     `\u26A0 ${n.toLocaleString()} ${n === 1 ? 'line' : 'lines'} dropped`;
@@ -1038,8 +1039,8 @@ function updateDroppedIndicator(platform) {
     'this connection could not keep up with the stream, so the app\'s server-side buffer overflowed ' +
     'and the oldest unsent messages were dropped. The table and exports may have gaps where this happened (unless those lines were later discarded by the viewer\'s retention cap). Resets on Clear or when a file is loaded.';
 }
-function resetDroppedCounts() {
-  droppedCount.android = droppedCount.ios = 0;
+function resetDroppedCounts(s) {
+  s.dropped.android = s.dropped.ios = 0;
   updateDroppedIndicator('android'); updateDroppedIndicator('ios');
 }
 
@@ -1072,7 +1073,7 @@ function handleWsMsg(e, platform) {
       // Count only well-formed positive integers; the value reaches the DOM via textContent only.
       // Counted while paused too: the drop happened server-side, pausing does not cause it.
       const n = data.count;
-      if (typeof n === 'number' && Number.isSafeInteger(n) && n > 0) { droppedCount[platform] += n; updateDroppedIndicator(platform); }
+      if (typeof n === 'number' && Number.isSafeInteger(n) && n > 0) { liveSession.dropped[platform] += n; updateDroppedIndicator(platform); }
       return;
     }
     if (data.type === 'log') {
@@ -1080,7 +1081,7 @@ function handleWsMsg(e, platform) {
       // Always queue — pause only stops the drain, so resume flushes the
       // backlog instead of losing frames.
       pendingBatch.push(data);
-      if (livePaused) { if (pendingBatch.length > MAX_RETAINED) trimPausedBacklog(); return; }   // paused backlog is capped too
+      if (livePaused) { if (pendingBatch.length > MAX_RETAINED) trimPausedBacklog(liveSession); return; }   // paused backlog is capped too
       // Flush inline if the timer has fallen behind. Covers platforms where
       // timers are throttled but WS events still arrive (WebView2/Chromium
       // intensive throttling). On macOS < 14 the default Suspend policy can
@@ -1222,8 +1223,7 @@ const FLUSH_INTERVAL_MS = 150;   // batch window — bigger batches, fewer DOM u
 const MAX_FLUSH_GAP_MS  = 1000;  // handleWsMsg flushes inline if no flush ran this long
 const FLUSH_BUDGET_MS   = 50;    // max time per flush chunk before yielding to the event loop
 let lastFlushAt = 0;             // performance.now() of the last completed flush chunk
-let renderFrom  = -1;            // first new filtered index of the in-progress drain cycle (-1 = none)
-let domStale    = false;         // tbody lags `filtered`: rendering was skipped while hidden, or a reading window was trimmed whole
+// renderFrom (the in-progress drain cycle) and domStale (the tbody lags `filtered`) are per session.
 
 // Drains the whole backlog FIFO, in time-sliced chunks. The old cap (1500 msgs
 // per 150ms tick: nominally ~10k/s, ~5k/s measured once flush time is included)
@@ -1237,15 +1237,17 @@ let domStale    = false;         // tbody lags `filtered`: rendering was skipped
 function flushBatch() {
   if (batchTimer) { clearTimeout(batchTimer); batchTimer = null; }
   if (livePaused) return;   // hold backlog until resume
+  const s = liveSession;    // only the live session ingests; hoisted once per chunk
   if (!pendingBatch.length) {
-    if (domStale && !document.hidden) renderLiveTail(filtered.length);   // repair DOM skipped while hidden
+    if (s.domStale && !document.hidden) renderLiveTail(s, s.filtered.length);   // repair DOM skipped while hidden
     updateNewerPill();
     return;
   }
 
   const batch = pendingBatch; pendingBatch = [];    // O(1) swap, no splice
   const pass = makeFilter();                        // read filter inputs once per flush, not per row
-  if (renderFrom < 0) renderFrom = filtered.length;
+  const all = s.all, filtered = s.filtered;         // trims splice in place, so both stay valid for the chunk
+  if (s.renderFrom < 0) s.renderFrom = filtered.length;
   const t0 = performance.now();
   let i = 0;
   try {
@@ -1256,20 +1258,20 @@ function flushBatch() {
       const d = batch[i];
       const m = { ts: d.ts, pid: d.pid, tid: d.tid, tag: d.tag,
                   app: d.app||'', lvl: d.lvl, msg: d.msg, platform: d.platform, seq: nextSeq++ };
-      allMessages.push(m);
+      all.push(m);
       if (pass(m)) filtered.push(m);
     }
   } catch (err) {
     // Don't lose the rest of the backlog; drop only the frame that threw.
     pendingBatch = batch.slice(i + 1).concat(pendingBatch);
-    trimRetained();   // a throwing frame must not leave allMessages over the cap until the next flush
+    trimRetained(s);   // a throwing frame must not leave the buffer over the cap until the next flush
     // Re-arm so the interrupted drain still reaches the final renderLiveTail and resets renderFrom
     // to -1; otherwise the renderFrom<0 lazy-load gate stays closed. renderFrom is kept so the next
     // chunk renders from the original start.
     batchTimer = setTimeout(flushBatch, 0);
     throw err;
   }
-  trimRetained();   // bound memory per chunk, before renderFrom/renderLiveTail use filtered indexes
+  trimRetained(s);   // bound memory per chunk, before renderFrom/renderLiveTail use filtered indexes
 
   if (i < batch.length) {
     // Out of budget: requeue the remainder at the FRONT (FIFO), yield, and skip
@@ -1277,27 +1279,28 @@ function flushBatch() {
     pendingBatch = batch.slice(i).concat(pendingBatch);
     batchTimer = setTimeout(flushBatch, 0);
   } else {
-    renderLiveTail(renderFrom);
-    renderFrom = -1;
+    renderLiveTail(s, s.renderFrom);
+    s.renderFrom = -1;
   }
-  updateStats(); updateExportVisibility(); updateNewerPill();
+  if (s === cur) { updateStats(); updateExportVisibility(); }
+  updateNewerPill();
   lastFlushAt = performance.now();   // at the END so a long flush doesn't immediately re-trigger
 }
 
-// Render the rows added to `filtered` since index `firstNew`. While hidden the
+// Render the rows added to `s.filtered` since index `firstNew`. While hidden the
 // DOM work is skipped (domStale); the next visible render rebuilds the whole tail.
-// With auto-scroll off the table is a window the user is reading and is left alone here
+// With Follow off the table is a window the user is reading and is left alone here
 // (see extendReadingWindow).
-function renderLiveTail(firstNew) {
+function renderLiveTail(s, firstNew) {
   // A stale DOM still gets the full rebuild below.
-  if (!autoScroll && !domStale) { if (currentMode === 'live') extendReadingWindow(); return; }
-  const prevEnd = renderedEnd;
-  renderedEnd = filtered.length;
-  if (document.hidden) { domStale = true; return; }
+  if (!s.follow && !s.domStale) { if (currentMode === 'live') extendReadingWindow(); return; }
+  const filtered = s.filtered, prevEnd = s.renderedEnd;
+  s.renderedEnd = filtered.length;
+  if (document.hidden) { s.domStale = true; return; }
   const cap  = FOLLOW_DOM_CAP;   // the followed tail, or the newest rows when a stale reading window is rebuilt
   // prevEnd !== firstNew: the DOM doesn't end where the new rows start (after applyFilters, or a reading
   // window that stopped short), so appending would leave a gap; rebuild instead.
-  const full = domStale || prevEnd !== firstNew || filtered.length - firstNew >= cap;   // full = replace tbody, don't append
+  const full = s.domStale || prevEnd !== firstNew || filtered.length - firstNew >= cap;   // full = replace tbody, don't append
   if (full || filtered.length > firstNew) {
     const tbody = document.getElementById('tbody');
     // Only build rows that survive `cap` — anything older would be trimmed right away.
@@ -1310,7 +1313,7 @@ function renderLiveTail(firstNew) {
     if (full) {
       tbody.textContent = '';
       tbody.appendChild(frag);
-      domStale = false;
+      s.domStale = false;
     } else {
       tbody.appendChild(frag);
       // ── Efficient DOM trim: remove a range in one operation (not row-by-row) ──
@@ -1323,7 +1326,7 @@ function renderLiveTail(firstNew) {
       }
     }
   }
-  if (autoScroll) { const t = document.getElementById('logTable'); t.scrollTop = t.scrollHeight; }
+  if (s.follow) { const t = document.getElementById('logTable'); t.scrollTop = t.scrollHeight; }
 }
 
 // The slide-down half of the reading window (prependOlderRows is the slide-up half). The DOM
@@ -1335,13 +1338,13 @@ function renderLiveTail(firstNew) {
 // Runs from flushBatch and from the scroll handler, which also calls it in file mode and while
 // pinned (when no drain is running), not only with auto-scroll off.
 function extendReadingWindow() {
-  const t = document.getElementById('logTable'), tbody = document.getElementById('tbody');
-  if (domStale || document.hidden) return;   // stale: the next render rebuilds it
-  if (renderedEnd >= filtered.length) return;
+  const s = cur, t = document.getElementById('logTable'), tbody = document.getElementById('tbody');
+  if (s.domStale || document.hidden) return;   // stale: the next render rebuilds it
+  if (s.renderedEnd >= s.filtered.length) return;
   if (t.scrollTop + t.clientHeight < t.scrollHeight - 200) return;   // reading further up: stay put
-  const excess = tbody.rows.length + Math.min(PAGE, filtered.length - renderedEnd) - LIVE_DOM_CAP;
-  if (excess > 0) dropTopRows(t, tbody, excess, () => renderChunk(renderedEnd));
-  else renderChunk(renderedEnd);
+  const excess = tbody.rows.length + Math.min(PAGE, s.filtered.length - s.renderedEnd) - LIVE_DOM_CAP;
+  if (excess > 0) dropTopRows(t, tbody, excess, () => renderChunk(s.renderedEnd));
+  else renderChunk(s.renderedEnd);
 }
 // Runs mutate() (rows inserted/removed around `row`, which must survive it) and keeps `row` where
 // it is on screen: WebKit has no scroll anchoring. The first read is cheap (layout is clean in a
@@ -1368,7 +1371,7 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) return;
   if (!livePaused) {
     if (pendingBatch.length) flushBatch();
-    else if (domStale) renderLiveTail(filtered.length);
+    else if (cur.domStale) renderLiveTail(cur, cur.filtered.length);
   }
   updateNewerPill();   // also while paused: the count was skipped while hidden
 });
@@ -1413,18 +1416,19 @@ function resetConnectBtn(platform) {
 }
 
 function toggleAutoScroll() {
-  autoScroll = !autoScroll; document.getElementById('autoScrollBtn').classList.toggle('active', autoScroll);
+  const s = cur;
+  s.follow = !s.follow; document.getElementById('autoScrollBtn').classList.toggle('active', s.follow);
   // Re-pinning leaves the reading window behind: rebuild the followed tail now (also mid-drain or paused).
   // renderFrom = -1 so an in-progress drain renders only lines it adds after this. Only when the table
   // holds live lines: file lines carry no seq, and a file-only table must keep its head and lazy append.
-  if (autoScroll && currentMode === 'live' && filtered.length && filtered[filtered.length - 1].seq !== undefined) { domStale = true; renderLiveTail(filtered.length); renderFrom = -1; }
+  if (s.follow && currentMode === 'live' && s.filtered.length && s.filtered[s.filtered.length - 1].seq !== undefined) { s.domStale = true; renderLiveTail(s, s.filtered.length); s.renderFrom = -1; }
   updateNewerPill();
 }
 function togglePause() {
   livePaused = !livePaused;
-  const btn = document.getElementById('pauseBtn');
+  const s = liveSession, btn = document.getElementById('pauseBtn');
   btn.textContent = livePaused ? '▶ Resume' : '⏸ Pause'; btn.classList.toggle('paused', livePaused);
-  if (livePaused && renderFrom >= 0) { renderLiveTail(renderFrom); renderFrom = -1; }   // a pause mid-drain would otherwise leave already-filtered lines unrendered and lazy-load gated off
+  if (livePaused && s.renderFrom >= 0) { renderLiveTail(s, s.renderFrom); s.renderFrom = -1; }   // a pause mid-drain would otherwise leave already-filtered lines unrendered and lazy-load gated off
   // On resume, drain whatever queued during the pause.
   if (!livePaused) {
     // Frames dropped from an overflowing backlog were newer than everything retained; drop those
@@ -1432,7 +1436,7 @@ function togglePause() {
     // domStale keeps the frozen rows on screen during the drain; the final chunk replaces them in one
     // step, so the table never goes blank and no stale rows survive. updateStats/updateExportVisibility
     // cover an empty queue, where flushBatch returns early.
-    if (backlogOverflowed) { backlogOverflowed = false; domStale = true; trimRetained(true); updateStats(); updateExportVisibility(); }
+    if (s.overflowed) { s.overflowed = false; s.domStale = true; trimRetained(s, true); updateStats(); updateExportVisibility(); }
     flushBatch();
   }
   updateNewerPill();
@@ -1442,13 +1446,21 @@ function togglePause() {
 // describing earlier losses; otherwise Resume re-rendered cleared lines and the drop pill
 // under-reported a gap still queued. New frames keep flowing: batchTimer is null, so the next
 // handleWsMsg re-arms it.
-function discardBacklog() {
-  pendingBatch = [];
-  if (batchTimer) { clearTimeout(batchTimer); batchTimer = null; }
-  renderFrom = -1;   // its drain is gone; >= 0 would keep the scroll handler's lazy-load gated off
-  discardedCount = 0; backlogOverflowed = false; resetDroppedCounts();
+function discardBacklog(s) {
+  if (s === liveSession) {
+    pendingBatch = [];
+    if (batchTimer) { clearTimeout(batchTimer); batchTimer = null; }
+  }
+  s.renderFrom = -1;   // its drain is gone; >= 0 would keep the scroll handler's lazy-load gated off
+  s.discarded = 0; s.overflowed = false; resetDroppedCounts(s);
 }
-function clearLogs() { discardBacklog(); allMessages = []; filtered = []; renderedEnd = 0; selectedMessage = null; domStale = false; document.getElementById('tbody').innerHTML = ''; updateStats(); updateExportVisibility(); updateNewerPill(); }
+function clearLogs() {
+  const s = cur;
+  discardBacklog(s);
+  s.all = []; s.filtered = []; s.renderedEnd = 0; s.sel = null; s.domStale = false;
+  document.getElementById('tbody').innerHTML = '';
+  updateStats(); updateExportVisibility(); updateNewerPill();
+}
 
 // ── Live retention ──
 // First index in [lo, arr.length) where pred holds; pred must be monotone (false…false, true…true).
@@ -1458,41 +1470,42 @@ function firstIndexWhere(arr, lo, pred) {
   return lo;
 }
 
-// allMessages and filtered are both [file lines (no seq)] [live lines (ascending seq)], so the
+// s.all and s.filtered are both [file lines (no seq)] [live lines (ascending seq)], so the
 // trimmed lines are one run in each, found by binary search. dropAllLive: drop every live line
 // (resume after a backlog overflow).
-function trimRetained(dropAllLive = false) {
-  if (!dropAllLive && !(allMessages.length > MAX_RETAINED)) return;   // fast path; NaN/Infinity = no cap
-  const base = firstIndexWhere(allMessages, 0, m => m.seq !== undefined);   // pinned file lines before it
-  const live = allMessages.length - base;
+function trimRetained(s, dropAllLive = false) {
+  const all = s.all, filtered = s.filtered;
+  if (!dropAllLive && !(all.length > MAX_RETAINED)) return;   // fast path; NaN/Infinity = no cap
+  const base = firstIndexWhere(all, 0, m => m.seq !== undefined);   // pinned file lines before it
+  const live = all.length - base;
   if (!dropAllLive && live <= MAX_RETAINED) return;
   const keep = dropAllLive ? 0 : Math.max(0, Math.floor(MAX_RETAINED * (1 - TRIM_FRACTION)));
   const drop = live - keep;
   if (drop <= 0) return;
   const cut = base + drop;
-  const cutoff = cut < allMessages.length ? allMessages[cut].seq : nextSeq;   // seq of first kept line
-  liveSeqFloor = cutoff;
-  allMessages.splice(base, drop);
+  const cutoff = cut < all.length ? all[cut].seq : nextSeq;   // seq of first kept line
+  s.seqFloor = cutoff;
+  all.splice(base, drop);
   const fa = firstIndexWhere(filtered, 0, m => m.seq !== undefined);
   const fb = firstIndexWhere(filtered, fa, m => m.seq >= cutoff);
   const fDrop = fb - fa;
   if (fDrop) {
     filtered.splice(fa, fDrop);
     const fix = i => i < fa ? i : Math.max(fa, i - fDrop);   // shift past the run, snap inside it
-    if (renderFrom >= 0) renderFrom = fix(renderFrom);
-    renderedEnd = fix(renderedEnd);
+    if (s.renderFrom >= 0) s.renderFrom = fix(s.renderFrom);
+    s.renderedEnd = fix(s.renderedEnd);
   }
-  if (selectedMessage && selectedMessage.seq < cutoff) selectedMessage = null;
-  discardedCount += drop;
-  dropTrimmedRows(cutoff);
+  if (s.sel && s.sel.seq < cutoff) s.sel = null;
+  s.discarded += drop;
+  dropTrimmedRows(s, cutoff);
   updateStats();
 }
 
 // Remove table rows whose message was trimmed (seq < cutoff). Rows are an ordered subsequence of
 // `filtered`, so they form one contiguous block after any file rows. A stale DOM, or a followed
 // tail while hidden, is rebuilt from `filtered` on the next visible render instead.
-function dropTrimmedRows(cutoff) {
-  if (domStale) return;   // rebuilt from `filtered` on the next visible render
+function dropTrimmedRows(s, cutoff) {
+  if (s.domStale) return;   // rebuilt from `filtered` on the next visible render
   const tbody = document.getElementById('tbody');
   const rows = tbody.rows;
   let a = 0;
@@ -1504,17 +1517,17 @@ function dropTrimmedRows(cutoff) {
   // row trimmed: restart at the newest lines (stale rebuild); refilling from the oldest retained lines would
   // hand them to the very next trim. A partly trimmed reading window is trimmed in place, hidden or not,
   // so returning to the app keeps the reading position.
-  if (autoScroll ? document.hidden : b === rows.length) { domStale = true; return; }
+  if (s.follow ? document.hidden : b === rows.length) { s.domStale = true; return; }
   const survivor = b < rows.length ? rows[b] : null;
   const scroller = document.getElementById('logTable');
   // With auto-scroll off the user is reading mid-buffer: keep the first surviving row where it was.
   // Chromium's scroll anchoring usually compensates already (delta 0); WebKit may not.
-  const topBefore = (!autoScroll && survivor) ? survivor.getBoundingClientRect().top : 0;
+  const topBefore = (!s.follow && survivor) ? survivor.getBoundingClientRect().top : 0;
   const range = document.createRange();
   range.setStartBefore(rows[a]);
   if (survivor) range.setEndBefore(survivor); else range.setEndAfter(rows[b - 1]);
   range.deleteContents();
-  if (!autoScroll && survivor && survivor.isConnected) {
+  if (!s.follow && survivor && survivor.isConnected) {
     scroller.scrollTop += survivor.getBoundingClientRect().top - topBefore;
   }
 }
@@ -1522,12 +1535,12 @@ function dropTrimmedRows(cutoff) {
 // While paused the backlog can't drain: cap it as well, dropping its oldest frames. Retained lines
 // are older still, so they're dropped on resume (togglePause) to keep the window contiguous.
 // The paused screen itself stays frozen for reading; worst case memory is ~2x cap while paused.
-function trimPausedBacklog() {
+function trimPausedBacklog(s) {
   const drop = pendingBatch.length - Math.max(0, Math.floor(MAX_RETAINED * (1 - TRIM_FRACTION)));
   if (drop <= 0) return;
   pendingBatch.splice(0, drop);
-  discardedCount += drop;
-  backlogOverflowed = true;
+  s.discarded += drop;
+  s.overflowed = true;
   updateStats();
 }
 
@@ -1563,16 +1576,17 @@ function toggleExportMenu() {
   const menu = document.getElementById('exportMenu');
   const open = menu.classList.toggle('open');
   if (open) {
-    document.getElementById('exportFilteredCount').textContent = filtered.length.toLocaleString() + ' lines';
-    document.getElementById('exportAllCount').textContent = allMessages.length.toLocaleString() + ' lines';
+    const s = cur;
+    document.getElementById('exportFilteredCount').textContent = s.filtered.length.toLocaleString() + ' lines';
+    document.getElementById('exportAllCount').textContent = s.all.length.toLocaleString() + ' lines';
     const note = document.getElementById('exportNote');
-    const lost = droppedCount.android + droppedCount.ios;
-    note.hidden = !(discardedCount || lost);
+    const lost = s.dropped.android + s.dropped.ios;
+    note.hidden = !(s.discarded || lost);
     const parts = [];
-    if (discardedCount) parts.push(backlogOverflowed
-      ? `Exports the lines held before the pause (${allMessages.length.toLocaleString()}). ${discardedCount.toLocaleString()} lines were discarded because the paused backlog exceeded ${MAX_RETAINED.toLocaleString()}; on resume the live lines here are discarded and the view continues from the newest.`
-      : `Exports retained lines only: ${discardedCount.toLocaleString()} older lines were discarded (live view keeps the newest ${MAX_RETAINED.toLocaleString()}).`);
-    if (lost) parts.push(`${lost.toLocaleString()} ${lost === 1 ? 'line' : 'lines'} never reached the viewer (server buffer overflow); the export may have gaps where ${lost === 1 ? 'it' : 'they'} occurred${discardedCount ? ' (unless later discarded by the retention cap)' : ''}.`);
+    if (s.discarded) parts.push(s.overflowed
+      ? `Exports the lines held before the pause (${s.all.length.toLocaleString()}). ${s.discarded.toLocaleString()} lines were discarded because the paused backlog exceeded ${MAX_RETAINED.toLocaleString()}; on resume the live lines here are discarded and the view continues from the newest.`
+      : `Exports retained lines only: ${s.discarded.toLocaleString()} older lines were discarded (live view keeps the newest ${MAX_RETAINED.toLocaleString()}).`);
+    if (lost) parts.push(`${lost.toLocaleString()} ${lost === 1 ? 'line' : 'lines'} never reached the viewer (server buffer overflow); the export may have gaps where ${lost === 1 ? 'it' : 'they'} occurred${s.discarded ? ' (unless later discarded by the retention cap)' : ''}.`);
     note.textContent = parts.join(' ');
     positionExportMenu();
   }
@@ -1599,7 +1613,7 @@ window.addEventListener('resize', () => {
 });
 
 function getExportData() {
-  return document.querySelector('input[name="exportScope"]:checked').value === 'filtered' ? filtered : allMessages;
+  return document.querySelector('input[name="exportScope"]:checked').value === 'filtered' ? cur.filtered : cur.all;
 }
 
 // Sync wrapper for inline onclick — async doExport is awaited and any
@@ -1705,7 +1719,7 @@ function legacyDownload(filename, content, type) {
 }
 
 function updateExportVisibility() {
-  document.getElementById('exportWrap').style.display = allMessages.length ? '' : 'none';
+  document.getElementById('exportWrap').style.display = cur.all.length ? '' : 'none';
 }
 
 // ── Filtering ──
@@ -1769,24 +1783,25 @@ function makeFilter() {
 }
 
 function applyFilters() {
+  const s = cur;
   currentSearch = document.getElementById('search').value;
   searchRegex   = _compileSearchRegex(currentSearch);
-  filtered = allMessages.filter(makeFilter()); updateStats();
-  renderFrom = -1; domStale = false;   // this render owns the DOM; allMessages already holds any mid-drain chunks
+  s.filtered = s.all.filter(makeFilter()); updateStats();
+  s.renderFrom = -1; s.domStale = false;   // this render owns the DOM; s.all already holds any mid-drain chunks
   // Preserve the user's clicked row across filter changes. The window is rebuilt as about PAGE
   // rows either side of the selection, wherever it sits in the history, and the reader slides on
   // from there. (Rendering forward from the head stopped at 30000 rows and left them all in the DOM.)
-  const idx = selectedMessage ? filtered.indexOf(selectedMessage) : -1;
-  renderedEnd = Math.max(0, idx - PAGE); document.getElementById('tbody').innerHTML = '';
-  renderChunk(renderedEnd);
-  if (idx >= 0) renderChunk(renderedEnd);   // second page: the selection can sit just past the first, and this keeps ~PAGE rows below it
+  const idx = s.sel ? s.filtered.indexOf(s.sel) : -1;
+  s.renderedEnd = Math.max(0, idx - PAGE); document.getElementById('tbody').innerHTML = '';
+  renderChunk(s.renderedEnd);
+  if (idx >= 0) renderChunk(s.renderedEnd);   // second page: the selection can sit just past the first, and this keeps ~PAGE rows below it
   updateNewerPill();   // renderedEnd was just reset: with auto-scroll off the count is large again
   if (idx >= 0) {
     // Defer scroll until layout settles.
     requestAnimationFrame(() => {
       const tbody = document.getElementById('tbody');
       for (const tr of tbody.rows) {
-        if (tr._message === selectedMessage) {
+        if (tr._message === s.sel) {
           tr.scrollIntoView({ block: 'center', behavior: 'auto' });
           return;
         }
@@ -1798,12 +1813,12 @@ function applyFilters() {
 }
 
 function updateStats() {
-  const el = document.getElementById('stats');
-  el.textContent = `${filtered.length.toLocaleString()} / ${allMessages.length.toLocaleString()} lines` +
-    (!discardedCount ? '' : backlogOverflowed ? `, ${discardedCount.toLocaleString()} discarded, resume skips to newest`
-                                              : `, ${discardedCount.toLocaleString()} older discarded`);
-  const title = !discardedCount ? ''
-    : backlogOverflowed ? `The paused backlog exceeded ${MAX_RETAINED.toLocaleString()} lines, so its oldest frames were discarded. On resume the lines shown now are discarded and the view continues from the newest lines.`
+  const s = cur, el = document.getElementById('stats');
+  el.textContent = `${s.filtered.length.toLocaleString()} / ${s.all.length.toLocaleString()} lines` +
+    (!s.discarded ? '' : s.overflowed ? `, ${s.discarded.toLocaleString()} discarded, resume skips to newest`
+                                      : `, ${s.discarded.toLocaleString()} older discarded`);
+  const title = !s.discarded ? ''
+    : s.overflowed ? `The paused backlog exceeded ${MAX_RETAINED.toLocaleString()} lines, so its oldest frames were discarded. On resume the lines shown now are discarded and the view continues from the newest lines.`
     : `Live view keeps the newest ${MAX_RETAINED.toLocaleString()} lines; older lines are discarded to bound memory.`;
   if (el.title !== title) el.title = title;   // avoid an attribute write on every flush
 }
@@ -1837,12 +1852,10 @@ function buildMessageNodes(s, q) {
   return frag;
 }
 
-let selectedMessage = null;
-
 function buildRow(m, isNew) {
   const lc = LEVEL_CHAR[m.lvl] || 'V';
   const tr = document.createElement('tr');
-  tr.className = lc + (isNew ? ' new-row' : '') + (m === selectedMessage ? ' selected' : '');
+  tr.className = lc + (isNew ? ' new-row' : '') + (m === cur.sel ? ' selected' : '');
   tr._message = m; // keep reference so click handler + scroll-to-selection work after re-render
 
   // Platform cell — static badge, no log-derived content.
@@ -1892,11 +1905,12 @@ function buildRow(m, isNew) {
 }
 
 function renderChunk(start) {
+  const s = cur, filtered = s.filtered;
   const end = Math.min(start + PAGE, filtered.length);
   const frag = document.createDocumentFragment();
   for (let i = start; i < end; i++) frag.appendChild(buildRow(filtered[i], false));
   document.getElementById('tbody').appendChild(frag);
-  renderedEnd = end;
+  s.renderedEnd = end;
   // NOTE: scroll reset intentionally removed — applyFilters handles it explicitly
 }
 
@@ -1911,9 +1925,10 @@ function renderChunk(start) {
 // or gaps. The scrollbar thumb measures this window (at most LIVE_DOM_CAP rows), not the whole
 // history: it jumps back by about a page whenever a slide adds rows above.
 function prependOlderRows(t) {
-  if (domStale || document.hidden) return;   // tbody doesn't match renderedEnd; the next render rebuilds it
+  const s = cur, filtered = s.filtered;
+  if (s.domStale || document.hidden) return;   // tbody doesn't match renderedEnd; the next render rebuilds it
   const tbody = document.getElementById('tbody'), rows = tbody.rows, first = rows[0];
-  const start = renderedEnd - rows.length;          // the DOM is filtered[start, renderedEnd)
+  const start = s.renderedEnd - rows.length;        // the DOM is filtered[start, renderedEnd)
   if (!first || start <= 0) return;                 // at the oldest retained line
   if (first._message !== filtered[start]) return;   // out of sync: never build a duplicate or a gap
   const from = Math.max(0, start - PAGE);
@@ -1929,7 +1944,7 @@ function prependOlderRows(t) {
 function dropBottomRows(tbody, n) {
   const rows = tbody.rows, range = document.createRange();
   range.setStartBefore(rows[rows.length - n]); range.setEndAfter(rows[rows.length - 1]); range.deleteContents();
-  renderedEnd -= n;
+  cur.renderedEnd -= n;
 }
 
 document.getElementById('logTable').addEventListener('scroll', function() {
@@ -1938,8 +1953,9 @@ document.getElementById('logTable').addEventListener('scroll', function() {
   // fire clamp-driven scroll events). extendReadingWindow also appends from renderedEnd, but
   // renderLiveTail never appends while auto-scroll is off, so it can't duplicate rows mid-drain.
   // Every downward lazy load is the capped slide, so file mode and pinned scroll-back can't grow the DOM past LIVE_DOM_CAP.
-  if (renderedEnd < filtered.length && this.scrollTop + this.clientHeight >= this.scrollHeight - 200) {
-    if ((currentMode === 'live' && !autoScroll) || renderFrom < 0) { extendReadingWindow(); updateNewerPill(); }   // renderedEnd advanced
+  const s = cur;
+  if (s.renderedEnd < s.filtered.length && this.scrollTop + this.clientHeight >= this.scrollHeight - 200) {
+    if ((currentMode === 'live' && !s.follow) || s.renderFrom < 0) { extendReadingWindow(); updateNewerPill(); }   // renderedEnd advanced
   } else if (this.scrollTop < 200) prependOlderRows(this);
 });
 

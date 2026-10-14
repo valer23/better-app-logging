@@ -9,9 +9,8 @@ import { loadLegacy, pageScriptSrcs, stickyDocument } from './_load.mjs';
 process.env.TZ = 'UTC';   // formatTs formats in local time
 
 const BENCH_BINDINGS = [
-  'flushBatch', 'handleWsMsg', 'pendingBatch', 'MAX_RETAINED', 'iosLive', 'autoScroll',
+  'flushBatch', 'handleWsMsg', 'pendingBatch', 'MAX_RETAINED', 'iosLive', 'liveSession', 'cur',
   'toggleAutoScroll', 'togglePause', 'refreshLiveView', 'FOLLOW_DOM_CAP', 'LIVE_DOM_CAP',
-  'allMessages', 'discardedCount',
 ];
 // dev-bench.js assigns these top-level bindings, so none of them may be `const`.
 const BENCH_REASSIGNED = ['flushBatch', 'iosLive', 'MAX_RETAINED'];
@@ -127,13 +126,13 @@ const ANDROID = [
 
 // Export through the real doExport (saveFile captured), import through the real handleFile.
 async function roundTrip(fmt, messages) {
-  run(`allMessages = ${JSON.stringify(messages)};
+  run(`liveSession.all = ${JSON.stringify(messages)};
        saveFile = async (name, content) => { globalThis.__saved = { name, content }; };`);
   await api.doExport(fmt);
   const saved = run('globalThis.__saved');
-  run('allMessages = [];');
+  run('liveSession.all = [];');
   api.handleFile({ text: saved.content });
-  return { name: saved.name, content: saved.content, parsed: JSON.parse(JSON.stringify(run('allMessages'))) };
+  return { name: saved.name, content: saved.content, parsed: JSON.parse(JSON.stringify(run('liveSession.all'))) };
 }
 
 test('TXT export of iOS lines re-imports unchanged', async () => {
