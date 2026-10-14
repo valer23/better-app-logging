@@ -225,3 +225,21 @@ export function cssAssetRefs(css, cssPath) {
     .map(u => dir + u);
 }
 function stripCssComments(css) { return css.replace(/\/\*[\s\S]*?\*\//g, ''); }
+// SHA256SUMS lists exactly the bundled fonts and licence texts under fonts/. `sha256sum -c` only
+// hashes what is listed, so an unlisted .woff2 would otherwise ship unchecked. files: asset paths
+// relative to viewer/assets ("fonts/geist-5.3.0-latin.woff2"); sums: the SHA256SUMS text.
+export function fontManifestErrors(files, sums) {
+  const onDisk = new Set(files.filter(f => /^fonts\/(?:[^/]+\.woff2|OFL-[^/]+\.txt)$/.test(f)).map(f => f.slice('fonts/'.length)));
+  const listed = new Set();
+  const errors = [];
+  for (const line of sums.split('\n')) {
+    if (!line.trim()) continue;
+    const m = /^([0-9a-f]{64}) [ *]([^/\s]+)$/.exec(line);
+    if (!m) { errors.push(`malformed SHA256SUMS line: ${line}`); continue; }
+    if (listed.has(m[2])) errors.push(`${m[2]} is listed twice`);
+    listed.add(m[2]);
+  }
+  for (const f of onDisk) if (!listed.has(f)) errors.push(`${f} is not listed in SHA256SUMS`);
+  for (const f of listed) if (!onDisk.has(f)) errors.push(`${f} is listed in SHA256SUMS but is not a font or licence file on disk`);
+  return errors;
+}

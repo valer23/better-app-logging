@@ -131,6 +131,12 @@ test('the checks reject deliberately broken input', () => {
   assert.deepEqual(C.cssAssetRefs("src: url(geist.woff2), url('data:x'), url(https://x.y/z)", 'fonts/fonts.css'), ['fonts/geist.woff2']);
   assert.deepEqual(C.jsAssetRefs("s.src = 'assets/js/dev-bench.js';"), ['js/dev-bench.js']);
   assert.deepEqual([...C.cssVarsUsed('a { color: var(--x, red); b: var( --y ) }')], ['--x', '--y']);
+  const H = 'a'.repeat(64);
+  assert.deepEqual(C.fontManifestErrors(['fonts/a.woff2', 'fonts/OFL-a.txt', 'fonts/fonts.css'], `${H}  a.woff2\n${H}  OFL-a.txt\n`), []);
+  assert.notDeepEqual(C.fontManifestErrors(['fonts/a.woff2', 'fonts/b.woff2'], `${H}  a.woff2\n`), []);
+  assert.notDeepEqual(C.fontManifestErrors(['fonts/a.woff2'], `${H}  a.woff2\n${H}  gone.woff2\n`), []);
+  assert.notDeepEqual(C.fontManifestErrors(['fonts/a.woff2'], `${H}  a.woff2\n${H}  a.woff2\n`), []);
+  assert.notDeepEqual(C.fontManifestErrors(['fonts/OFL-a.txt'], ''), []);
 });
 
 test('every assets/ reference resolves to a file, and every asset file is referenced', () => {
@@ -145,6 +151,10 @@ test('every assets/ reference resolves to a file, and every asset file is refere
   const UNREFERENCED_OK = [/^fonts\/OFL-[\w-]+\.txt$/, /^fonts\/SOURCES\.md$/, /^fonts\/SHA256SUMS$/];
   const orphans = assetFiles.filter(f => !refs.includes(f) && !UNREFERENCED_OK.some(re => re.test(f)));
   assert.deepEqual(orphans, [], 'asset files nothing references');
+});
+
+test('fonts/SHA256SUMS lists exactly the bundled .woff2 and OFL-*.txt files', () => {
+  assert.deepEqual(C.fontManifestErrors(assetFiles, read(path.join(ASSETS, 'fonts', 'SHA256SUMS'))), []);
 });
 
 test('every stylesheet has balanced braces', () => {
