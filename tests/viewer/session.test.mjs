@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { ASSETS, HTML_PATH, read, loadPureModule, pageScriptSrcs } from './_load.mjs';
+import { ASSETS, HTML_PATH, read, loadPureModule, pageScriptSrcs, inlineScripts } from './_load.mjs';
 
 const SRC = read(path.join(ASSETS, 'js', 'session.js'));
 const S = loadPureModule('session.js').session;
@@ -203,4 +203,15 @@ test('reset replaces the lines and empties the view; Follow, the query generatio
   assert.equal(s.follow, false);
   assert.equal(s.query, 3);
   assert.equal(s.discarded, 2);
+});
+
+// How the legacy inline script uses the module (P2 structure; the behaviour is in session-parity.test.mjs).
+const legacy = () => inlineScripts().at(-1).code;
+
+test('retention lives in session.js only: the legacy script keeps no copy of the trim', () => {
+  const code = legacy();
+  assert.doesNotMatch(code, /function firstIndexWhere\(/);
+  assert.match(code, /ALV\.session\.trim\(/);
+  assert.match(code, /ALV\.session\.trimPending\(/);
+  assert.match(code, /ALV\.session\.discard\(/);
 });

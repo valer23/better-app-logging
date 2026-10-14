@@ -1039,10 +1039,6 @@ function updateDroppedIndicator(platform) {
     'this connection could not keep up with the stream, so the app\'s server-side buffer overflowed ' +
     'and the oldest unsent messages were dropped. The table and exports may have gaps where this happened (unless those lines were later discarded by the viewer\'s retention cap). Resets on Clear or when a file is loaded.';
 }
-function resetDroppedCounts(s) {
-  s.dropped.android = s.dropped.ios = 0;
-  updateDroppedIndicator('android'); updateDroppedIndicator('ios');
-}
 
 function handleWsMsg(e, platform) {
   let flushNow = false;   // flushBatch runs OUTSIDE the try so its errors aren't swallowed
@@ -1451,54 +1447,28 @@ function discardBacklog(s) {
     pendingBatch = [];
     if (batchTimer) { clearTimeout(batchTimer); batchTimer = null; }
   }
-  s.renderFrom = -1;   // its drain is gone; >= 0 would keep the scroll handler's lazy-load gated off
-  s.discarded = 0; s.overflowed = false; resetDroppedCounts(s);
+  ALV.session.discard(s);   // renderFrom -1: its drain is gone; >= 0 would keep the scroll handler's lazy-load gated off
+  if (s === liveSession) { updateDroppedIndicator('android'); updateDroppedIndicator('ios'); }
 }
 function clearLogs() {
   const s = cur;
   discardBacklog(s);
-  s.all = []; s.filtered = []; s.renderedEnd = 0; s.sel = null; s.domStale = false;
+  ALV.session.reset(s, []);
   document.getElementById('tbody').innerHTML = '';
   updateStats(); updateExportVisibility(); updateNewerPill();
 }
 
 // ── Live retention ──
-// First index in [lo, arr.length) where pred holds; pred must be monotone (false…false, true…true).
-function firstIndexWhere(arr, lo, pred) {
-  let hi = arr.length;
-  while (lo < hi) { const mid = (lo + hi) >>> 1; if (pred(arr[mid])) hi = mid; else lo = mid + 1; }
-  return lo;
-}
-
-// s.all and s.filtered are both [file lines (no seq)] [live lines (ascending seq)], so the
-// trimmed lines are one run in each, found by binary search. dropAllLive: drop every live line
-// (resume after a backlog overflow).
-function trimRetained(s, dropAllLive = false) {
-  const all = s.all, filtered = s.filtered;
-  if (!dropAllLive && !(all.length > MAX_RETAINED)) return;   // fast path; NaN/Infinity = no cap
-  const base = firstIndexWhere(all, 0, m => m.seq !== undefined);   // pinned file lines before it
-  const live = all.length - base;
-  if (!dropAllLive && live <= MAX_RETAINED) return;
-  const keep = dropAllLive ? 0 : Math.max(0, Math.floor(MAX_RETAINED * (1 - TRIM_FRACTION)));
-  const drop = live - keep;
-  if (drop <= 0) return;
-  const cut = base + drop;
-  const cutoff = cut < all.length ? all[cut].seq : nextSeq;   // seq of first kept line
-  s.seqFloor = cutoff;
-  all.splice(base, drop);
-  const fa = firstIndexWhere(filtered, 0, m => m.seq !== undefined);
-  const fb = firstIndexWhere(filtered, fa, m => m.seq >= cutoff);
-  const fDrop = fb - fa;
-  if (fDrop) {
-    filtered.splice(fa, fDrop);
-    const fix = i => i < fa ? i : Math.max(fa, i - fDrop);   // shift past the run, snap inside it
-    if (s.renderFrom >= 0) s.renderFrom = fix(s.renderFrom);
-    s.renderedEnd = fix(s.renderedEnd);
-  }
-  if (s.sel && s.sel.seq < cutoff) s.sel = null;
-  s.discarded += drop;
+// The trim is pure and per session (ALV.session.trim): it drops the oldest live lines in place,
+// keeps seq-less lines pinned, and moves the window indexes, the selection and the counters with
+// them. Here: the fast path, then the rows of the trimmed lines leave this session's table.
+// dropAll: drop every live line (resume after a backlog overflow).
+function trimRetained(s, dropAll = false) {
+  if (!dropAll && !(s.all.length > MAX_RETAINED)) return;   // fast path; NaN/Infinity = no cap
+  const cutoff = ALV.session.trim(s, MAX_RETAINED, TRIM_FRACTION, dropAll, nextSeq);
+  if (cutoff < 0) return;
   dropTrimmedRows(s, cutoff);
-  updateStats();
+  if (s === cur) updateStats();
 }
 
 // Remove table rows whose message was trimmed (seq < cutoff). Rows are an ordered subsequence of
@@ -1532,16 +1502,11 @@ function dropTrimmedRows(s, cutoff) {
   }
 }
 
-// While paused the backlog can't drain: cap it as well, dropping its oldest frames. Retained lines
-// are older still, so they're dropped on resume (togglePause) to keep the window contiguous.
+// While paused the backlog can't drain: cap it as well, dropping its oldest frames (ALV.session.trimPending).
+// Retained lines are older still, so they're dropped on resume (togglePause) to keep the window contiguous.
 // The paused screen itself stays frozen for reading; worst case memory is ~2x cap while paused.
 function trimPausedBacklog(s) {
-  const drop = pendingBatch.length - Math.max(0, Math.floor(MAX_RETAINED * (1 - TRIM_FRACTION)));
-  if (drop <= 0) return;
-  pendingBatch.splice(0, drop);
-  s.discarded += drop;
-  s.overflowed = true;
-  updateStats();
+  if (ALV.session.trimPending(pendingBatch, s, MAX_RETAINED, TRIM_FRACTION) && s === cur) updateStats();
 }
 
 // ── Export ──

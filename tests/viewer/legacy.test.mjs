@@ -17,7 +17,7 @@ const BENCH_REASSIGNED = ['flushBatch', 'iosLive', 'MAX_RETAINED'];
 
 const { api, run } = loadLegacy([
   'toggleTheme', 'setLogZoom',
-  'firstIndexWhere', 'csvCell', 'formatTs', 'parseIosText', 'parseCsvRows', 'doExport', 'handleFile',
+  'csvCell', 'formatTs', 'parseIosText', 'parseCsvRows', 'doExport', 'handleFile',
   ...BENCH_BINDINGS,
 ]);
 const prefs = run('ALV.prefs');
@@ -70,15 +70,6 @@ test('a sticky document hands out one stub per id, keeps what the legacy script 
   const { run } = loadLegacy([], { document: doc });
   run('updateStats()');
   assert.equal(doc.getElementById('stats').textContent, '0 / 0 lines');
-});
-
-test('firstIndexWhere finds the first index where a monotone predicate holds', () => {
-  const a = [1, 2, 3, 4, 5];
-  assert.equal(api.firstIndexWhere(a, 0, x => x >= 3), 2);
-  assert.equal(api.firstIndexWhere(a, 0, x => x > 9), 5);
-  assert.equal(api.firstIndexWhere(a, 0, () => true), 0);
-  assert.equal(api.firstIndexWhere(a, 3, x => x >= 1), 3);
-  assert.equal(api.firstIndexWhere([], 0, () => true), 0);
 });
 
 test('csvCell quotes only cells with a comma, quote or newline', () => {
