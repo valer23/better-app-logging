@@ -26,6 +26,10 @@
     motion: Object.freeze(['system', 'reduce', 'off']),
   });
   const DARK_QUERY = '(prefers-color-scheme: dark)';
+  // Known limitation: WebKit (WKWebView, the only webview where glass applies) may not report
+  // prefers-reduced-transparency. If matchMedia answers "not all", `matches` stays false and
+  // Glass is not forced to Solid by macOS Reduce transparency; the Material control still works.
+  // Honoured only where the WebView reports it (spec, Glass gating). Unverified in the real app.
   const REDUCED_TRANSPARENCY_QUERY = '(prefers-reduced-transparency: reduce)';
 
   // ---- Pure helpers (no storage, no DOM) ----

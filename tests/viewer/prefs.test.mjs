@@ -1,7 +1,9 @@
 // Settings store and localStorage migration (viewer/assets/js/prefs.js).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadPrefsModule, memoryStorage, fakeMatchMedia, fakeRoot } from './_load.mjs';
+import path from 'node:path';
+import vm from 'node:vm';
+import { ASSETS, read, loadPrefsModule, memoryStorage, fakeMatchMedia, fakeRoot } from './_load.mjs';
 
 const MAC = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15';
 const WIN = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Edg/129.0';
@@ -96,7 +98,7 @@ test('an existing material value wins over glassMode', () => {
   assert.equal(st.map.get(K('material')), 'solid');
 });
 
-test('Reduce transparency forces solid and is followed live', () => {
+test('Reduce transparency forces solid and is followed live where the WebView reports it', () => {
   const { root, mm } = boot({ stored: { material: 'glass' }, media: { [DARK]: true, [RT]: true } });
   assert.equal(root.attrs['data-material'], 'solid');
   mm.fire(RT, false);
@@ -189,4 +191,56 @@ test('nextTheme cycles Dark, Light, System', () => {
   assert.equal(nextTheme('light'), 'system');
   assert.equal(nextTheme('system'), 'dark');
   assert.equal(nextTheme('garbage'), 'light');
+});
+
+// ---- Production boot path: prefs.js with a document present (what the page does in <head>) ----
+
+// Runs prefs.js the way the page does: `window` is the global object g, `document` exists. The
+// window is a plain object so a throwing localStorage getter really throws (node:vm swallows
+// getter errors on the context global). `matchMedia` throws "Illegal invocation" when called
+// unbound, as WebKit does. `storageGetter` replaces the localStorage property with a getter.
+function runPageBoot({ stored = {}, ua = MAC, media = { [DARK]: true }, storageGetter } = {}) {
+  const root = fakeRoot();
+  const st = memoryStorage(Object.fromEntries(Object.entries(stored).map(([k, v]) => [K(k), v])));
+  const base = fakeMatchMedia(media);
+  const win = { navigator: { userAgent: ua } };
+  win.matchMedia = function (q) {
+    if (this !== win) throw new TypeError('Illegal invocation');
+    return base(q);
+  };
+  if (storageGetter) Object.defineProperty(win, 'localStorage', { get: storageGetter });
+  else win.localStorage = st;
+  const ctx = vm.createContext({ window: win, document: { documentElement: root } });
+  vm.runInContext(read(path.join(ASSETS, 'js', 'prefs.js')), ctx, { filename: 'prefs.js' });
+  return { ALV: win.ALV, root, st, mm: base };
+}
+
+test('page boot: with a document, prefs.js boots itself against <html> using the real globals', () => {
+  const { ALV, root, st, mm } = runPageBoot({ stored: { theme: 'light', glassMode: 'on' } });
+  assert.equal(typeof ALV.prefs, 'object');
+  assert.equal(root.attrs['data-theme'], 'light');
+  assert.equal(root.attrs['data-platform'], 'mac');
+  assert.equal(root.attrs['data-material'], 'glass');
+  assert.equal(root.attrs['data-glass'], 'on');
+  assert.equal(root.attrs['data-ui'], 'm');
+  assert.equal(root.props['--log-fs'], '13px');
+  assert.equal(st.map.get(K('material')), 'glass');   // the migration ran against the real storage
+  // matchMedia was bound: the OS theme listener is live (theme=system follows it).
+  ALV.prefs.set('theme', 'system');
+  assert.equal(root.attrs['data-theme'], 'dark');
+  mm.fire(DARK, false);
+  assert.equal(root.attrs['data-theme'], 'light');
+});
+
+test('page boot: a localStorage getter that throws still boots with defaults', () => {
+  const { ALV, root } = runPageBoot({
+    storageGetter() { throw new DOMException('The operation is insecure.', 'SecurityError'); },
+  });
+  assert.equal(typeof ALV.prefs, 'object');
+  assert.equal(root.attrs['data-theme'], 'dark');
+  assert.equal(root.attrs['data-material'], 'solid');
+  assert.equal(root.attrs['data-platform'], 'mac');
+  assert.equal(root.props['--log-fs'], '13px');
+  ALV.prefs.set('theme', 'light');   // changes live in memory for the session
+  assert.equal(root.attrs['data-theme'], 'light');
 });
