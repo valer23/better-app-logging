@@ -5,7 +5,7 @@ in-flight viewer behaviour from #45, #46, #54, #55, #57 and #58. Nothing is drop
 
 Tick a row in the PR that lands its **final** home (the last PR in brackets), after checking it by
 hand in the running app (`cd src-tauri && cargo run`). A row a PR only partly covers stays open and
-the PR body says which part landed. P16 requires every box ticked.
+the PR body says which part landed. P16 requires every box ticked, except rows bracketed optional.
 
 ## Spec mapping
 
