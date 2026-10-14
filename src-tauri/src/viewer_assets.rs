@@ -29,12 +29,25 @@ pub static FILES: &[(&str, &[u8])] = embed![
     "css/base.css",
     "css/foundation.css",
     "css/legacy.css",
+    "fonts/OFL-atkinson-hyperlegible-mono.txt",
+    "fonts/OFL-atkinson-hyperlegible-next.txt",
+    "fonts/OFL-geist.txt",
+    "fonts/OFL-jetbrains-mono.txt",
+    "fonts/atkinson-hyperlegible-mono-5.3.0-latin-ext.woff2",
+    "fonts/atkinson-hyperlegible-mono-5.3.0-latin.woff2",
+    "fonts/atkinson-hyperlegible-next-5.3.0-latin-ext.woff2",
+    "fonts/atkinson-hyperlegible-next-5.3.0-latin.woff2",
+    "fonts/fonts.css",
+    "fonts/geist-5.3.0-latin-ext.woff2",
+    "fonts/geist-5.3.0-latin.woff2",
+    "fonts/jetbrains-mono-5.3.0-latin-ext.woff2",
+    "fonts/jetbrains-mono-5.3.0-latin.woff2",
     "js/dev-bench.js",
 ];
 
 /// Files under `viewer/assets/` that are kept in the repo but never served.
 #[cfg(test)]
-const NOT_SERVED: &[&str] = &[];
+const NOT_SERVED: &[&str] = &["fonts/SHA256SUMS", "fonts/SOURCES.md"];
 
 /// Content type and cache policy by extension; `None` for anything we do not serve.
 pub fn mime_for(path: &str) -> Option<(&'static str, bool)> {
@@ -126,6 +139,15 @@ mod tests {
         ] {
             assert!(lookup(bad).is_none(), "{bad:?} must not resolve");
         }
+    }
+
+    #[test]
+    fn fonts_are_served_as_immutable_woff2() {
+        let font = lookup("fonts/geist-5.3.0-latin.woff2").expect("Geist is embedded");
+        assert_eq!(font.mime, "font/woff2");
+        assert!(font.immutable);
+        let face = lookup("fonts/fonts.css").expect("fonts.css is embedded");
+        assert!(!face.immutable);
     }
 
     #[test]

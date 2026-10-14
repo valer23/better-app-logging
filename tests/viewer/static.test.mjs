@@ -219,3 +219,12 @@ test('every var(--x) used in CSS or inline styles is declared in CSS or set from
   const used = new Set([...cssFiles.flatMap(f => [...C.cssVarsUsed(f.text)]), ...C.cssVarsUsed(styleAttrs)]);
   assert.deepEqual([...used].filter(v => !declared.has(v)).sort(), []);
 });
+
+test('offline: no network URL in the page, its CSS or its JS (local WebSockets excepted)', () => {
+  const problems = [
+    ...C.offlineErrors(html, 'viewer/applogs-viewer.html'),
+    ...cssFiles.flatMap(f => C.offlineErrors(f.text, `viewer/assets/${f.path}`)),
+    ...allJs.filter(s => s.filename !== 'viewer/applogs-viewer.html').flatMap(s => C.offlineErrors(s.code, s.filename)),
+  ];
+  assert.deepEqual(problems, []);
+});

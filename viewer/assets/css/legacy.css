@@ -1,4 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
 /* Legacy viewer styles, moved verbatim out of applogs-viewer.html (P1) and shrunk by every region
    PR until P13 deletes the file. Changes made by the move:
    - tokens renamed --x -> --lg-x, colliding classes renamed .x -> .lg-x (btn-primary, icon-btn,
@@ -116,7 +115,7 @@
      Only affects the table; UI chrome (buttons, tabs) stays at native
      pixel size so the controls remain usable on small laptops. */
   .zoom-group { display: inline-flex; align-items: center; gap: 0; margin-right: 10px; border: 1px solid var(--lg-border); border-radius: 5px; overflow: hidden; }
-  .zoom-btn { background: transparent; border: 0; color: var(--lg-muted); font-family: 'IBM Plex Sans', sans-serif; font-size: 11px; font-weight: 600; padding: 4px 9px; cursor: pointer; transition: color .15s, background .15s; }
+  .zoom-btn { background: transparent; border: 0; color: var(--lg-muted); font-family: var(--font-ui); font-size: 11px; font-weight: 600; padding: 4px 9px; cursor: pointer; transition: color .15s, background .15s; }
   .zoom-btn:hover { color: var(--lg-text); background: var(--lg-surface2); }
   .zoom-btn + .zoom-btn { border-left: 1px solid var(--lg-border); }
 
@@ -143,7 +142,7 @@
     border-radius: 999px;
     display: inline-flex; align-items: center; justify-content: space-between;
     padding: 0 10px; box-sizing: border-box;
-    font-family: 'IBM Plex Sans', sans-serif; font-size: 11px; font-weight: 600;
+    font-family: var(--font-ui); font-size: 11px; font-weight: 600;
     color: var(--lg-muted);
     transition: background .2s, border-color .2s, color .2s;
   }
@@ -163,30 +162,30 @@
   }
 
   html, body, :where(.lg-scope, .lg-scope *) { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--lg-bg); color: var(--lg-text); font-family: 'IBM Plex Sans', sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  body { background: var(--lg-bg); color: var(--lg-text); font-family: var(--font-ui); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
 
   /* ── Top bar ── */
   #topbar { background: var(--lg-surface); border-bottom: 1px solid var(--lg-border); display: flex; align-items: stretch; padding: 0 16px; flex-shrink: 0; }
   html[data-platform="mac"] #topbar { padding-left: 78px; }
-  .logo { font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; color: var(--lg-accent); letter-spacing: 0.05em; display: flex; align-items: center; gap: 8px; padding-right: 16px; border-right: 1px solid var(--lg-border); margin-right: 4px; }
+  .logo { font-family: var(--font-log); font-size: 13px; font-weight: 700; color: var(--lg-accent); letter-spacing: 0.05em; display: flex; align-items: center; gap: 8px; padding-right: 16px; border-right: 1px solid var(--lg-border); margin-right: 4px; }
   .logo span { color: var(--lg-muted); }
   .logo svg { display: block; flex-shrink: 0; }
   .logo-mark { width: 22px; height: 22px; }
-  .mode-tab { font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; font-weight: 600; padding: 0 14px; border: none; background: transparent; color: var(--lg-muted); cursor: pointer; border-bottom: 2px solid transparent; transition: color .15s, border-color .15s; display: flex; align-items: center; gap: 6px; }
+  .mode-tab { font-family: var(--font-ui); font-size: 12px; font-weight: 600; padding: 0 14px; border: none; background: transparent; color: var(--lg-muted); cursor: pointer; border-bottom: 2px solid transparent; transition: color .15s, border-color .15s; display: flex; align-items: center; gap: 6px; }
   .mode-tab:hover { color: var(--lg-text); }
   .mode-tab.active { color: var(--lg-accent); border-bottom-color: var(--lg-accent); }
 
   /* ── Filter bar ── */
   #filterbar { background: var(--lg-surface); border-bottom: 1px solid var(--lg-border); padding: 8px 16px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex-shrink: 0; }
-  :where(.lg-scope) input[type="text"] { background: var(--lg-bg); border: 1px solid var(--lg-border); border-radius: 6px; color: var(--lg-text); font-family: 'JetBrains Mono', monospace; font-size: 12px; padding: 5px 10px; outline: none; transition: border-color .15s; }
+  :where(.lg-scope) input[type="text"] { background: var(--lg-bg); border: 1px solid var(--lg-border); border-radius: 6px; color: var(--lg-text); font-family: var(--font-log); font-size: 12px; padding: 5px 10px; outline: none; transition: border-color .15s; }
   :where(.lg-scope) input[type="text"]:focus { border-color: var(--lg-accent); }
   #search { width: 280px; } #tagFilter { width: 220px; } #pidFilter { width: 220px; }
 
   .toggle-group { display: flex; gap: 4px; }
-  .lvl-btn { font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 700; padding: 4px 7px; border-radius: 4px; border: 1px solid transparent; cursor: pointer; opacity: .35; transition: opacity .15s; background: transparent; }
+  .lvl-btn { font-family: var(--font-log); font-size: 11px; font-weight: 700; padding: 4px 7px; border-radius: 4px; border: 1px solid transparent; cursor: pointer; opacity: .35; transition: opacity .15s; background: transparent; }
   .lvl-btn.active { opacity: 1; }
 
-  .search-mod { font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 700; padding: 4px 7px; border-radius: 4px; border: 1px solid var(--lg-border); cursor: pointer; background: transparent; color: var(--lg-muted); transition: color .15s, border-color .15s, background .15s; }
+  .search-mod { font-family: var(--font-log); font-size: 11px; font-weight: 700; padding: 4px 7px; border-radius: 4px; border: 1px solid var(--lg-border); cursor: pointer; background: transparent; color: var(--lg-muted); transition: color .15s, border-color .15s, background .15s; }
   .search-mod:hover { color: var(--lg-text); border-color: var(--lg-muted); }
   .search-mod.active { color: var(--lg-accent); border-color: var(--lg-accent); background: #58a6ff15; }
   .search-mod.error { color: var(--lg-red); border-color: var(--lg-red); background: #ff7b7215; }
@@ -197,7 +196,7 @@
   .lvl-btn[data-lvl="ERROR"]   { color: var(--lg-e); border-color: var(--lg-e); }
   .lvl-btn[data-lvl="ASSERT"]  { color: var(--lg-a); border-color: var(--lg-a); }
 
-  .plat-btn { font-family: 'IBM Plex Sans', sans-serif; font-size: 11px; font-weight: 600; padding: 4px 8px; border-radius: 4px; border: 1px solid transparent; cursor: pointer; opacity: .35; transition: opacity .15s, color .15s, border-color .15s; background: transparent; }
+  .plat-btn { font-family: var(--font-ui); font-size: 11px; font-weight: 600; padding: 4px 8px; border-radius: 4px; border: 1px solid transparent; cursor: pointer; opacity: .35; transition: opacity .15s, color .15s, border-color .15s; background: transparent; }
   .plat-btn.active { opacity: 1; }
   .plat-btn[data-plat="android"]        { color: var(--lg-android); border-color: var(--lg-android); }
   .plat-btn[data-plat="android"].active { color: var(--lg-green);   border-color: var(--lg-green);   }
@@ -207,7 +206,7 @@
   .sep { width: 1px; height: 20px; background: var(--lg-border); flex-shrink: 0; }
   .bar-spacer { flex: 1; }
 
-  .lg-icon-btn { background: transparent; border: 1px solid var(--lg-border); border-radius: 5px; color: var(--lg-muted); font-size: 12px; padding: 4px 10px; cursor: pointer; display: flex; align-items: center; gap: 5px; transition: color .15s, border-color .15s; white-space: nowrap; font-family: 'IBM Plex Sans', sans-serif; }
+  .lg-icon-btn { background: transparent; border: 1px solid var(--lg-border); border-radius: 5px; color: var(--lg-muted); font-size: 12px; padding: 4px 10px; cursor: pointer; display: flex; align-items: center; gap: 5px; transition: color .15s, border-color .15s; white-space: nowrap; font-family: var(--font-ui); }
   .lg-icon-btn:hover  { color: var(--lg-text); border-color: var(--lg-muted); }
   .lg-icon-btn.active { color: var(--lg-green); border-color: var(--lg-green); }
   .lg-icon-btn.lg-danger { color: var(--lg-red); border-color: var(--lg-red); }
@@ -218,7 +217,7 @@
      Right-pinning lives on the `.stats-export` wrapper below — keeping
      it there (instead of on `.stats` itself) guarantees stats + Export
      wrap together as a single unit when #filterbar wraps. */
-  .stats { font-size: 11px; color: var(--lg-muted); font-family: 'JetBrains Mono', monospace; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .stats { font-size: 11px; color: var(--lg-muted); font-family: var(--font-log); white-space: nowrap; font-variant-numeric: tabular-nums; }
   /* Single inline-flex row that holds [stats][Export]. `flex-wrap: nowrap`
      stops Export from breaking onto its own line when stats fattens up;
      `margin-left: auto` pins the whole cluster to the right edge of
@@ -252,22 +251,22 @@
   .ios-driver-warning.visible { display: block; }
   .ios-driver-warning .title { font-weight: 600; margin-bottom: 4px; color: var(--lg-yellow); }
   .ios-driver-warning .actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
-  .ios-driver-warning a, .ios-driver-warning button { font-family: 'IBM Plex Sans', sans-serif; font-size: 11px; font-weight: 600; text-decoration: none; padding: 5px 10px; border-radius: 5px; cursor: pointer; border: 1px solid var(--lg-yellow); background: transparent; color: var(--lg-yellow); transition: background .15s, color .15s; }
+  .ios-driver-warning a, .ios-driver-warning button { font-family: var(--font-ui); font-size: 11px; font-weight: 600; text-decoration: none; padding: 5px 10px; border-radius: 5px; cursor: pointer; border: 1px solid var(--lg-yellow); background: transparent; color: var(--lg-yellow); transition: background .15s, color .15s; }
   .ios-driver-warning a:hover, .ios-driver-warning button:hover { background: var(--lg-yellow); color: var(--lg-bg); }
 
   .card-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
   .card-title  { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
   .card-desc   { font-size: 12px; color: var(--lg-muted); line-height: 1.5; min-height: 34px; }
-  .card-desc code { font-family: 'JetBrains Mono', monospace; font-size: 11px; background: var(--lg-bg); border: 1px solid var(--lg-border); border-radius: 3px; padding: 1px 5px; color: #79c0ff; }
+  .card-desc code { font-family: var(--font-log); font-size: 11px; background: var(--lg-bg); border: 1px solid var(--lg-border); border-radius: 3px; padding: 1px 5px; color: #79c0ff; }
 
   .connect-row { display: flex; gap: 6px; align-items: center; }
-  .connect-row input { flex: 1; background: var(--lg-bg); border: 1px solid var(--lg-border); border-radius: 6px; color: var(--lg-text); font-family: 'JetBrains Mono', monospace; font-size: 12px; padding: 7px 10px; outline: none; transition: border-color .15s; min-width: 0; }
+  .connect-row input { flex: 1; background: var(--lg-bg); border: 1px solid var(--lg-border); border-radius: 6px; color: var(--lg-text); font-family: var(--font-log); font-size: 12px; padding: 7px 10px; outline: none; transition: border-color .15s; min-width: 0; }
   .connect-row input:focus { border-color: var(--lg-accent); }
   /* Custom device dropdown — themed to match the rest of the UI and forced
      to open below the trigger (the native <select> popup is OS-controlled
      and ignores the page theme entirely). */
   .device-picker { position: relative; flex: 1; min-width: 0; }
-  .device-trigger { width: 100%; background: var(--lg-bg); border: 1px solid var(--lg-border); border-radius: 6px; color: var(--lg-text); font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; padding: 7px 10px; cursor: pointer; text-align: left; display: flex; justify-content: space-between; align-items: center; gap: 8px; transition: border-color .15s, background .15s; }
+  .device-trigger { width: 100%; background: var(--lg-bg); border: 1px solid var(--lg-border); border-radius: 6px; color: var(--lg-text); font-family: var(--font-ui); font-size: 12px; padding: 7px 10px; cursor: pointer; text-align: left; display: flex; justify-content: space-between; align-items: center; gap: 8px; transition: border-color .15s, background .15s; }
   .device-trigger:hover:not(:disabled) { border-color: var(--lg-muted); }
   .device-trigger.open { border-color: var(--lg-accent); }
   .device-trigger:disabled { opacity: .55; cursor: not-allowed; }
@@ -281,13 +280,13 @@
   .device-menu-item.selected { background: #1a3a5e; color: var(--lg-accent); }
   .device-menu-empty { padding: 10px; color: var(--lg-muted); font-size: 12px; font-style: italic; cursor: default; }
 
-  .lg-btn-primary   { background: var(--lg-accent); color: #0d1117; font-weight: 700; font-size: 12px; padding: 7px 14px; border-radius: 6px; border: none; cursor: pointer; white-space: nowrap; font-family: 'IBM Plex Sans', sans-serif; transition: opacity .15s; }
+  .lg-btn-primary   { background: var(--lg-accent); color: #0d1117; font-weight: 700; font-size: 12px; padding: 7px 14px; border-radius: 6px; border: none; cursor: pointer; white-space: nowrap; font-family: var(--font-ui); transition: opacity .15s; }
   .lg-btn-primary:hover { opacity: .85; } .lg-btn-primary:disabled { opacity: .4; cursor: not-allowed; }
   .lg-btn-primary.lg-danger { background: var(--lg-red); color: #fff; }
-  .btn-secondary { background: transparent; color: var(--lg-muted); font-size: 12px; font-weight: 600; padding: 7px 12px; border-radius: 6px; border: 1px solid var(--lg-border); cursor: pointer; white-space: nowrap; font-family: 'IBM Plex Sans', sans-serif; transition: color .15s, border-color .15s; }
+  .btn-secondary { background: transparent; color: var(--lg-muted); font-size: 12px; font-weight: 600; padding: 7px 12px; border-radius: 6px; border: 1px solid var(--lg-border); cursor: pointer; white-space: nowrap; font-family: var(--font-ui); transition: color .15s, border-color .15s; }
   .btn-secondary:hover { color: var(--lg-text); border-color: var(--lg-muted); }
 
-  .status-pill { display: inline-flex; align-items: center; gap: 5px; font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 20px; border: 1px solid; }
+  .status-pill { display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-log); font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 20px; border: 1px solid; }
   .status-pill.disconnected { color: var(--lg-muted);  border-color: var(--lg-border); }
   .status-pill.connecting   { color: var(--lg-yellow); border-color: var(--lg-yellow); background: #e3b34110; }
   .status-pill.connected    { color: var(--lg-green);  border-color: var(--lg-green);  background: #56d36415; }
@@ -299,9 +298,9 @@
   /* "N lines below" pill over the bottom of the log table (live mode, auto-scroll off). A sibling of the
      scroller, so repainting it never relayouts the rows or changes #logTable.scrollHeight. bottom: 18px
      also clears the horizontal scrollbar shown below 960px. No transition: nothing animates per flush. */
-  .newer-pill { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 6; display: none; align-items: center; gap: 8px; padding: 5px 12px; line-height: 16px; border-radius: 999px; border: 1px solid var(--lg-accent); background: var(--lg-surface); color: var(--lg-text); font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; font-weight: 600; white-space: nowrap; cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,.35); }
+  .newer-pill { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 6; display: none; align-items: center; gap: 8px; padding: 5px 12px; line-height: 16px; border-radius: 999px; border: 1px solid var(--lg-accent); background: var(--lg-surface); color: var(--lg-text); font-family: var(--font-ui); font-size: 12px; font-weight: 600; white-space: nowrap; cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,.35); }
   .newer-pill.visible { display: inline-flex; }
-  .newer-pill .newer-count { font-family: 'JetBrains Mono', monospace; font-variant-numeric: tabular-nums; }
+  .newer-pill .newer-count { font-family: var(--font-log); font-variant-numeric: tabular-nums; }
   .newer-pill .newer-sep { color: var(--lg-muted); }
   .newer-pill .newer-action { color: var(--lg-accent); }
   .newer-pill:hover { background: var(--lg-surface2); }
@@ -319,13 +318,13 @@
      height it can't cover row text, and the header's own surface/muted pair keeps it legible in every theme.
      top 4px + 18px tall fits the fixed-size header (~27px, independent of the log zoom); right 14px clears
      the vertical scrollbar. */
-  .reading-window-hint { position: absolute; top: 4px; right: 14px; z-index: 6; display: none; padding: 1px 8px; line-height: 14px; border: 1px solid var(--lg-border); border-radius: 999px; background: var(--lg-surface); color: var(--lg-muted); font-family: 'JetBrains Mono', monospace; font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; cursor: help; }
+  .reading-window-hint { position: absolute; top: 4px; right: 14px; z-index: 6; display: none; padding: 1px 8px; line-height: 14px; border: 1px solid var(--lg-border); border-radius: 999px; background: var(--lg-surface); color: var(--lg-muted); font-family: var(--font-log); font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; cursor: help; }
   .reading-window-hint.visible { display: inline-block; }
   .status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
   .status-pill.connecting .status-dot { animation: blink 1s ease-in-out infinite; }
   @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
 
-  .device-badge { background: var(--lg-surface2); border: 1px solid var(--lg-border); border-radius: 6px; padding: 7px 10px; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--lg-muted); line-height: 1.6; display: none; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 96px; overflow-y: auto; }
+  .device-badge { background: var(--lg-surface2); border: 1px solid var(--lg-border); border-radius: 6px; padding: 7px 10px; font-family: var(--font-log); font-size: 10px; color: var(--lg-muted); line-height: 1.6; display: none; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 96px; overflow-y: auto; }
   .device-badge.visible { display: block; }
 
   /* ── Live status bar (shown above log table in live mode) ── */
@@ -340,7 +339,7 @@
   .modal { background: var(--lg-surface); border: 1px solid var(--lg-border); border-radius: 12px; padding: 28px; width: 640px; max-width: 90vw; max-height: 85vh; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
   .modal h2 { font-size: 15px; font-weight: 600; }
   .modal p  { font-size: 12px; color: var(--lg-muted); line-height: 1.6; }
-  .modal code { font-family: 'JetBrains Mono', monospace; font-size: 11px; background: var(--lg-bg); border: 1px solid var(--lg-border); border-radius: 3px; padding: 1px 5px; color: #79c0ff; }
+  .modal code { font-family: var(--font-log); font-size: 11px; background: var(--lg-bg); border: 1px solid var(--lg-border); border-radius: 3px; padding: 1px 5px; color: #79c0ff; }
   .modal-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--lg-border); margin-bottom: 4px; }
   .modal-tab { font-size: 13px; font-weight: 600; padding: 8px 16px; background: transparent; border: none; color: var(--lg-muted); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
   .modal-tab.active { color: var(--lg-accent); border-bottom-color: var(--lg-accent); }
@@ -348,10 +347,10 @@
   .modal-content.active { display: flex; }
   .steps { display: flex; flex-direction: column; gap: 10px; }
   .step  { display: flex; gap: 10px; align-items: flex-start; }
-  .step-num { background: var(--lg-accent); color: #0d1117; font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 700; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 2px; }
+  .step-num { background: var(--lg-accent); color: #0d1117; font-family: var(--font-log); font-size: 10px; font-weight: 700; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 2px; }
   .step p { font-size: 12px; color: var(--lg-text); line-height: 1.6; }
-  .code-block { background: var(--lg-bg); border: 1px solid var(--lg-border); border-radius: 8px; padding: 10px 12px; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #79c0ff; white-space: pre; overflow-x: auto; position: relative; }
-  .copy-btn { position: absolute; top: 6px; right: 6px; background: var(--lg-surface2); border: 1px solid var(--lg-border); border-radius: 4px; color: var(--lg-muted); font-size: 10px; padding: 2px 7px; cursor: pointer; font-family: 'IBM Plex Sans', sans-serif; }
+  .code-block { background: var(--lg-bg); border: 1px solid var(--lg-border); border-radius: 8px; padding: 10px 12px; font-family: var(--font-log); font-size: 11px; color: #79c0ff; white-space: pre; overflow-x: auto; position: relative; }
+  .copy-btn { position: absolute; top: 6px; right: 6px; background: var(--lg-surface2); border: 1px solid var(--lg-border); border-radius: 4px; color: var(--lg-muted); font-size: 10px; padding: 2px 7px; cursor: pointer; font-family: var(--font-ui); }
   .copy-btn:hover { color: var(--lg-text); }
   .modal-footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px; border-top: 1px solid var(--lg-border); }
 
@@ -360,7 +359,7 @@
   .troubleshoot .ts-title { font-size: 12px; font-weight: 600; color: var(--lg-text); }
   .troubleshoot .ts-desc  { font-size: 12px; color: var(--lg-muted); line-height: 1.6; margin: 0; }
   .troubleshoot .ts-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-  .troubleshoot .ts-result { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--lg-muted); white-space: pre-wrap; word-break: break-word; display: none; }
+  .troubleshoot .ts-result { font-family: var(--font-log); font-size: 11px; color: var(--lg-muted); white-space: pre-wrap; word-break: break-word; display: none; }
   .troubleshoot .ts-result.visible { display: block; padding: 8px 10px; background: var(--lg-bg); border: 1px solid var(--lg-border); border-radius: 6px; }
   .troubleshoot .ts-result.ok  { color: var(--lg-green); border-color: var(--lg-green); }
   .troubleshoot .ts-result.err { color: var(--lg-red);   border-color: var(--lg-red);   }
@@ -372,7 +371,7 @@
   /* ── Manual-fallback command block (shown in stall popup + setup tab) ── */
   .ts-manual          { font-size: 12px; color: var(--lg-muted); line-height: 1.5; }
   .ts-manual .ts-manual-title { color: var(--lg-text); font-weight: 600; margin-bottom: 4px; }
-  .ts-manual pre      { font-family: 'JetBrains Mono', monospace; font-size: 11px; background: var(--lg-bg); border: 1px solid var(--lg-border); border-radius: 6px; padding: 8px 10px; margin: 6px 0 0; white-space: pre-wrap; color: var(--lg-text); }
+  .ts-manual pre      { font-family: var(--font-log); font-size: 11px; background: var(--lg-bg); border: 1px solid var(--lg-border); border-radius: 6px; padding: 8px 10px; margin: 6px 0 0; white-space: pre-wrap; color: var(--lg-text); }
   .ts-manual pre .cmt { color: var(--lg-muted); }
 
   /* ── Log table ── */
@@ -382,7 +381,7 @@
   /* `--log-font-size` is set on `:root` by the zoom buttons / keyboard
      shortcut and persisted in localStorage; the header keeps a fixed
      small size so column titles stay readable at any body zoom. */
-  table { table-layout: fixed; border-collapse: separate; border-spacing: 0; font-family: 'JetBrains Mono', monospace; font-size: var(--log-font-size, 12px); min-width: 960px; width: 100%; }
+  table { table-layout: fixed; border-collapse: separate; border-spacing: 0; font-family: var(--font-log); font-size: var(--log-font-size, 12px); min-width: 960px; width: 100%; }
   /* Sticky header — declared on thead, tr, AND th for cross-browser reliability. */
   thead    { position: sticky; top: 0; z-index: 5; }
   thead tr { position: sticky; top: 0; }
@@ -399,7 +398,7 @@
   td { padding: 3px 10px; vertical-align: top; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   td.lg-msg { white-space: pre-wrap; word-break: break-all; }
 
-  .plat-badge { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 3px; font-size: 9px; font-weight: 700; font-family: 'IBM Plex Sans', sans-serif; flex-shrink: 0; }
+  .plat-badge { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 3px; font-size: 9px; font-weight: 700; font-family: var(--font-ui); flex-shrink: 0; }
   .plat-badge.android { background: #3ddc8420; color: var(--lg-android); border: 1px solid #3ddc8440; }
   .plat-badge.ios     { background: #a8b3c120; color: var(--lg-ios);     border: 1px solid #a8b3c140; }
   td.plat-cell { text-align: center; padding: 3px 4px; }
@@ -446,7 +445,7 @@
     background: transparent; border: none; border-radius: 6px;
     padding: 8px 10px; cursor: pointer; text-align: left;
     transition: background .1s; width: 100%;
-    font-family: 'IBM Plex Sans', sans-serif; color: var(--lg-text);
+    font-family: var(--font-ui); color: var(--lg-text);
   }
   .export-opt:hover { background: var(--lg-surface2); }
   .export-opt strong { font-size: 13px; display: block; margin-bottom: 1px; }
