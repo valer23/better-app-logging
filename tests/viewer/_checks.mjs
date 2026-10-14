@@ -61,8 +61,9 @@ export function handlerErrors(root, js) {
   for (const el of elements(root)) {
     for (const [name, value] of Object.entries(el.attrs)) {
       if (!name.startsWith('on')) continue;
-      const m = /^\s*([A-Za-z_$][\w$]*)\s*\(/.exec(value);
-      if (!m) out.push(`line ${el.line}: ${name}="${value}" is not a plain function call`);
+      // Handler bodies are JavaScript the XSS lint never scans, so the whole value must be exactly one call.
+      const m = /^\s*([A-Za-z_$][\w$]*)\s*\((?:[^()'"]|'[^']*'|"[^"]*")*\)\s*;?\s*$/.exec(value);
+      if (!m) out.push(`line ${el.line}: ${name}="${value}" is not a single plain function call`);
       else if (!globals.has(m[1])) out.push(`line ${el.line}: ${name} calls ${m[1]}(), which is not a global function`);
     }
   }
@@ -76,7 +77,9 @@ export function xssErrors(js, filename = 'script', firstLine = 1) {
   // .innerHTML or ['innerHTML'] assigned with any assignment operator. Runs over the whole text, not
   // line by line, so a continuation such as `= ''\n + s` is seen. Only a plain `= ''` that is not
   // continued by a binary operator is allowed; every compound operator (+=, ||=, &&=, ??=) is an error.
-  for (const m of js.matchAll(/(?:\.innerHTML|\[\s*['"]innerHTML['"]\s*\])\s*(\+=|\|\|=|&&=|\?\?=|=)(?!=)\s*([^;]*)/g)) {
+  // The right-hand side is captured inside a lookahead so it is not consumed: an allowed `= ''` with
+  // no `;` after it must not swallow a later sink.
+  for (const m of js.matchAll(/(?:\.innerHTML|\[\s*['"]innerHTML['"]\s*\])\s*(\+=|\|\|=|&&=|\?\?=|=)(?!=)(?=\s*([^;]*))/g)) {
     const SKIP = /^(?:\s|\/\/[^\n]*|\/\*[\s\S]*?\*\/)*/;
     const lit = /^(?:''|""|``)/.exec(m[2].replace(SKIP, ''));
     // After the empty literal the statement must end: nothing, or a char that cannot continue an expression.

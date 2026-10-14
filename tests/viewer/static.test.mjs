@@ -85,6 +85,9 @@ test('the checks reject deliberately broken input', () => {
   assert.deepEqual(parseHtml('<svg><path d="M0 0"/></svg><br/><img src="x"/>').errors, []);
   assert.notDeepEqual(C.handlerErrors(h('<button onclick="nope()">x</button>'), 'function yes() {}'), []);
   assert.deepEqual(C.handlerErrors(h('<button onclick="yes(1)">x</button>'), 'function yes() {}'), []);
+  assert.notDeepEqual(C.handlerErrors(h('<button onclick="yes(); x.innerHTML = s">x</button>'), 'function yes() {}'), []);
+  assert.notDeepEqual(C.handlerErrors(h('<button onclick="yes(1) + other()">x</button>'), 'function yes() {}'), []);
+  assert.deepEqual(C.handlerErrors(h(`<button onclick="yes('a)b', &quot;c&quot;)">x</button>`), 'function yes() {}'), []);
   assert.notDeepEqual(C.xssErrors('el.innerHTML = userText;'), []);
   assert.notDeepEqual(C.xssErrors("el.innerHTML = '<b>' + s;"), []);
   assert.deepEqual(C.xssErrors("el.innerHTML = '';"), []);
@@ -102,6 +105,8 @@ test('the checks reject deliberately broken input', () => {
   assert.deepEqual(C.xssErrors("el.innerHTML = '' // clear\nnext();"), []);
   assert.deepEqual(C.xssErrors("if (a) { el.innerHTML = '' }"), []);
   assert.deepEqual(C.xssErrors("a();\nel.innerHTML = '';"), []);
+  assert.notDeepEqual(C.xssErrors("if (a) { el.innerHTML = '' } else { el.innerHTML = userText; }"), []);
+  assert.notDeepEqual(C.xssErrors("el.innerHTML = ''\nother.innerHTML = userText;"), []);
   assert.deepEqual(C.xssErrors("el.outerHTML === s;"), []);
   assert.match(C.xssErrors("a();\nb();\nel.innerHTML ||= s;", 'f.js', 10)[0], /^f\.js:12:/);
   assert.notDeepEqual(C.xssErrors('Object.assign(el, { innerHTML: s });'), []);
