@@ -1,0 +1,82 @@
+// Static checks over viewer/applogs-viewer.html and viewer/assets. Zero dependencies:
+//   node --test "tests/viewer/*.test.mjs"
+// The checks themselves live in _checks.mjs; the last test here feeds them broken snippets, so a
+// check that silently stops detecting anything fails too.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import { parseHtml, elements } from './_html.mjs';
+import { ROOT, ASSETS, HTML_PATH, read, listAssets, inlineScripts } from './_load.mjs';
+import * as C from './_checks.mjs';
+
+const html = read(HTML_PATH);
+const { root, errors: parseErrors } = parseHtml(html);
+const assetFiles = listAssets();
+const allJs = [
+  ...inlineScripts(html).map(s => ({ code: s.code, line: s.line, filename: 'viewer/applogs-viewer.html' })),
+  ...assetFiles.filter(p => p.endsWith('.js')).map(p => ({ code: read(path.join(ASSETS, p)), line: 1, filename: `viewer/assets/${p}` })),
+];
+const jsText = allJs.map(s => s.code).join('\n');
+const cssFiles = assetFiles.filter(p => p.endsWith('.css')).map(p => ({ path: p, text: read(path.join(ASSETS, p)) }));
+// Ids that JS creates at runtime (createElement + id) and therefore are not in the HTML. None today.
+const DYNAMIC_IDS = [];
+
+test('page HTML is well formed: tags balance, no duplicate attributes', () => {
+  assert.deepEqual(parseErrors, []);
+});
+
+test('every script compiles', () => {
+  assert.deepEqual(C.scriptSyntaxErrors(allJs), []);
+});
+
+test('ids are unique', () => {
+  assert.deepEqual(C.duplicateIds(root), []);
+});
+
+test('every id the JS looks up exists in the page', () => {
+  assert.deepEqual(C.missingIds(root, jsText, DYNAMIC_IDS), []);
+});
+
+test('every inline on*= handler calls a defined global function', () => {
+  assert.deepEqual(C.handlerErrors(root, jsText), []);
+});
+
+test('XSS: innerHTML is only ever cleared; no outerHTML, insertAdjacentHTML or document.write', () => {
+  assert.deepEqual(allJs.flatMap(s => C.xssErrors(s.code, s.filename, s.line)), []);
+});
+
+test('drag band: every control inside #topbar matches INTERACTIVE', () => {
+  assert.deepEqual(C.dragErrors(root, jsText, ['topbar']), []);
+});
+
+test('the checks reject deliberately broken input', () => {
+  const h = s => parseHtml(s).root;
+  assert.notDeepEqual(parseHtml('<div><span></div>').errors, []);
+  assert.notDeepEqual(parseHtml('<p class="a" class="b"></p>').errors, []);
+  assert.notDeepEqual(C.scriptSyntaxErrors([{ code: 'function (', filename: 'bad.js' }]), []);
+  assert.notDeepEqual(C.duplicateIds(h('<p id="a"></p><i id="a"></i>')), []);
+  assert.notDeepEqual(C.missingIds(h('<p id="a"></p>'), "document.getElementById('b')"), []);
+  assert.deepEqual(C.missingIds(h('<p id="a"></p><p id="b"></p>'), "getElementById(x === 'q' ? 'a' : 'b')"), []);
+  assert.notDeepEqual(C.handlerErrors(h('<button onclick="nope()">x</button>'), 'function yes() {}'), []);
+  assert.deepEqual(C.handlerErrors(h('<button onclick="yes(1)">x</button>'), 'function yes() {}'), []);
+  assert.notDeepEqual(C.xssErrors('el.innerHTML = userText;'), []);
+  assert.notDeepEqual(C.xssErrors("el.innerHTML = '<b>' + s;"), []);
+  assert.deepEqual(C.xssErrors("el.innerHTML = '';"), []);
+  assert.notDeepEqual(C.xssErrors('el.innerHTML += s;'), []);
+  assert.notDeepEqual(C.xssErrors("el['innerHTML'] = s;"), []);
+  assert.deepEqual(C.xssErrors("if (el.innerHTML === '') x();"), []);
+  assert.notDeepEqual(C.xssErrors("new DOMParser().parseFromString(s, 'text/html');"), []);
+  assert.notDeepEqual(C.xssErrors('range.createContextualFragment(s);'), []);
+  assert.notDeepEqual(C.xssErrors("el.insertAdjacentHTML('beforeend', s);"), []);
+  assert.notDeepEqual(C.xssErrors('el.outerHTML = s;'), []);
+  assert.notDeepEqual(C.dragErrors(h('<div id="topbar"><span tabindex="0">x</span></div>'), "const INTERACTIVE = 'button';", ['topbar']), []);
+  assert.deepEqual(C.dragErrors(h('<div id="topbar"><div class="grp"><span role="switch">x</span></div></div>'), "const INTERACTIVE = 'button, .grp';", ['topbar']), []);
+  assert.notDeepEqual(C.offlineErrors("@import url('https://fonts.googleapis.com/css2');", 'x.css'), []);
+  assert.deepEqual(C.offlineErrors("new WebSocket('ws://localhost:8765')", 'x.js'), []);
+  assert.notDeepEqual(C.cssBraceErrors('a { b: c; '), []);
+  assert.notDeepEqual(C.cssBraceErrors('a { } }'), []);
+  assert.deepEqual([...C.cssClassSelectors('.a .b:hover, x.c { transition: .5s } @media (x) { .d { } }')].sort(), ['a', 'b', 'c', 'd']);
+  assert.deepEqual(C.cssAssetRefs("src: url(geist.woff2), url('data:x'), url(https://x.y/z)", 'fonts/fonts.css'), ['fonts/geist.woff2']);
+  assert.deepEqual(C.jsAssetRefs("s.src = 'assets/js/dev-bench.js';"), ['js/dev-bench.js']);
+  assert.deepEqual([...C.cssVarsUsed('a { color: var(--x, red); b: var( --y ) }')], ['--x', '--y']);
+});

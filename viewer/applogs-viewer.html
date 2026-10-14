@@ -1097,7 +1097,11 @@ async function loadDevices(platform) {
     console.warn(`[loadDevices ${platform}]`, e);
     input.value = '';
     label.textContent = 'Device discovery unavailable';
-    menu.innerHTML = '<div class="device-menu-empty">Device discovery unavailable</div>';
+    menu.innerHTML = '';
+    const unavailable = document.createElement('div');
+    unavailable.className = 'device-menu-empty';
+    unavailable.textContent = 'Device discovery unavailable';
+    menu.appendChild(unavailable);
     trigger.disabled = true;
   }
 }
