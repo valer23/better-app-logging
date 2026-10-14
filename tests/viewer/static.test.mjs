@@ -391,10 +391,10 @@ test('legacy log columns 2-6 are sized in ch, so they follow the log text size',
 });
 
 test('legacy log table min-width keeps a Message floor that follows the log font', () => {
-  // 116ch = 78ch of sized columns 2-6 + a 38ch Message floor. 148px = 28px column 1 + 5x20px padding on
+  // 102ch = 78ch of sized columns 2-6 + a 24ch Message floor. 148px = 28px column 1 + 5x20px padding on
   // columns 2-6 + 20px Message padding. Both terms scale with the table's own font, so the floor grows with the text.
   const css = C.stripCss(read(path.join(ASSETS, 'css', 'legacy.css')));
   const rules = [...css.matchAll(/(?:^|[\s}])table\s*\{([^}]*)\}/g)];
   assert.equal(rules.length, 1, 'legacy.css has exactly one bare table rule');
-  assert.equal(rules[0][1].match(/min-width:\s*([^;]+);/)?.[1].trim(), 'max(960px, calc(116ch + 148px))');
+  assert.equal(rules[0][1].match(/min-width:\s*([^;]+);/)?.[1].trim(), 'max(960px, calc(102ch + 148px))');
 });
