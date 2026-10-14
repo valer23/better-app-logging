@@ -215,3 +215,7 @@ test('retention lives in session.js only: the legacy script keeps no copy of the
   assert.match(code, /ALV\.session\.trimPending\(/);
   assert.match(code, /ALV\.session\.discard\(/);
 });
+
+test('each session renders into its own tbody: the legacy script looks #tbody up once, at start', () => {
+  assert.equal(legacy().split("getElementById('tbody')").length - 1, 1);
+});

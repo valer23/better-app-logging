@@ -50,8 +50,6 @@
   const flushes = [];   // [startedAt, ms]
   const feeds = [];     // [startedAt, ms]
   let maxGap = 0, maxPending = 0, maxRows = 0, sent = 0, carry = 0;
-  const tbody = document.getElementById('tbody');
-
   // flushBatch is a top-level function declaration, so every call site (timer, inline flush,
   // requeue, visibilitychange) resolves it through the global object and picks up this wrapper.
   const realFlush = flushBatch;
@@ -89,7 +87,7 @@
     sent += n;
     if (elapsed > WARMUP_MS) {
       maxPending = Math.max(maxPending, pendingBatch.length);
-      maxRows = Math.max(maxRows, tbody.rows.length);
+      maxRows = Math.max(maxRows, cur.tbody.rows.length);
     }
     if (scenario === 'read' && cur.follow && elapsed > 2000) {
       toggleAutoScroll();

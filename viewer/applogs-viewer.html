@@ -430,6 +430,9 @@ const enabledPlatforms = new Set(['android','ios']);
 // code hoists `liveSession`, view code hoists `cur`. Until the file session exists both are one object.
 const liveSession = ALV.session.create('live', 'Live session');
 let cur = liveSession;
+liveSession.tbody = document.getElementById('tbody');   // the shown session's tbody carries id="tbody"
+// A session's DOM work is skipped while it is off screen: hidden window, or another session shown.
+function offscreen(s) { return s !== cur || document.hidden; }
 let currentMode = 'live';
 let wsAndroid = null, wsIos = null;
 let androidLive = false, iosLive = false;
@@ -459,7 +462,7 @@ let hintFrom = 0, hintTo = 0, hintOf = 0;   // slice on screen (1-based, inclusi
 function updateReadingWindowHint() {
   if (document.hidden) return;   // visibilitychange → updateNewerPill refreshes it
   const s = cur, filtered = s.filtered;
-  const rows = document.getElementById('tbody').rows, n = rows.length, start = s.renderedEnd - n;
+  const rows = s.tbody.rows, n = rows.length, start = s.renderedEnd - n;
   // The identity check mirrors prependOlderRows: never show positions for a DOM that doesn't match `filtered`.
   const shown = n > 0 && n < filtered.length && (currentMode === 'file' || !s.follow)
     && !s.domStale && start >= 0 && rows[0]._message === filtered[start];
@@ -739,8 +742,9 @@ window.addEventListener('keydown', (e) => {
 initResizeHandles();
 
 // Row selection — click toggles selection, persists across filter changes
-// (handler in applyFilters scrolls the selected row back into view).
-document.getElementById('tbody').addEventListener('click', e => {
+// (handler in applyFilters scrolls the selected row back into view). Delegated from #logTable:
+// every session has its own tbody, and the header row has no _message.
+document.getElementById('logTable').addEventListener('click', e => {
   // Second click of a double click on the pill lands on a row; don't unpin again. A slow OS double-click
   // interval can exceed 500 ms, so a multi-click is swallowed for longer; plain row clicks are unaffected.
   const dt = performance.now() - newerPillJumpAt;
@@ -1235,7 +1239,7 @@ function flushBatch() {
   if (livePaused) return;   // hold backlog until resume
   const s = liveSession;    // only the live session ingests; hoisted once per chunk
   if (!pendingBatch.length) {
-    if (s.domStale && !document.hidden) renderLiveTail(s, s.filtered.length);   // repair DOM skipped while hidden
+    if (s.domStale && !offscreen(s)) renderLiveTail(s, s.filtered.length);   // repair DOM skipped while off screen
     updateNewerPill();
     return;
   }
@@ -1283,22 +1287,22 @@ function flushBatch() {
   lastFlushAt = performance.now();   // at the END so a long flush doesn't immediately re-trigger
 }
 
-// Render the rows added to `s.filtered` since index `firstNew`. While hidden the
-// DOM work is skipped (domStale); the next visible render rebuilds the whole tail.
+// Render the rows added to `s.filtered` since index `firstNew`. While `s` is off screen the
+// DOM work is skipped (domStale); the next on-screen render rebuilds the whole tail.
 // With Follow off the table is a window the user is reading and is left alone here
 // (see extendReadingWindow).
 function renderLiveTail(s, firstNew) {
   // A stale DOM still gets the full rebuild below.
-  if (!s.follow && !s.domStale) { if (currentMode === 'live') extendReadingWindow(); return; }
+  if (!s.follow && !s.domStale) { if (s === cur && currentMode === 'live') extendReadingWindow(); return; }
   const filtered = s.filtered, prevEnd = s.renderedEnd;
   s.renderedEnd = filtered.length;
-  if (document.hidden) { s.domStale = true; return; }
+  if (offscreen(s)) { s.domStale = true; return; }
   const cap  = FOLLOW_DOM_CAP;   // the followed tail, or the newest rows when a stale reading window is rebuilt
   // prevEnd !== firstNew: the DOM doesn't end where the new rows start (after applyFilters, or a reading
   // window that stopped short), so appending would leave a gap; rebuild instead.
   const full = s.domStale || prevEnd !== firstNew || filtered.length - firstNew >= cap;   // full = replace tbody, don't append
   if (full || filtered.length > firstNew) {
-    const tbody = document.getElementById('tbody');
+    const tbody = s.tbody;
     // Only build rows that survive `cap` — anything older would be trimmed right away.
     const from = Math.max(full ? 0 : firstNew, filtered.length - cap);
     const frag = document.createDocumentFragment();
@@ -1334,8 +1338,8 @@ function renderLiveTail(s, firstNew) {
 // Runs from flushBatch and from the scroll handler, which also calls it in file mode and while
 // pinned (when no drain is running), not only with auto-scroll off.
 function extendReadingWindow() {
-  const s = cur, t = document.getElementById('logTable'), tbody = document.getElementById('tbody');
-  if (s.domStale || document.hidden) return;   // stale: the next render rebuilds it
+  const s = cur, t = document.getElementById('logTable'), tbody = s.tbody;
+  if (s.domStale || offscreen(s)) return;   // stale: the next render rebuilds it
   if (s.renderedEnd >= s.filtered.length) return;
   if (t.scrollTop + t.clientHeight < t.scrollHeight - 200) return;   // reading further up: stay put
   const excess = tbody.rows.length + Math.min(PAGE, s.filtered.length - s.renderedEnd) - LIVE_DOM_CAP;
@@ -1454,7 +1458,7 @@ function clearLogs() {
   const s = cur;
   discardBacklog(s);
   ALV.session.reset(s, []);
-  document.getElementById('tbody').innerHTML = '';
+  s.tbody.innerHTML = '';
   updateStats(); updateExportVisibility(); updateNewerPill();
 }
 
@@ -1473,32 +1477,32 @@ function trimRetained(s, dropAll = false) {
 
 // Remove table rows whose message was trimmed (seq < cutoff). Rows are an ordered subsequence of
 // `filtered`, so they form one contiguous block after any file rows. A stale DOM, or a followed
-// tail while hidden, is rebuilt from `filtered` on the next visible render instead.
+// tail while off screen, is rebuilt from `filtered` on the next on-screen render instead.
 function dropTrimmedRows(s, cutoff) {
-  if (s.domStale) return;   // rebuilt from `filtered` on the next visible render
-  const tbody = document.getElementById('tbody');
-  const rows = tbody.rows;
+  if (s.domStale) return;   // rebuilt from `filtered` on the next on-screen render
+  const rows = s.tbody.rows;
   let a = 0;
   while (a < rows.length && rows[a]._message && rows[a]._message.seq === undefined) a++;   // file rows stay
   let b = a;
   while (b < rows.length && rows[b]._message && rows[b]._message.seq < cutoff) b++;
   if (b === a) return;
-  // Following and hidden: the next visible render rebuilds the tail anyway. Auto-scroll off with every live
-  // row trimmed: restart at the newest lines (stale rebuild); refilling from the oldest retained lines would
-  // hand them to the very next trim. A partly trimmed reading window is trimmed in place, hidden or not,
-  // so returning to the app keeps the reading position.
-  if (s.follow ? document.hidden : b === rows.length) { s.domStale = true; return; }
+  // Following and off screen: the next on-screen render rebuilds the tail anyway. Auto-scroll off with every
+  // live row trimmed: restart at the newest lines (stale rebuild); refilling from the oldest retained lines
+  // would hand them to the very next trim. A partly trimmed reading window is trimmed in place, on screen or
+  // not (a detached tbody too), so coming back keeps the reading position.
+  if (s.follow ? offscreen(s) : b === rows.length) { s.domStale = true; return; }
   const survivor = b < rows.length ? rows[b] : null;
-  const scroller = document.getElementById('logTable');
   // With auto-scroll off the user is reading mid-buffer: keep the first surviving row where it was.
-  // Chromium's scroll anchoring usually compensates already (delta 0); WebKit may not.
-  const topBefore = (!s.follow && survivor) ? survivor.getBoundingClientRect().top : 0;
+  // Chromium's scroll anchoring usually compensates already (delta 0); WebKit may not. Only the shown
+  // session owns the scroller: a detached tbody is never compensated (restoreView re-pins its anchor).
+  const compensate = s === cur && !s.follow && survivor !== null;
+  const topBefore = compensate ? survivor.getBoundingClientRect().top : 0;
   const range = document.createRange();
   range.setStartBefore(rows[a]);
   if (survivor) range.setEndBefore(survivor); else range.setEndAfter(rows[b - 1]);
   range.deleteContents();
-  if (!s.follow && survivor && survivor.isConnected) {
-    scroller.scrollTop += survivor.getBoundingClientRect().top - topBefore;
+  if (compensate && survivor.isConnected) {
+    document.getElementById('logTable').scrollTop += survivor.getBoundingClientRect().top - topBefore;
   }
 }
 
@@ -1757,15 +1761,15 @@ function applyFilters() {
   // rows either side of the selection, wherever it sits in the history, and the reader slides on
   // from there. (Rendering forward from the head stopped at 30000 rows and left them all in the DOM.)
   const idx = s.sel ? s.filtered.indexOf(s.sel) : -1;
-  s.renderedEnd = Math.max(0, idx - PAGE); document.getElementById('tbody').innerHTML = '';
+  s.renderedEnd = Math.max(0, idx - PAGE); s.tbody.innerHTML = '';
   renderChunk(s.renderedEnd);
   if (idx >= 0) renderChunk(s.renderedEnd);   // second page: the selection can sit just past the first, and this keeps ~PAGE rows below it
   updateNewerPill();   // renderedEnd was just reset: with auto-scroll off the count is large again
   if (idx >= 0) {
     // Defer scroll until layout settles.
     requestAnimationFrame(() => {
-      const tbody = document.getElementById('tbody');
-      for (const tr of tbody.rows) {
+      if (s !== cur) return;   // another session took the table before this frame
+      for (const tr of s.tbody.rows) {
         if (tr._message === s.sel) {
           tr.scrollIntoView({ block: 'center', behavior: 'auto' });
           return;
@@ -1874,7 +1878,7 @@ function renderChunk(start) {
   const end = Math.min(start + PAGE, filtered.length);
   const frag = document.createDocumentFragment();
   for (let i = start; i < end; i++) frag.appendChild(buildRow(filtered[i], false));
-  document.getElementById('tbody').appendChild(frag);
+  s.tbody.appendChild(frag);
   s.renderedEnd = end;
   // NOTE: scroll reset intentionally removed — applyFilters handles it explicitly
 }
@@ -1891,8 +1895,8 @@ function renderChunk(start) {
 // history: it jumps back by about a page whenever a slide adds rows above.
 function prependOlderRows(t) {
   const s = cur, filtered = s.filtered;
-  if (s.domStale || document.hidden) return;   // tbody doesn't match renderedEnd; the next render rebuilds it
-  const tbody = document.getElementById('tbody'), rows = tbody.rows, first = rows[0];
+  if (s.domStale || offscreen(s)) return;   // tbody doesn't match renderedEnd; the next render rebuilds it
+  const tbody = s.tbody, rows = tbody.rows, first = rows[0];
   const start = s.renderedEnd - rows.length;        // the DOM is filtered[start, renderedEnd)
   if (!first || start <= 0) return;                 // at the oldest retained line
   if (first._message !== filtered[start]) return;   // out of sync: never build a duplicate or a gap
