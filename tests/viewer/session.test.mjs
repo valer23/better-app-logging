@@ -219,3 +219,31 @@ test('retention lives in session.js only: the legacy script keeps no copy of the
 test('each session renders into its own tbody: the legacy script looks #tbody up once, at start', () => {
   assert.equal(legacy().split("getElementById('tbody')").length - 1, 1);
 });
+
+// Source of the top-level function `name` in the legacy script (from its `function` line to the closing brace at column 0).
+function fnSource(name) {
+  const code = legacy();
+  const start = code.search(new RegExp(`^function ${name}\\(`, 'm'));
+  assert.notEqual(start, -1, `function ${name} exists`);
+  return code.slice(start, code.indexOf('\n}\n', start));
+}
+
+test('document.hidden is read only by offscreen, the two position indicators and the visibilitychange listener', () => {
+  const code = legacy();
+  const owners = [];
+  const re = /^function (\w+)\(|^document\.addEventListener\('(\w+)'|document\.hidden/gm;
+  let owner = null, m;
+  while ((m = re.exec(code))) {
+    if (m[1] || m[2]) owner = m[1] || `listener:${m[2]}`;
+    else owners.push(owner);
+  }
+  assert.deepEqual(owners.sort(),
+    ['listener:visibilitychange', 'offscreen', 'updateNewerPill', 'updateReadingWindowHint']);
+});
+
+test('the render paths gate on offscreen(s), which also covers a session that is not shown', () => {
+  assert.match(legacy(), /function offscreen\(s\) \{ return s !== cur \|\| document\.hidden; \}/);
+  for (const name of ['flushBatch', 'renderLiveTail', 'extendReadingWindow', 'dropTrimmedRows', 'prependOlderRows']) {
+    assert.match(fnSource(name), /offscreen\(/, `${name} calls offscreen(`);
+  }
+});

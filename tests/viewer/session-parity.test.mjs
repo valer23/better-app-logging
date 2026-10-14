@@ -143,3 +143,35 @@ test('#54 and #57: with Follow off the window stays put and the pill counts the 
   v.api.updateNewerPill();
   assert.equal(v.text('newerPillCount'), '7 lines below');
 });
+
+// offscreen(s) is `s !== cur || document.hidden`. These tests keep the window visible (hidden = false),
+// so only the `s !== cur` half can gate the render paths: a path that reads document.hidden instead
+// renders live rows into whichever tbody the session holds.
+test('offscreen gate: a live flush with another session shown keeps the DOM untouched and marks it stale', () => {
+  const v = boot();
+  v.doc.hidden = false;
+  v.run("cur = ALV.session.create('file', 'f'); cur.tbody = document.getElementById('x')");
+  v.send(3); v.api.flushBatch();
+  assert.equal(v.run('liveSession.domStale'), true);
+  assert.equal(v.run('liveSession.renderedEnd'), 3);
+  assert.equal(v.run('liveSession.filtered.length'), 3);
+});
+
+test('offscreen gate: the same flush with the live session shown renders it (control)', () => {
+  const v = boot();
+  v.doc.hidden = false;
+  v.send(3); v.api.flushBatch();
+  assert.equal(v.run('liveSession.domStale'), false);
+  assert.equal(v.run('liveSession.renderedEnd'), 3);
+});
+
+test('offscreen gate: dropTrimmedRows on an off-screen followed session defers to the next render', () => {
+  const v = boot();
+  v.doc.hidden = false;
+  v.send(3); v.api.flushBatch();
+  v.run("liveSession.tbody = { rows: [{ _message: { seq: 0 } }, { _message: { seq: 1 } }, { _message: { seq: 2 } }] }");
+  v.run("cur = ALV.session.create('file', 'f'); cur.tbody = document.getElementById('x')");
+  v.run('dropTrimmedRows(liveSession, 2)');
+  assert.equal(v.run('liveSession.domStale'), true);
+  assert.equal(v.run('liveSession.tbody.rows.length'), 3, 'rows untouched');
+});
