@@ -462,4 +462,67 @@
   #loading.visible { display: flex; }
   .spinner { width: 20px; height: 20px; border: 2px solid var(--lg-border); border-top-color: var(--lg-accent); border-radius: 50%; animation: spin .6s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Reduce motion ──
+     Legacy transitions and animations use literal times, so the foundation's zeroed --t-* tokens do
+     not reach them. These two rules switch them off for OS Reduce motion (unless Settings says Off)
+     and for Settings On, as the foundation did before v1.2. Each selector is listed by class or tag,
+     never a universal selector; tests/viewer/static.test.mjs fails if a legacy rule animates and is
+     missing here. !important because several selectors above out-rank a single class. */
+  @media (prefers-reduced-motion: reduce) {
+    :where(.app:not([data-motion="off"])) .zoom-btn,
+    :where(.app:not([data-motion="off"])) .theme-switch-track,
+    :where(.app:not([data-motion="off"])) .theme-switch-thumb,
+    :where(.app:not([data-motion="off"])) .glass-switch-track,
+    :where(.app:not([data-motion="off"])) .glass-switch-label,
+    :where(.app:not([data-motion="off"])) .glass-switch-thumb,
+    :where(.app:not([data-motion="off"])) .mode-tab,
+    :where(.app:not([data-motion="off"])) input[type="text"],
+    :where(.app:not([data-motion="off"])) .lvl-btn,
+    :where(.app:not([data-motion="off"])) .search-mod,
+    :where(.app:not([data-motion="off"])) .plat-btn,
+    :where(.app:not([data-motion="off"])) .lg-icon-btn,
+    :where(.app:not([data-motion="off"])) #dropzone,
+    :where(.app:not([data-motion="off"])) .ios-driver-warning a,
+    :where(.app:not([data-motion="off"])) .ios-driver-warning button,
+    :where(.app:not([data-motion="off"])) .connect-row input,
+    :where(.app:not([data-motion="off"])) .device-trigger,
+    :where(.app:not([data-motion="off"])) .device-trigger .device-trigger-caret,
+    :where(.app:not([data-motion="off"])) .device-menu-item,
+    :where(.app:not([data-motion="off"])) .lg-btn-primary,
+    :where(.app:not([data-motion="off"])) .btn-secondary,
+    :where(.app:not([data-motion="off"])) .status-pill.connecting .status-dot,
+    :where(.app:not([data-motion="off"])) .col-resize-handle::after,
+    :where(.app:not([data-motion="off"])) tbody tr,
+    :where(.app:not([data-motion="off"])) tr.new-row,
+    :where(.app:not([data-motion="off"])) .export-opt,
+    :where(.app:not([data-motion="off"])) .spinner { animation: none !important; transition: none !important; }
+  }
+  .app[data-motion="reduce"] .zoom-btn,
+  .app[data-motion="reduce"] .theme-switch-track,
+  .app[data-motion="reduce"] .theme-switch-thumb,
+  .app[data-motion="reduce"] .glass-switch-track,
+  .app[data-motion="reduce"] .glass-switch-label,
+  .app[data-motion="reduce"] .glass-switch-thumb,
+  .app[data-motion="reduce"] .mode-tab,
+  .app[data-motion="reduce"] input[type="text"],
+  .app[data-motion="reduce"] .lvl-btn,
+  .app[data-motion="reduce"] .search-mod,
+  .app[data-motion="reduce"] .plat-btn,
+  .app[data-motion="reduce"] .lg-icon-btn,
+  .app[data-motion="reduce"] #dropzone,
+  .app[data-motion="reduce"] .ios-driver-warning a,
+  .app[data-motion="reduce"] .ios-driver-warning button,
+  .app[data-motion="reduce"] .connect-row input,
+  .app[data-motion="reduce"] .device-trigger,
+  .app[data-motion="reduce"] .device-trigger .device-trigger-caret,
+  .app[data-motion="reduce"] .device-menu-item,
+  .app[data-motion="reduce"] .lg-btn-primary,
+  .app[data-motion="reduce"] .btn-secondary,
+  .app[data-motion="reduce"] .status-pill.connecting .status-dot,
+  .app[data-motion="reduce"] .col-resize-handle::after,
+  .app[data-motion="reduce"] tbody tr,
+  .app[data-motion="reduce"] tr.new-row,
+  .app[data-motion="reduce"] .export-opt,
+  .app[data-motion="reduce"] .spinner { animation: none !important; transition: none !important; }
 }

@@ -131,14 +131,62 @@ test('the checks reject deliberately broken input', () => {
   }
   for (const ok of ['.app::selection { }', 'button, input { }', ':where(.app) button { }', '.scroll::-webkit-scrollbar-thumb { }',
     ':where(.lg-scope) button { }', ':where(.lg-scope) { }', '.switch::after { }', 'td:not(table td) { }', '[data-glass="on"] tbody td { }',
-    ':root { }', '@keyframes k { from { } to { } }', '@media (x) { .a .b { } }', '@supports (hanging-punctuation: first) { .app ::selection { } }']) {
+    ':root { }', '@keyframes k { from { } to { } }', '@media (x) { .a .b { } }', ...C.WEBKIT_ALLOW.map(s => `${C.WEBKIT_DETECTOR} { ${s} { } }`),
+    `${C.WEBKIT_DETECTOR} { .app .a { } }`]) {
     assert.deepEqual(C.universalSelectorErrors(ok), [], ok);
+  }
+  // The WebKit-only block is not a blanket exemption: only its four listed selectors pass, and only there.
+  for (const bad of [`${C.WEBKIT_DETECTOR} { .app * { } }`, `${C.WEBKIT_DETECTOR} { .app *::before { } }`,
+    `${C.WEBKIT_DETECTOR} { .app ::-webkit-scrollbar-corner { } }`, `${C.WEBKIT_DETECTOR} { .app ::selection, .app :hover { } }`,
+    `${C.WEBKIT_DETECTOR} { @media (x) { .app ::after { } } }`, '@supports (display: grid) { .app ::selection { } }',
+    '@media (x) { .app ::-webkit-scrollbar { } }']) {
+    assert.notDeepEqual(C.universalSelectorErrors(bad), [], bad);
   }
   assert.deepEqual(C.universalSelectorErrors('.app * { }', 'x.css', ['.app *']), []);
   assert.match(C.universalSelectorErrors('a { }\n\n.app ::after { }', 'x.css')[0], /^x\.css:3: \.app ::after$/);
   assert.notDeepEqual(C.motionTokenErrors('.x { transition: color .2s }'), []);
   assert.notDeepEqual(C.motionTokenErrors('.x { animation: spin 900ms linear infinite }'), []);
   assert.notDeepEqual(C.motionTokenErrors('.x { transition-duration: 1s }'), []);
+  assert.notDeepEqual(C.motionTokenErrors('.x { transition-delay: 200ms }'), []);
+  assert.notDeepEqual(C.motionTokenErrors('.x { animation-delay: .5s }'), []);
+  assert.notDeepEqual(C.motionTokenErrors('.x { -webkit-transition: color 1s }'), []);
+  assert.notDeepEqual(C.motionTokenErrors('.x { transition: color var(--t-fast, 200ms) }'), []);
+  assert.notDeepEqual(C.motionTokenErrors('.x { transition-duration: var(--a, var(--b, 1s)) }'), []);
+  assert.deepEqual(C.motionTokenErrors('.x { transition-delay: 0s; transition: color var(--t-fast, var(--t-med)) }'), []);
+  assert.notDeepEqual(C.motionTokenErrors('.x { scroll-behavior: smooth }'), []);
+  assert.notDeepEqual(C.motionTokenErrors('@media (prefers-reduced-motion: no-preference) { .x { scroll-behavior: smooth } }'), []);
+  assert.notDeepEqual(C.motionTokenErrors('.app:not([data-motion="reduce"]) { scroll-behavior: smooth }'), []);
+  assert.deepEqual(C.motionTokenErrors('@media (prefers-reduced-motion: no-preference) { .app:not([data-motion="reduce"]) { scroll-behavior: smooth } }'), []);
+  assert.deepEqual(C.motionTokenErrors('.x { scroll-behavior: auto }'), []);
+  assert.match(C.motionTokenErrors('a { }\n.x { scroll-behavior: smooth }', 'x.css')[0], /^x\.css:2:/);
+  // Pseudo-element box-sizing: any stylesheet, comma lists, nesting in @media / @supports / @layer.
+  for (const bad of ['.a::before { padding: 4px }', '.a::after { content: ""; border: 1px solid red }', '.a::before, .b { border-width: 2px }',
+    '.b, .a:after { border-top: 1px solid }', '@media (x) { .a::before { width: 50% } }', '@layer l { @supports (y) { .a::after { padding: 0 4px } } }',
+    '.a::before { height: 100% }', '.a::before { border: solid }', '.a::before { padding: var(--p) }', '.a::before { border-left-width: thin }']) {
+    assert.notDeepEqual(C.pseudoBoxSizingErrors(bad), [], bad);
+  }
+  for (const ok of ['.a::before { padding: 4px; box-sizing: border-box }', '.a::before { padding: 0 }', '.a::after { border: none }', '.a::after { border: 0 }',
+    '.a::before { width: 3px; height: 20px }', '.a { padding: 4px; border: 1px solid }', '.a::before { border-radius: 50%; content: "}" }',
+    '.a::before { content: "{ padding: 4px }" }', '@keyframes k { to { padding: 4px } }', '.a::before { padding: 4px; BOX-SIZING: content-box }']) {
+    assert.deepEqual(C.pseudoBoxSizingErrors(ok), [], ok);
+  }
+  assert.deepEqual(C.pseudoBoxSizingErrors('.a::before { padding: 4px }', 'x.css', ['.a::before']), []);
+  assert.match(C.pseudoBoxSizingErrors('a { }\n\n.b::after { padding: 1px }', 'x.css')[0], /^x\.css:3: \.b::after$/);
+  // Reduce motion coverage of legacy-style literal-time animations.
+  const RM = (sels, os = C.MOTION_OS_PREFIX, forced = C.MOTION_FORCED_PREFIX) => {
+    const none = 'animation: none !important; transition: none !important';
+    return `@media (prefers-reduced-motion: reduce) { ${sels.map(s => os + s).join(', ')} { ${none} } } ${sels.map(s => forced + s).join(', ')} { ${none} }`;
+  };
+  const ANIM = '.a { transition: color .1s } .b:hover::after { animation: spin 1s infinite } .c .d { transition-property: opacity }';
+  assert.deepEqual(C.reducedMotionCoverageErrors(`${ANIM} ${RM(['.a', '.b::after', '.c .d'])}`), []);
+  assert.deepEqual(C.reducedMotionCoverageErrors(`@layer legacy { ${ANIM} ${RM(['.a', '.b::after', '.d'])} }`), []);
+  assert.notDeepEqual(C.reducedMotionCoverageErrors(ANIM), []);
+  assert.notDeepEqual(C.reducedMotionCoverageErrors(`${ANIM} ${RM(['.a', '.b::after'])}`), []);          // .c .d missing in both
+  assert.notDeepEqual(C.reducedMotionCoverageErrors(`${ANIM} ${RM(['.a', '.b', '.d'])}`), []);              // ::after dropped
+  assert.notDeepEqual(C.reducedMotionCoverageErrors(`${ANIM} ${RM(['.a', '.b::after', '.d']).split('} .app[data-motion')[0]}}`), []); // no Settings rule
+  assert.notDeepEqual(C.reducedMotionCoverageErrors(`${ANIM} ${RM(['.a', '.b::after', '.d']).replace(/animation: none !important/, 'animation: none')}`), []);
+  assert.notDeepEqual(C.reducedMotionCoverageErrors(`${ANIM} ${RM(['.a', '.b::after', '.d'], '.app ')}`), []);   // wrong OS prefix
+  assert.deepEqual(C.animatedSelectors(`.x { transition: none } .y { color: red } ${RM(['.x'])}`), []); // none is not an animation; the Reduce motion rules themselves are skipped
   assert.deepEqual(C.motionTokenErrors('.x { transition: background var(--t-fast) var(--ease), color var(--t-fast) }'), []);
   assert.deepEqual(C.motionTokenErrors('.x { animation: row-in var(--t-arrival) var(--ease); transition: none }'), []);
   assert.notDeepEqual(C.cssBraceErrors('a { b: c; '), []);
@@ -185,7 +233,8 @@ test('every stylesheet has balanced braces', () => {
 test('legacy.css shares no class with the foundation and declares only --lg-* tokens', () => {
   const legacy = read(path.join(ASSETS, 'css', 'legacy.css'));
   const foundationClasses = C.cssClassSelectors(read(path.join(ROOT, 'docs', 'design', 'ui-redesign-foundation.css')));
-  assert.deepEqual([...C.cssClassSelectors(legacy)].filter(c => foundationClasses.has(c)), []);
+  // `.app` is the foundation root, named on purpose by legacy's two Reduce motion rules (OS and Settings).
+  assert.deepEqual([...C.cssClassSelectors(legacy)].filter(c => c !== 'app' && foundationClasses.has(c)), []);
   assert.deepEqual([...C.cssPropsDeclared(legacy)].filter(p => !p.startsWith('--lg-')), []);
   assert.match(legacy, /^@layer legacy \{$/m);
 });
@@ -248,15 +297,28 @@ test('both Reduce motion rules zero every --t-* token', () => {
   }
 });
 
-test('foundation pseudo-elements that set padding or a border declare their own box-sizing', () => {
-  // .app * gives elements border-box; pseudo-elements keep content-box since v1.2.
-  const css = C.stripCss(read(path.join(ASSETS, 'css', 'foundation.css')));
-  const bad = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
-    .filter(([, sel, body]) => /::(?:before|after)\b/.test(sel)
-      && /(?:^|;)\s*(?:padding|border(?:-(?:top|right|bottom|left))?(?:-width)?)\s*:\s*(?!0(?:px)?\s*(?:;|$)|none\b)/.test(body)
-      && !/box-sizing\s*:/.test(body))
-    .map(([, sel]) => sel.trim());
-  assert.deepEqual(bad, []);
+test('pseudo-elements that set padding, a border or a percentage size declare their own box-sizing', () => {
+  // .app * gives elements border-box; ::before/::after keep content-box since v1.2 (no .app *::before).
+  // Every stylesheet is checked, so legacy and future region sheets ported from mockup CSS are too.
+  assert.ok(cssFiles.length >= 3, 'expected foundation, legacy and base');
+  assert.deepEqual(cssFiles.flatMap(f => C.pseudoBoxSizingErrors(f.text, `viewer/assets/${f.path}`)), []);
+});
+
+test('every legacy animation or transition is switched off by both Reduce motion rules', () => {
+  const legacy = cssFiles.find(f => f.path === 'css/legacy.css').text;
+  assert.ok(C.animatedSelectors(legacy).length >= 20, 'the legacy animation scan found too few selectors');
+  assert.deepEqual(C.reducedMotionCoverageErrors(legacy, 'viewer/assets/css/legacy.css'), []);
+});
+
+test('the WebKit-only @supports detector gates exactly the foundation\'s per-element ::selection and scrollbar rules', () => {
+  // universalSelectorErrors allows four universal selectors inside this block. If Chromium ever ships
+  // hanging-punctuation the block would also apply there (the cost v1.2 removed), so re-check the
+  // detector then: pick another WebKit-only feature and change WEBKIT_DETECTOR / WEBKIT_ONLY together.
+  const css = read(path.join(ASSETS, 'css', 'foundation.css'));
+  assert.equal(C.WEBKIT_DETECTOR, '@supports (hanging-punctuation: first)');
+  assert.equal(C.stripCss(css).split(C.WEBKIT_DETECTOR).length - 1, 2, 'one inline ::selection rule and one scrollbar block');
+  const inside = C.cssRules(css).filter(r => r.atRules.includes(C.WEBKIT_DETECTOR)).flatMap(r => r.selectors);
+  assert.deepEqual([...new Set(inside)].sort(), [...C.WEBKIT_ALLOW].sort());
 });
 
 test('<html> is the foundation root; stylesheets load foundation, legacy, app in that order', () => {

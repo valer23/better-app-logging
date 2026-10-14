@@ -841,6 +841,10 @@ Nothing is dropped.
 - The foundation CSS replaces the current `:root` token set. Apply its `.app` selectors to `<html class="app">`, because the pre-paint script already writes `data-theme`, `data-glass` and `data-platform` on `<html>`.
 - Keep the XSS invariant: rows and messages are built with `textContent` and nodes, never `innerHTML`.
 - `#logTable` today is the only scroll container (`body` is `overflow:hidden`). The new grid keeps one scroll container with a sticky header. The grid may move from `<table>` to the `role="grid"` div layout, but row heights must stay uniform (see Performance).
+- Stylesheet rules for P3+ authors (foundation v1.2; `tests/viewer/static.test.mjs` enforces them on every file under `viewer/assets/css`):
+  - **Pseudo-elements are content-box.** v1.2 dropped `.app *::before, .app *::after { box-sizing: border-box }`, so a `::before` or `::after` rule that sets padding, a border or a percentage width/height must declare `box-sizing` itself. Check this before pasting mockup CSS, which relied on the old reset.
+  - **No universal-bucket selectors**, and no pseudo-element on one. The only exceptions are the allow-listed `.app *`, `.app :focus`, `.app :focus-visible` and `.log-row > *`, plus four `.app ::selection` / `.app ::-webkit-scrollbar*` selectors inside the WebKit-only `@supports (hanging-punctuation: first)` block.
+  - **Durations come from a `--t-*` token**, with no literal time (not even in a `var()` fallback or a `*-delay`), and no `scroll-behavior: smooth` outside `@media (prefers-reduced-motion: no-preference)` with `:not([data-motion="reduce"])`. Reduce motion zeroes the tokens, so nothing else is needed. `legacy.css` keeps literal times until P13, so it carries two class-bucketed Reduce motion rules (OS, and Settings On) that list every legacy selector that animates; add a new legacy animation there too, or better, do not add one.
 
 ### Persisted settings and migration
 

@@ -252,9 +252,14 @@ export function fontManifestErrors(files, sums) {
 // every ancestor to the root. A pseudo-element on such a compound (.app ::selection, *::before) costs
 // more again: Chromium also resolves that pseudo-element's style for every element, which doubles
 // the matching work of every other rule. Returns "file:line: selector" for each one outside
-// @keyframes / @font-face and outside @supports (hanging-punctuation: first), the WebKit-only block
-// (foundation header), unless its exact text is in `allow`.
+// @keyframes / @font-face, unless its exact text is in `allow`. Inside @supports (hanging-punctuation:
+// first), the WebKit-only block (foundation header), only the selectors in WEBKIT_ALLOW may be universal;
+// anything else there is reported like anywhere else.
+// hanging-punctuation is the WebKit-only detector: re-check it whenever Chromium ships the property
+// (the block would then style every element in Chromium too); static.test.mjs pins both uses of it.
+export const WEBKIT_DETECTOR = '@supports (hanging-punctuation: first)';
 const WEBKIT_ONLY = /^@supports \(\s*hanging-punctuation\s*:\s*first\s*\)$/;
+export const WEBKIT_ALLOW = ['.app ::selection', '.app ::-webkit-scrollbar', '.app ::-webkit-scrollbar-thumb', '.app ::-webkit-scrollbar-track'];
 // Splits on `sep` characters that sit outside () and [].
 function splitTop(text, sep) {
   const out = [];
@@ -299,7 +304,7 @@ function compoundHasKey(compound) {
 export function universalSelectorErrors(css, filename = 'css', allow = []) {
   // Comments are blanked but keep their newlines, so reported lines match the file.
   const s = stripCss(css.replace(/\/\*[\s\S]*?\*\//g, c => c.replace(/[^\n]/g, ' ')));
-  const exempt = []; // one flag per open block: true when nothing inside it is checked
+  const exempt = []; // one entry per open block: 'skip' = nothing inside is checked, 'webkit' = WEBKIT_ALLOW applies
   const out = [];
   let line = 1;
   let start = 0;
@@ -309,15 +314,17 @@ export function universalSelectorErrors(css, filename = 'css', allow = []) {
     else if (ch === '{') {
       const prelude = s.slice(start, i).trim().replace(/\s+/g, ' ');
       if (prelude.startsWith('@')) {
-        exempt.push(exempt.includes(true) || WEBKIT_ONLY.test(prelude) || /^@(?:-webkit-)?(?:keyframes|font-face)\b/.test(prelude));
+        exempt.push(exempt.includes('skip') || /^@(?:-webkit-)?(?:keyframes|font-face)\b/.test(prelude) ? 'skip'
+          : exempt.includes('webkit') || WEBKIT_ONLY.test(prelude) ? 'webkit' : '');
       } else {
-        if (!exempt.includes(true)) {
+        if (!exempt.includes('skip')) {
+          const inWebkit = exempt.includes('webkit');
           for (const sel of splitTop(prelude, /,/)) {
             const parts = splitTop(sel, /[\s>+~]/);
-            if (!compoundHasKey(parts[parts.length - 1] || '') && !allow.includes(sel)) out.push(`${filename}:${line}: ${sel}`);
+            if (!compoundHasKey(parts[parts.length - 1] || '') && !allow.includes(sel) && !(inWebkit && WEBKIT_ALLOW.includes(sel))) out.push(`${filename}:${line}: ${sel}`);
           }
         }
-        exempt.push(true); // declarations
+        exempt.push('skip'); // declarations
       }
       start = i + 1;
     } else if (ch === '}') { exempt.pop(); start = i + 1; }
@@ -326,16 +333,165 @@ export function universalSelectorErrors(css, filename = 'css', allow = []) {
   return out;
 }
 
+// Rule parser shared by the checks below. Comments are blanked (newlines kept, so lines match the file)
+// and the structural characters inside strings are masked, but string text is kept, so attribute
+// selectors such as [data-motion="reduce"] stay readable. Returns [{ selectors, body, atRules, line }] for
+// every style rule, at any depth of @media / @supports / @layer / @container; @keyframes, @font-face and
+// the like are skipped. CSS nesting (a rule inside a rule) is not supported: its body is kept as text.
+export function maskCss(css) {
+  return css.replace(/\/\*[\s\S]*?\*\//g, c => c.replace(/[^\n]/g, ' '))
+    .replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, m => m.replace(/[{};,()[\]]/g, '_'));
+}
+export function cssRules(css) {
+  const s = maskCss(css);
+  const rules = [];
+  const atRules = [];
+  let line = 1;
+  let start = 0;
+  const closeOf = open => {
+    let d = 0;
+    for (let j = open; j < s.length; j++) {
+      if (s[j] === '{') d++;
+      else if (s[j] === '}' && --d === 0) return j;
+    }
+    return s.length;
+  };
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === '\n') line++;
+    else if (ch === '{') {
+      const prelude = s.slice(start, i).trim().replace(/\s+/g, ' ');
+      const close = closeOf(i);
+      if (prelude.startsWith('@')) {
+        if (/^@(?:-webkit-)?(?:keyframes|font-face|page|property|counter-style|font-feature-values)\b/.test(prelude)) {
+          line += (s.slice(i, close).match(/\n/g) || []).length;
+          i = close;
+        } else atRules.push(prelude);
+      } else {
+        rules.push({ selectors: splitTop(prelude, /,/), body: s.slice(i + 1, close), atRules: [...atRules], line });
+        line += (s.slice(i, close).match(/\n/g) || []).length;
+        i = close;
+      }
+      start = i + 1;
+    } else if (ch === '}') { atRules.pop(); start = i + 1; }
+    else if (ch === ';') start = i + 1;
+  }
+  return rules;
+}
+// [{ prop, value }] of a rule body; prop lower-cased, !important kept in value.
+export function declarations(body) {
+  return splitTop(body, /;/).map(d => {
+    const k = d.indexOf(':');
+    return k < 0 ? null : { prop: d.slice(0, k).trim().toLowerCase(), value: d.slice(k + 1).trim() };
+  }).filter(Boolean);
+}
+
+// Pseudo-elements are not boxes of .app *, so they keep content-box (design v1.2 dropped
+// .app *::before/::after). A rule on ::before/::after that sets a non-zero padding or border, or a
+// percentage width/height, must say which box model it means: declare box-sizing in the same rule
+// (or list the exact selector in `allow`, when a shared rule elsewhere sets it). Returns
+// "file:line: selector" per offending selector.
+const SIDES = '(?:top|right|bottom|left|block|inline|block-start|block-end|inline-start|inline-end)';
+const PAD = new RegExp(`^padding(?:-${SIDES})?$`);
+const BORDER = new RegExp(`^border(?:-${SIDES})?(?:-width)?$`);
+const SIZE = /^(?:min-|max-)?(?:width|height|inline-size|block-size)$/;
+function nonZeroLength(v) {
+  return v.split(/\s+/).some(t => /var\(|calc\(|env\(|min\(|max\(|clamp\(/.test(t)
+    || (/^[+-]?(?:\d*\.)?\d+[a-z%]*$/i.test(t) && !/^[+-]?0*\.?0+[a-z%]*$/i.test(t)));
+}
+function setsBox({ prop, value }) {
+  const v = value.replace(/\s*!important\s*$/i, '').toLowerCase();
+  if (PAD.test(prop)) return nonZeroLength(v);
+  if (BORDER.test(prop)) {
+    if (/\b(?:none|hidden)\b/.test(v)) return false;
+    if (nonZeroLength(v) || /\b(?:thin|medium|thick)\b/.test(v)) return true;
+    return /\b(?:solid|dashed|dotted|double|groove|ridge|inset|outset)\b/.test(v);
+  }
+  return SIZE.test(prop) && v.includes('%');
+}
+export function pseudoBoxSizingErrors(css, filename = 'css', allow = []) {
+  const out = [];
+  for (const r of cssRules(css)) {
+    const decls = declarations(r.body);
+    if (!decls.some(setsBox) || decls.some(d => d.prop === 'box-sizing')) continue;
+    for (const sel of r.selectors) {
+      if (/::?(?:before|after)\b/.test(sel) && !allow.includes(sel)) out.push(`${filename}:${r.line}: ${sel}`);
+    }
+  }
+  return out;
+}
+
 // Reduce motion zeroes the foundation's --t-* duration tokens rather than matching every element,
 // so a transition or animation with a literal time would ignore it. Returns "file:line: declaration"
-// for each transition / animation / *-duration value that holds a literal time outside var().
+// for each transition / animation / *-duration / *-delay value that holds a literal time, including
+// one in a var() fallback (a literal 0 delay is harmless and passes). Also flags scroll-behavior:
+// smooth, which Reduce motion no longer forces back to auto, unless the rule sits in
+// @media (prefers-reduced-motion: no-preference) and every selector has :not([data-motion="reduce"]).
 export function motionTokenErrors(css, filename = 'css') {
   const s = stripCss(css.replace(/\/\*[\s\S]*?\*\//g, c => c.replace(/[^\n]/g, ' ')));
   const out = [];
-  for (const m of s.matchAll(/(?<![\w-])(?:transition|animation)(?:-duration)?\s*:([^;{}]*)/g)) {
-    if (/(?<![\w.-])\d*\.?\d+m?s\b/.test(m[1].replace(/var\([^)]*\)/g, ''))) {
+  const TIME = /(?<![\w.-])(?:\d*\.)?\d+m?s\b/g;
+  for (const m of s.matchAll(/(?<![\w-])(?:-webkit-)?(?:transition|animation)(-duration|-delay)?\s*:([^;{}]*)/g)) {
+    // var(--x) is a token reference; var(--x, 200ms) keeps its fallback, which is a literal time.
+    let value = m[2];
+    for (let prev = ''; prev !== value;) { prev = value; value = value.replace(/var\(\s*--[\w-]+\s*\)/g, ' ').replace(/var\(\s*--[\w-]+\s*,/g, '('); }
+    const times = value.match(TIME) || [];
+    if (times.some(x => m[1] !== '-delay' || !/^0*\.?0+m?s$/.test(x))) {
       out.push(`${filename}:${s.slice(0, m.index).split('\n').length}: ${m[0].trim()}`);
     }
+  }
+  for (const r of cssRules(css)) {
+    if (!declarations(r.body).some(d => d.prop === 'scroll-behavior' && /\bsmooth\b/i.test(d.value))) continue;
+    const safe = r.atRules.includes('@media (prefers-reduced-motion: no-preference)')
+      && r.selectors.every(sel => sel.includes(':not([data-motion="reduce"])'));
+    if (!safe) out.push(`${filename}:${r.line}: scroll-behavior: smooth outside a reduced-motion-safe rule`);
+  }
+  return out;
+}
+
+// Legacy animations use literal times, so the token trick does not reach them: legacy.css carries two
+// class-bucketed rules instead, both setting animation: none !important and transition: none !important
+// on every legacy selector that animates or transitions:
+//   @media (prefers-reduced-motion: reduce) { :where(.app:not([data-motion="off"])) <sel>, ... }
+//   .app[data-motion="reduce"] <sel>, ...
+// A selector is covered when some selector of the rule ends in the same compound (state pseudo-classes
+// such as :hover ignored, pseudo-elements kept). Returns problems; empty = every one is covered.
+export const MOTION_OS_PREFIX = ':where(.app:not([data-motion="off"])) ';
+export const MOTION_FORCED_PREFIX = '.app[data-motion="reduce"] ';
+const ENDING = sel => (splitTop(sel, /[\s>+~]/).pop() || '').replace(/(?<!:):(?!:)[\w-]+(?:\([^)]*\))?/g, '');
+const isReducedRule = r => r.selectors.some(sel => sel.startsWith(MOTION_OS_PREFIX) || sel.startsWith(MOTION_FORCED_PREFIX));
+export function animatedSelectors(css) {
+  const out = new Set();
+  for (const r of cssRules(css)) {
+    if (isReducedRule(r)) continue;
+    const animates = declarations(r.body).some(d => /^(?:-webkit-)?(?:animation(?:-name)?|transition(?:-property)?)$/.test(d.prop) && !/^none\b/i.test(d.value));
+    if (animates) for (const sel of r.selectors) out.add(sel);
+  }
+  return [...out];
+}
+export function reducedMotionCoverageErrors(css, filename = 'css') {
+  const rules = cssRules(css);
+  const animated = animatedSelectors(css);
+  const out = [];
+  const kinds = [
+    ['OS Reduce motion', MOTION_OS_PREFIX, r => r.atRules.includes('@media (prefers-reduced-motion: reduce)')],
+    ['Settings Reduce motion', MOTION_FORCED_PREFIX, r => !r.atRules.some(a => a.startsWith('@media') || a.startsWith('@supports'))],
+  ];
+  for (const [name, prefix, where] of kinds) {
+    const mine = rules.filter(r => where(r) && r.selectors.some(sel => sel.startsWith(prefix)));
+    if (!mine.length) { out.push(`${filename}: no ${name} rule (${prefix.trim()} ...)`); continue; }
+    const covered = new Set();
+    for (const r of mine) {
+      for (const sel of r.selectors) {
+        if (!sel.startsWith(prefix)) out.push(`${filename}:${r.line}: ${name} rule selector "${sel}" does not start with ${prefix.trim()}`);
+        else covered.add(ENDING(sel.slice(prefix.length)));
+      }
+      const d = declarations(r.body);
+      for (const prop of ['animation', 'transition']) {
+        if (!d.some(x => x.prop === prop && /^none\s*!important$/i.test(x.value))) out.push(`${filename}:${r.line}: ${name} rule must set ${prop}: none !important`);
+      }
+    }
+    for (const sel of animated) if (!covered.has(ENDING(sel))) out.push(`${filename}: ${sel} animates but the ${name} rule does not cover it`);
   }
   return out;
 }
