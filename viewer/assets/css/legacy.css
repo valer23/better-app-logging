@@ -382,7 +382,8 @@
   /* `--log-fs` is set on `:root` by prefs.js (zoom buttons, keyboard
      shortcut; persisted in localStorage); the header keeps a fixed
      small size so column titles stay readable at any body zoom. */
-  table { table-layout: fixed; border-collapse: separate; border-spacing: 0; font-family: var(--font-log); font-size: var(--log-fs, 13px); min-width: 960px; width: 100%; }
+  /* Sized columns are 128px + 78ch; the Message column keeps a 38ch floor (274px at 12px, as before), so the table scrolls sideways instead of squeezing it. */
+  table { table-layout: fixed; border-collapse: separate; border-spacing: 0; font-family: var(--font-log); font-size: var(--log-fs, 13px); min-width: max(960px, calc(116ch + 148px)); width: 100%; }
   /* Sticky header — declared on thead, tr, AND th for cross-browser reliability. */
   thead    { position: sticky; top: 0; z-index: 5; }
   thead tr { position: sticky; top: 0; }
