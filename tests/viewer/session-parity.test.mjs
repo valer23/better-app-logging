@@ -58,16 +58,18 @@ test('#45: past MAX_RETAINED the oldest live lines go, and #stats says how many'
 test('#45: while paused the backlog is capped, #stats says resume skips to newest, and Resume drains the rest', () => {
   const v = boot();
   v.run('MAX_RETAINED = 100');
+  v.send(5); v.api.flushBatch();        // lines shown before the pause: Resume drops them (skip to newest)
   v.api.togglePause();
-  v.send(101);
+  v.send(101, 5);
   assert.equal(v.run('pendingBatch.length'), 90);
   assert.equal(v.get('liveDiscarded'), 11);
-  assert.equal(v.text('stats'), '0 / 0 lines, 11 discarded, resume skips to newest');
+  assert.equal(v.text('stats'), '5 / 5 lines, 11 discarded, resume skips to newest');
   assert.match(v.title('stats'), /^The paused backlog exceeded 100 lines/);
   v.api.togglePause();
   assert.equal(v.get('liveAll').length, 90);
-  assert.equal(v.get('liveAll')[0].msg, 'line 11');
-  assert.equal(v.text('stats'), '90 / 90 lines, 11 older discarded');
+  assert.equal(v.get('liveAll')[0].msg, 'line 16');
+  assert.equal(v.get('liveDiscarded'), 16);
+  assert.equal(v.text('stats'), '90 / 90 lines, 16 older discarded');
 });
 
 test('#55: Clear while paused discards the backlog, so Resume adds nothing', () => {
@@ -79,6 +81,16 @@ test('#55: Clear while paused discards the backlog, so Resume adds nothing', () 
   assert.equal(v.run('pendingBatch.length'), 0);
   v.api.togglePause();
   assert.equal(v.get('liveAll').length, 0);
+  assert.equal(v.text('stats'), '0 / 0 lines');
+});
+
+test('#45: Clear resets the discarded count, so #stats stops reporting older discarded lines', () => {
+  const v = boot();
+  v.run('MAX_RETAINED = 100');
+  v.send(150); v.api.flushBatch();
+  assert.equal(v.get('liveDiscarded'), 60);
+  v.api.clearLogs();
+  assert.equal(v.get('liveDiscarded'), 0);
   assert.equal(v.text('stats'), '0 / 0 lines');
 });
 
