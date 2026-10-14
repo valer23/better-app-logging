@@ -39,5 +39,9 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Threading",
 ] }
 
+# Router tests drive the real axum router with `ServiceExt::oneshot` (0.5.3 is already in Cargo.lock).
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+
 [features]
 custom-protocol = ["tauri/custom-protocol"]

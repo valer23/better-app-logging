@@ -485,6 +485,7 @@
   .spinner { width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .6s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
 </style>
+<link rel="stylesheet" href="assets/css/base.css">
 </head>
 <body>
 
@@ -1097,7 +1098,11 @@ async function loadDevices(platform) {
     console.warn(`[loadDevices ${platform}]`, e);
     input.value = '';
     label.textContent = 'Device discovery unavailable';
-    menu.innerHTML = '<div class="device-menu-empty">Device discovery unavailable</div>';
+    menu.innerHTML = '';
+    const unavailable = document.createElement('div');
+    unavailable.className = 'device-menu-empty';
+    unavailable.textContent = 'Device discovery unavailable';
+    menu.appendChild(unavailable);
     trigger.disabled = true;
   }
 }
@@ -2434,6 +2439,13 @@ document.getElementById('stallModal').addEventListener('click', e => { if (e.tar
 // code-block UI were removed when the Tauri host became the bridge — the
 // in-app `adb` and `idevicesyslog` are the only path now, so there is no
 // script to ship and no code block to copy.
+
+// ?bench=N loads the live-drain throughput bench (assets/js/dev-bench.js). Never loaded otherwise.
+if (/[?&]bench=[1-9]/.test(location.search)) {
+  const benchScript = document.createElement('script');
+  benchScript.src = 'assets/js/dev-bench.js';
+  document.body.appendChild(benchScript);
+}
 </script>
 </body>
 </html>

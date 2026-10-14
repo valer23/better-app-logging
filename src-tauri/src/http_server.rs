@@ -6,6 +6,7 @@
 //!
 //! Routes on port 8780:
 //! - `GET /` — viewer HTML
+//! - `GET /assets/*path` — viewer CSS, JS and fonts (`viewer_assets`, exact-match table)
 //! - `GET /devices/{android,ios}`, `GET /ios-driver-status` — device discovery
 //! - `POST /ios/{pair,unpair,repair}` — iOS pairing actions
 //! - `POST /window/glass-mode` — toggle macOS NSVisualEffectView material
@@ -16,7 +17,7 @@ use std::sync::mpsc::Sender;
 
 use axum::{
     body::Body,
-    extract::State,
+    extract::{Path, State},
     http::{header, HeaderMap, Method, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -27,12 +28,13 @@ use tauri::AppHandle;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use crate::tooling;
+use crate::viewer_assets;
 
 /// Port the Tauri window is configured to load (`tauri.conf.json:13`).
 pub const HTTP_PORT: u16 = 8780;
 
 /// Embedded viewer HTML — single source of truth lives under `viewer/`.
-const VIEWER_HTML: &str = include_str!("../../viewer/applogs-viewer.html");
+pub(crate) const VIEWER_HTML: &str = include_str!("../../viewer/applogs-viewer.html");
 
 /// Bind axum on `127.0.0.1:HTTP_PORT`, signal ready via `ready_tx`, then serve forever.
 pub async fn serve(app: AppHandle, ready_tx: Sender<()>) -> Result<(), String> {
@@ -49,6 +51,7 @@ pub async fn serve(app: AppHandle, ready_tx: Sender<()>) -> Result<(), String> {
         .allow_headers([header::CONTENT_TYPE]);
     let router: Router<AppHandle> = Router::new()
         .route("/", get(serve_index))
+        .merge(asset_routes())
         .route("/devices/android", get(android_devices))
         .route("/devices/ios", get(ios_devices))
         .route("/ios-driver-status", get(ios_driver_status))
@@ -82,6 +85,32 @@ async fn serve_index() -> Response {
         .header(header::PRAGMA, "no-cache")
         .header(header::EXPIRES, "0")
         .body(Body::from(VIEWER_HTML))
+        .expect("static response")
+}
+
+/// The viewer asset route, built here so `serve` and the router tests share one route string.
+/// Stateless, so it merges into any `Router<S>`.
+fn asset_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
+    Router::new().route("/assets/*path", get(serve_asset))
+}
+
+/// `GET /assets/*path`: an exact match in the embedded table or 404. Fonts have versioned names
+/// and are cached for a year; CSS and JS are `no-store` like the page.
+async fn serve_asset(Path(path): Path<String>) -> Response {
+    let Some(asset) = viewer_assets::lookup(&path) else {
+        return (StatusCode::NOT_FOUND, "not found").into_response();
+    };
+    let cache = if asset.immutable {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-store, no-cache, must-revalidate, max-age=0"
+    };
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, asset.mime)
+        .header(header::CACHE_CONTROL, cache)
+        .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
+        .body(Body::from(asset.bytes))
         .expect("static response")
 }
 
@@ -558,6 +587,64 @@ async fn set_glass_mode(
         Err(e) => {
             tracing::warn!("set_glass_mode failed: {e}");
             (StatusCode::INTERNAL_SERVER_ERROR, e).into_response()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    /// Send `GET <uri>` through the real asset router (route registration, prefix stripping and
+    /// percent-decoding included), not straight into the handler.
+    async fn get_uri(uri: &str) -> Response {
+        asset_routes::<()>()
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("infallible")
+    }
+
+    #[tokio::test]
+    async fn serves_css_with_type_nosniff_and_no_store() {
+        let res = get_uri("/assets/css/base.css").await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let h = res.headers();
+        assert_eq!(h[header::CONTENT_TYPE], "text/css; charset=utf-8");
+        assert_eq!(h[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+        assert!(h[header::CACHE_CONTROL]
+            .to_str()
+            .expect("ascii")
+            .starts_with("no-store"));
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        assert_eq!(
+            &body[..],
+            viewer_assets::lookup("css/base.css")
+                .expect("embedded")
+                .bytes
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_and_traversal_paths_are_404() {
+        for uri in [
+            "/assets/nope.css",
+            "/assets/../applogs-viewer.html",
+            "/assets/%2e%2e/applogs-viewer.html",
+            "/assets/css%2F..%2F..%2Fapplogs-viewer.html",
+            "/assets/css/../css/base.css/..",
+            "/assets//css/base.css",
+            "/assets/",
+        ] {
+            assert_eq!(get_uri(uri).await.status(), StatusCode::NOT_FOUND, "{uri}");
         }
     }
 }

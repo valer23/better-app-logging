@@ -13,6 +13,7 @@ mod http_server;
 mod parser;
 mod pid_map;
 mod tooling;
+mod viewer_assets;
 mod ws_server;
 
 use std::sync::atomic::{AtomicBool, Ordering};
