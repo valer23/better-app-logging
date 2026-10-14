@@ -1,5 +1,5 @@
 /* GENERATED from docs/design/ui-redesign-foundation.css (v1.1): do not edit here. Change the design
-   file (re-measure contrast), then regenerate this file with the command in the P1 plan, Task 5. */
+   file (re-measure contrast), then regenerate this file with: node tests/viewer/gen-foundation.mjs */
 @layer foundation, legacy, app;
 @layer foundation {
 /* ===== AppLogsViewer FOUNDATION v1.1 — design tokens and component reference =====

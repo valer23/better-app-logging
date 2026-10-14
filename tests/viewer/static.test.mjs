@@ -8,6 +8,7 @@ import path from 'node:path';
 import { parseHtml, elements } from './_html.mjs';
 import { ROOT, ASSETS, HTML_PATH, read, listAssets, inlineScripts } from './_load.mjs';
 import * as C from './_checks.mjs';
+import { build as buildFoundation, REGEN_CMD } from './gen-foundation.mjs';
 
 const html = read(HTML_PATH);
 const { root, errors: parseErrors } = parseHtml(html);
@@ -173,7 +174,16 @@ test('foundation.css is the design file, verbatim, inside @layer foundation, aft
   const m = /^\/\*[\s\S]*?\*\/\n@layer foundation, legacy, app;\n@layer foundation \{\n([\s\S]*)\n\}\n$/.exec(css);
   assert.ok(m, 'expected: header comment, "@layer foundation, legacy, app;", then "@layer foundation {" … "}"');
   const design = read(path.join(ROOT, 'docs', 'design', 'ui-redesign-foundation.css'));
-  assert.equal(m[1], design.replace(/\n$/, ''), 'regenerate foundation.css from docs/design/ui-redesign-foundation.css');
+  assert.equal(m[1], design.replace(/\n$/, ''), `regenerate foundation.css from docs/design/ui-redesign-foundation.css: ${REGEN_CMD}`);
+  assert.equal(css, buildFoundation(), `foundation.css is not the generator's output; run: ${REGEN_CMD}`);
+});
+
+test('legacy regions opt out of the foundation root\'s font smoothing and control font', () => {
+  const legacy = read(path.join(ASSETS, 'css', 'legacy.css')).replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.match(legacy, /:where\(\.lg-scope\)\s*\{[^}]*-webkit-font-smoothing:\s*auto\b/,
+    'foundation sets antialiased on .app (<html>); legacy regions keep the platform default');
+  assert.match(legacy, /:where\(\.lg-scope\)\s+:where\(button,\s*input,\s*select,\s*textarea\)\s*\{[^}]*font:\s*revert\b/,
+    'foundation sets font: inherit on controls; legacy controls keep the browser default control font');
 });
 
 test('<html> is the foundation root; stylesheets load foundation, legacy, app in that order', () => {

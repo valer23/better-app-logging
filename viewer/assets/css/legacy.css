@@ -8,8 +8,12 @@
    - everything sits in @layer legacy: above foundation, below app (order set in foundation.css).
    New rules never go here. */
 @layer legacy {
-  /* The foundation types <html class="app"> at 13px / 1.45; legacy regions keep browser defaults. */
-  :where(.lg-scope) { font-size: 16px; line-height: normal; }
+  /* The foundation types <html class="app"> at 13px / 1.45 with antialiased smoothing and
+     `font: inherit` on controls; legacy regions keep the browser defaults. `revert` skips every
+     author layer back to the user-agent control font, and at zero specificity each explicit
+     legacy font rule below still wins. */
+  :where(.lg-scope) { font-size: 16px; line-height: normal; -webkit-font-smoothing: auto; }
+  :where(.lg-scope) :where(button, input, select, textarea) { font: revert; }
 
   :root {
     --lg-bg:       #0d1117;
