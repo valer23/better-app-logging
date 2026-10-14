@@ -836,11 +836,18 @@ dropzone.addEventListener('click', e => { if (!['LABEL','INPUT'].includes(e.targ
 // A loaded file becomes the file session (P4 lists several; P2 has one slot, replaced on each load).
 // The live session is not touched: it keeps its lines, its paused backlog and its drop counts, and
 // keeps ingesting while the file is shown.
+//
+// A load is async (the read, then a render timer), and Clear is shown on File while it runs. Each load
+// takes a generation: Clear on File and a newer drop bump it, and a load whose generation is stale
+// stops, so it cannot refill a cleared session or replace the file loaded after it.
+let fileLoadGen = 0;
 function handleFile(file) {
   if (!file) return;
+  const gen = ++fileLoadGen;
   showOnly('loading');
   const reader = new FileReader();
   reader.onload = ev => {
+    if (gen !== fileLoadGen) return;
     const text = ev.target.result;
     let msgs;
     try {
@@ -889,7 +896,7 @@ function handleFile(file) {
       discardBacklog(fileSession);
       ALV.session.reset(fileSession, msgs);
       fileSession.query = -1;   // not filtered yet: rendered below, or by selectSession if the user switched away meanwhile
-      setTimeout(() => { if (cur !== fileSession) return; applyFilters(); showOnly('logWrapper'); updateExportVisibility(); }, 50);
+      setTimeout(() => { if (gen !== fileLoadGen || cur !== fileSession) return; applyFilters(); showOnly('logWrapper'); updateExportVisibility(); }, 50);
     } catch(err) {
       alert('Failed to parse file: ' + err.message);
       if (cur === fileSession) showOnly('dropzone');
@@ -1521,7 +1528,10 @@ function clearLogs() {
   discardBacklog(s);
   ALV.session.reset(s, []);
   s.tbody.innerHTML = '';
-  if (s.kind === 'file') showOnly('dropzone');   // Clear on File: the dropzone is the only way to load another file
+  if (s.kind === 'file') {
+    fileLoadGen++;   // a load still reading or waiting to render is cancelled (see handleFile)
+    showOnly('dropzone');   // Clear on File: the dropzone is the only way to load another file
+  }
   updateStats(); updateExportVisibility(); updateNewerPill();
 }
 

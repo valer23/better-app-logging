@@ -268,3 +268,77 @@ test('offscreen gate: dropTrimmedRows on an off-screen followed session defers t
   assert.equal(v.run('liveSession.domStale'), true);
   assert.equal(v.run('liveSession.tbody.rows.length'), 3, 'rows untouched');
 });
+
+// A file load is async: FileReader finishes later, then a 50 ms timer renders. These tests hold both
+// back so Clear (shown on File since change 8) or a second drop can land in between.
+function deferFileIo(v) {
+  v.run(`globalThis.__readers = []; globalThis.__timers = [];
+    FileReader = class { readAsText(file) { this.file = file; __readers.push(this); } };
+    setTimeout = f => (__timers.push(f), 0);`);
+  return {
+    finishRead: i => v.run(`__readers[${i}].onload({ target: { result: __readers[${i}].file.text } })`),
+    runTimers: () => v.run('__timers.splice(0).forEach(f => f())'),
+  };
+}
+const display = (v, id) => v.doc.getElementById(id).style.display;
+
+test('Clear on File while a file is still being read cancels that load', () => {
+  const v = boot();
+  const io = deferFileIo(v);
+  v.go('toFile');
+  v.api.handleFile({ text: fileText(4) });
+  v.api.clearLogs();
+  io.finishRead(0); io.runTimers();
+  assert.equal(v.get('fileAll').length, 0, 'the cancelled read does not repopulate the session');
+  assert.equal(display(v, 'dropzone'), '', 'the dropzone is the only way to load a file, so it stays');
+  assert.equal(display(v, 'logWrapper'), 'none');
+});
+
+test('Clear on File between the read and the 50 ms render leaves the dropzone showing', () => {
+  const v = boot();
+  const io = deferFileIo(v);
+  v.go('toFile');
+  v.api.handleFile({ text: fileText(4) });
+  io.finishRead(0);
+  v.api.clearLogs();
+  io.runTimers();
+  assert.equal(v.get('fileAll').length, 0);
+  assert.equal(display(v, 'dropzone'), '');
+  assert.equal(display(v, 'logWrapper'), 'none');
+});
+
+test('Clear then a second drop: the cancelled first read cannot replace the second file', () => {
+  const v = boot();
+  const io = deferFileIo(v);
+  v.go('toFile');
+  v.api.handleFile({ text: fileText(5) });   // big
+  v.api.clearLogs();
+  v.api.handleFile({ text: fileText(2) });   // small
+  io.finishRead(1); io.runTimers();
+  io.finishRead(0); io.runTimers();          // the cancelled read finishes last
+  assert.equal(v.get('fileAll').length, 2);
+  assert.match(v.get('fileAll')[0].msg, /^file 0/);
+  assert.equal(display(v, 'logWrapper'), '');
+});
+
+test('two overlapping drops: the later drop wins even when the earlier read finishes last', () => {
+  const v = boot();
+  const io = deferFileIo(v);
+  v.go('toFile');
+  v.api.handleFile({ text: fileText(5) });
+  v.api.handleFile({ text: fileText(2) });
+  io.finishRead(1); io.runTimers();
+  io.finishRead(0); io.runTimers();
+  assert.equal(v.get('fileAll').length, 2);
+});
+
+test('Clear on Live while a file is being read does not cancel the load', () => {
+  const v = boot();
+  const io = deferFileIo(v);
+  v.go('toFile');
+  v.api.handleFile({ text: fileText(4) });
+  v.go('toLive');
+  v.api.clearLogs();
+  io.finishRead(0);
+  assert.equal(v.get('fileAll').length, 4);
+});
