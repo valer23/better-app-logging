@@ -95,6 +95,14 @@ export function loadPrefsModule() {
   return ctx.ALV;
 }
 
+// Runs a PURE viewer/assets/js file (session.js, and the later query.js, counts.js …) in an EMPTY
+// context, so any DOM, storage or timer use at load throws. Returns that context's ALV namespace.
+export function loadPureModule(file) {
+  const ctx = vm.createContext({});
+  vm.runInContext(read(path.join(ASSETS, 'js', file)), ctx, { filename: file });
+  return ctx.ALV;
+}
+
 // A Proxy that answers every property read, call and `new` with another stub, so the legacy
 // inline script's top-level DOM wiring runs without a browser. Deliberately NOT thenable.
 export function deepStub(name = 'stub') {
