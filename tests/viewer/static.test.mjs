@@ -373,3 +373,19 @@ test('prefs.js is the only head script: first, synchronous, before every stylesh
   assert.equal(scripts[0].attrs.src, 'assets/js/prefs.js');
   assert.ok(!('async' in scripts[0].attrs) && !('defer' in scripts[0].attrs) && !('type' in scripts[0].attrs));
 });
+
+test('legacy log columns 2-6 are sized in ch, so they follow the log text size', () => {
+  const colWidths = (r) => {
+    const cg = elements(r).find(el => el.attrs.id === 'colgroup');
+    assert.ok(cg, '#colgroup exists');
+    return cg.children.filter(el => el.tag === 'col').map(el => (el.attrs.style || '').match(/width:\s*([^;]+)/)?.[1].trim());
+  };
+  const isCh = (w) => /^calc\(\d+(\.\d+)?ch \+ 20px\)$/.test(w || '');
+  const widths = colWidths(root);
+  assert.equal(widths.length, 7);
+  assert.equal(widths[0], '28px');
+  widths.slice(1, 6).forEach((w, i) => assert.ok(isCh(w), `column ${i + 2} width ${w} is calc(Nch + 20px)`));
+  // Broken input: a px width must fail the same check.
+  const broken = parseHtml('<table><colgroup id="colgroup"><col style="width:28px"><col style="width:190px"></colgroup></table>').root;
+  assert.ok(!isCh(colWidths(broken)[1]), 'a px width is rejected');
+});
