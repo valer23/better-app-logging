@@ -369,10 +369,10 @@ pkill -f idevicesyslog</pre>
 })();
 
 // ─── Liquid Glass toggle (macOS only) ────────────────────────────────────
+// The material is stored by ALV.prefs (assets/js/prefs.js): set('material') writes data-material
+// and data-glass on <html> and mirrors the legacy glassMode key. This switch goes away in P4.
 (function initGlassToggle() {
-  const root = document.documentElement;
-  const isMac = root.getAttribute('data-platform') === 'mac';
-  const saved = root.getAttribute('data-glass') === 'on' ? 'on' : 'off';
+  const isMac = document.documentElement.getAttribute('data-platform') === 'mac';
 
   function postGlassMode(enabled) {
     return fetch('/window/glass-mode', {
@@ -387,13 +387,12 @@ pkill -f idevicesyslog</pre>
     const input = document.getElementById('glassSwitchInput');
     if (!el || !input) return;
     if (isMac) el.classList.add('platform-mac');
-    input.checked = saved === 'on';
+    const glassAtStart = ALV.prefs.get('material') === 'glass';
+    input.checked = glassAtStart;
 
     input.addEventListener('change', async () => {
       const enabled = input.checked;
-      const next = enabled ? 'on' : 'off';
-      root.setAttribute('data-glass', next);
-      try { localStorage.setItem('applogs-viewer.glassMode', next); } catch (_) {}
+      ALV.prefs.set('material', enabled ? 'glass' : 'solid');
       if (!isMac) return;
       try {
         const r = await postGlassMode(enabled);
@@ -405,7 +404,7 @@ pkill -f idevicesyslog</pre>
 
     // If glass was on at startup, sync the native window now (the macOS
     // conf starts with effects=[]).
-    if (isMac && saved === 'on') {
+    if (isMac && glassAtStart) {
       postGlassMode(true).catch(() => {});
     }
   }
@@ -695,42 +694,33 @@ function initResizeHandles() {
   });
 }
 // ── Theme ──
+// Three states stored by ALV.prefs: Dark, Light and System (follows the OS live). The switch shows
+// the resolved theme; its tooltip names the current state and the next one. Replaced in P4.
+const THEME_LABEL = { dark: 'Dark', light: 'Light', system: 'System' };
 function _syncThemeButton() {
   const cb = document.getElementById('themeToggle');
   if (!cb) return;
-  const light = document.documentElement.dataset.theme === 'light';
-  cb.checked = light;
+  const s = ALV.prefs.state();
+  cb.checked = s.themeResolved === 'light';
+  const now = s.theme === 'system' ? `System (${THEME_LABEL[s.themeResolved]})` : THEME_LABEL[s.theme];
+  const tip = `Theme: ${now}. Click for ${THEME_LABEL[ALV.prefs.nextTheme(s.theme)]}`;
+  cb.setAttribute('aria-label', tip);
+  cb.parentElement.title = tip;
 }
 function toggleTheme() {
-  const html = document.documentElement;
-  const next = html.dataset.theme === 'light' ? 'dark' : 'light';
-  if (next === 'light') html.dataset.theme = 'light';
-  else delete html.dataset.theme;
-  try { localStorage.setItem('applogs-viewer.theme', next); } catch (_) {}
-  _syncThemeButton();
+  ALV.prefs.set('theme', ALV.prefs.nextTheme(ALV.prefs.get('theme')));   // onChange re-syncs the switch
 }
+ALV.prefs.onChange(_syncThemeButton);
 _syncThemeButton();
 
 // ── Log-table zoom ──
-// Scales only the body of the log table via the --log-font-size CSS
-// variable; chrome (toolbar, tabs) stays at native pixel size so the UI
-// remains usable on small laptop screens. Persisted in localStorage.
-const LOG_FONT_DEFAULT = 12;
-const LOG_FONT_MIN     = 8;
-const LOG_FONT_MAX     = 20;
-
-function _currentLogFontPx() {
-  const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--log-font-size'));
-  return v >= LOG_FONT_MIN ? v : LOG_FONT_DEFAULT;
-}
-
+// Scales only the log table via --log-fs (written on <html> by ALV.prefs: 10–20 px, default 13,
+// persisted); chrome stays at its own size so the controls remain usable on small laptops.
 // delta: -1 = smaller, +1 = larger, 0 = reset to default.
 function setLogZoom(delta) {
-  const next = delta === 0
-    ? LOG_FONT_DEFAULT
-    : Math.min(LOG_FONT_MAX, Math.max(LOG_FONT_MIN, _currentLogFontPx() + delta));
-  document.documentElement.style.setProperty('--log-font-size', next + 'px');
-  try { localStorage.setItem('applogs-viewer.logFontSize', next); } catch (_) {}
+  const { min, max, def } = ALV.prefs.LOG_FS;
+  const next = delta === 0 ? def : Math.min(max, Math.max(min, ALV.prefs.get('logFontSize') + delta));
+  ALV.prefs.set('logFontSize', next);
 }
 
 // Ctrl+= / Ctrl++ → bigger, Ctrl+- → smaller, Ctrl+0 → reset.

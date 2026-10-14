@@ -111,7 +111,7 @@
   /* Animated theme toggle — track + sliding thumb with sun/moon glyphs.
      Thumb uses var(--lg-text) so it has high contrast in both palettes
      (light thumb on dark track, dark thumb on light track). */
-  /* Zoom controls — scale the log table content via --log-font-size.
+  /* Zoom controls — scale the log table content via --log-fs.
      Only affects the table; UI chrome (buttons, tabs) stays at native
      pixel size so the controls remain usable on small laptops. */
   .zoom-group { display: inline-flex; align-items: center; gap: 0; margin-right: 10px; border: 1px solid var(--lg-border); border-radius: 5px; overflow: hidden; }
@@ -378,10 +378,10 @@
   #logWrapper { flex: 1; overflow: hidden; display: none; flex-direction: column; position: relative; /* anchor for .newer-pill and .reading-window-hint */ }
   #logWrapper.visible { display: flex; }
   #logTable { flex: 1; overflow-y: auto; overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--lg-border) transparent; }
-  /* `--log-font-size` is set on `:root` by the zoom buttons / keyboard
-     shortcut and persisted in localStorage; the header keeps a fixed
+  /* `--log-fs` is set on `:root` by prefs.js (zoom buttons, keyboard
+     shortcut; persisted in localStorage); the header keeps a fixed
      small size so column titles stay readable at any body zoom. */
-  table { table-layout: fixed; border-collapse: separate; border-spacing: 0; font-family: var(--font-log); font-size: var(--log-font-size, 12px); min-width: 960px; width: 100%; }
+  table { table-layout: fixed; border-collapse: separate; border-spacing: 0; font-family: var(--font-log); font-size: var(--log-fs, 13px); min-width: 960px; width: 100%; }
   /* Sticky header — declared on thead, tr, AND th for cross-browser reliability. */
   thead    { position: sticky; top: 0; z-index: 5; }
   thead tr { position: sticky; top: 0; }
