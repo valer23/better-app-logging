@@ -210,10 +210,11 @@ test('status bar: devices, drops (with its popover in the popover layer), the mo
   assert.ok(has(nameDecls, 'max-width', '160px') && has(nameDecls, 'overflow', 'hidden') && has(nameDecls, 'text-overflow', 'ellipsis') && has(nameDecls, 'min-width', '0'),
     'the name span is clipped with an ellipsis at 160 px');
   // Nothing may be drawn over its neighbour at any width (the Retained text and its note are long at the 1100 px
-  // minimum window, with the drops button and the devices next to them): the right group takes most of a
-  // shortfall and clips (it holds no control, so no ring), and only the Retained text and the note ellipsize.
-  assert.ok(has(declsOf('.sb-left'), 'flex', '0 1 auto') && has(declsOf('.sb-right'), 'flex', '0 8 auto') && has(declsOf('.sb-right'), 'overflow', 'hidden'),
-    'the right group shrinks (weight 8) and clips; the left one gives way after it');
+  // minimum window, with the drops button and the devices next to them): the right group shrinks twice as fast as
+  // the left one, so the Retained text gives way first, but the device names still give way before the #58 hint or
+  // Following would be clipped (weight 8 clipped Following by 4 px in the 1100×700 worst case, measured in Chromium).
+  assert.ok(has(declsOf('.sb-left'), 'flex', '0 1 auto') && has(declsOf('.sb-right'), 'flex', '0 2 auto') && has(declsOf('.sb-right'), 'overflow', 'hidden'),
+    'the right group shrinks at weight 2 (not 8) and only clips as a last resort; the left one gives way next');
   for (const sel of ['#retainedText', '#retainedNote']) {
     const ds = declsOf(sel);
     assert.ok(has(ds, 'min-width', '0') && has(ds, 'overflow', 'hidden') && has(ds, 'text-overflow', 'ellipsis'), `${sel} ends in an ellipsis instead of overflowing`);

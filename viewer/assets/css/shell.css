@@ -121,14 +121,15 @@
   #statusBar button:focus-visible { outline-offset: -2px; }
   .sb-left, .sb-right { display: flex; align-items: center; gap: 12px; min-width: 0; white-space: nowrap; font-variant-numeric: tabular-nums; }
   /* Overflow rule: nothing may be drawn over its neighbour. The Retained text gives way first (it is the long
-     one, its full wording is its title and Following's tooltip), then the device names. The right group takes
-     most of a shortfall (shrink 8) and clips what is left (it holds no control, so no focus ring is cut); inside
-     it only the Retained text and the note shrink, to an ellipsis, while the #58 hint and Following keep their
-     width. A device name is free text from the bridge: it is clipped to 160 px, and further when the bar is
+     one, its full wording is its title and Following's tooltip), then the device names. The right group shrinks
+     twice as fast as the left one (weight 2; at 8 it clipped Following by 4 px in the 1100×700 worst case) and
+     clips only as a last resort (it holds no control, so no focus ring is cut); inside it only the Retained text
+     and the note shrink, to an ellipsis, while the #58 hint and Following keep their width. A device name is
+     free text from the bridge: it is clipped to 160 px, and further when the bar is
      narrower, on the inner span only (clipping the button would cut its focus ring). The platform badge and the
      rate never shrink. */
   .sb-left { flex: 0 1 auto; }
-  .sb-right { flex: 0 8 auto; overflow: hidden; }
+  .sb-right { flex: 0 2 auto; overflow: hidden; }
   #readingWindowHint, #followState { flex: none; }
   #retainedText, #retainedNote { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .sb-dev { gap: 6px; min-width: 0; }   /* .btn-sm's --ctl-h-sm (24/24/28 px): at least the 24×24 target (WCAG 2.5.8) */
