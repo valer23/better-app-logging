@@ -81,9 +81,23 @@
   const DRAG_BANDS = ['sidebarHeader', 'topbar'];
   const DRAG_THRESHOLD_PX = 4;
 
-  // createShell({ doc, win, dom }) → the shell's controller. Called once, by the legacy script.
-  function createShell({ doc, win, dom }) {
+  const TICK_MS = 500;   // the counts and rates refresh twice a second (spec: at most 4 times), off the drain
+
+  // Diffed writes for the shell and the status bar (live.js): they refresh twice a second, so an unchanged
+  // text, attribute or hidden flag is never written again. null removes the attribute.
+  function setText(node, s) { if (node && node._shellText !== s) { node._shellText = s; node.textContent = s; } }
+  function setAttr(node, k, v) {
+    if (!node) return;
+    if (v === null) { if (node.getAttribute(k) !== null) node.removeAttribute(k); } else if (node.getAttribute(k) !== v) node.setAttribute(k, v);
+  }
+  function setHidden(node, h) { if (node && node.hidden !== h) node.hidden = h; }
+
+  // createShell({ doc, win, dom, ui, keys, state, actions }) → { sync() }. Called once, by the legacy script,
+  // before its first selectSession. state() returns what the shell shows (the legacy shellState()); actions
+  // are the legacy functions it calls. Without `state` only the drag bands are wired (the drag tests).
+  function createShell({ doc, win, dom, ui, keys, state, actions }) {
     const warn = (msg, err) => { if (g.console) g.console.warn(msg, err); };
+    const $ = id => doc.getElementById(id);
     // window.__TAURI__ exists only in the app (withGlobalTauri); a browser tab has nothing to drag.
     function windowCall(name) {
       const t = win.__TAURI__;
@@ -111,10 +125,47 @@
     });
     win.addEventListener('mouseup', () => { armed = null; });
     for (const id of DRAG_BANDS) initDragBand(doc.getElementById(id));
-    return {};
+    if (!state) return { sync() {} };
+
+    // ---- Section headers: each folds its list ----
+    for (const head of [$('sessHead')]) {
+      if (!head) continue;
+      head.addEventListener('click', () => {
+        const open = head.getAttribute('aria-expanded') !== 'true';
+        head.setAttribute('aria-expanded', String(open));
+        setHidden($(head.getAttribute('aria-controls')), !open);
+      });
+    }
+
+    // ---- SESSIONS: "Live session" first, the opened file, "Open log file…" (spec) ----
+    keys.register({ id: 'session.open', keys: 'Mod+O', inText: true, run: () => actions.openFile() });
+    setText($('openFileKbd'), keys.label('session.open'));
+    const onClick = (id, fn) => { const el = $(id); if (el) el.addEventListener('click', fn); };
+    onClick('sessLive', () => actions.selectSession(state().sessions[0]));
+    onClick('sessFile', () => actions.selectSession(state().sessions[1]));
+    onClick('openFileBtn', () => actions.openFile());
+    function syncSessions(st) {
+      const [live, file] = st.sessions;
+      const showFile = file.all.length > 0 || st.cur === file;   // an empty file session is listed while shown (dropzone)
+      setAttr($('sessLive'), 'aria-current', st.cur === live ? 'page' : null);
+      setAttr($('sessFile'), 'aria-current', st.cur === file ? 'page' : null);
+      setText($('sessLiveCount'), num(live.all.length));
+      setText($('sessFileCount'), num(file.all.length));
+      setText($('sessFileName'), file.name);
+      setHidden($('sessFileItem'), !showFile);
+      setText($('sessCount'), showFile ? '2' : '1');
+    }
+
+    function sync() {
+      const st = state();
+      syncSessions(st);
+    }
+    // Counts move with the live stream; the drain never writes them, this tick does (skipped while hidden).
+    win.setInterval(() => { if (!doc.hidden) sync(); }, TICK_MS);
+    return { sync };
   }
 
   const ALV = g.ALV || (g.ALV = {});
-  ALV.shellPure = Object.freeze({ num, fmtRate, createRateMeter, deviceStatus, themeView, DRAG_BANDS });
+  ALV.shellPure = Object.freeze({ num, fmtRate, createRateMeter, deviceStatus, themeView, DRAG_BANDS, setText, setAttr, setHidden });
   ALV.createShell = createShell;
 })(typeof window !== 'undefined' ? window : globalThis);

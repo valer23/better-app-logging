@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadPureModule } from './_load.mjs';
-import { fakePage } from './_fake.mjs';
+import { fakePage, texts, shellPage } from './_fake.mjs';
 
 const ALV = loadPureModule('shell.js');
 const S = ALV.shellPure;
@@ -117,4 +117,60 @@ test('drag bands: a double-click on the background toggles maximise, on a contro
     bare.move(50, 50);
     bare.p.byId.topbar.fire('dblclick', {});
   });
+});
+
+// ---- DOM side: the sidebar, built from the page's real markup (shellPage in _fake.mjs) ----
+
+test('SESSIONS: Live session first and current, its line count; the file row appears once a file has lines', () => {
+  const { shell, state, live, file, $ } = shellPage();
+  assert.deepEqual([$('sessLive').getAttribute('aria-current'), $('sessFile').getAttribute('aria-current')], ['page', null]);
+  assert.deepEqual([$('sessLiveCount').textContent, $('sessFileItem').hidden, $('sessCount').textContent], ['0', true, '1']);
+  live.all = new Array(48310);
+  file.all = new Array(12044);
+  file.name = 'pixel-crash-0412.logcat';
+  shell.sync();
+  assert.deepEqual([$('sessLiveCount').textContent, $('sessFileCount').textContent, $('sessFileName').textContent, $('sessFileItem').hidden, $('sessCount').textContent],
+    ['48 310', '12 044', 'pixel-crash-0412.logcat', false, '2']);
+  state.cur = file;
+  shell.sync();
+  assert.deepEqual([$('sessLive').getAttribute('aria-current'), $('sessFile').getAttribute('aria-current')], [null, 'page']);
+  file.all = [];
+  shell.sync();
+  assert.equal($('sessFileItem').hidden, false, 'an empty file session stays listed while it is shown (the dropzone)');
+});
+
+test('SESSIONS: the rows select their session; "Open log file…" and ⌘O open the picker; the kbd shows the platform label', () => {
+  const { p, live, file, calls, $ } = shellPage();
+  $('sessFile').click();
+  $('sessLive').click();
+  $('openFileBtn').click();
+  assert.deepEqual(calls.map(c => c[0]), ['selectSession', 'selectSession', 'openFile']);
+  assert.deepEqual([calls[0][1] === file, calls[1][1] === live], [true, true]);
+  assert.equal(p.keys.dispatch({ key: 'o', code: 'KeyO', metaKey: true, preventDefault() {} }, p.byId.filterbar), 'session.open');
+  assert.equal(calls.at(-1)[0], 'openFile');
+  assert.equal($('openFileKbd').textContent, '⌘O');
+  assert.equal(shellPage({ platform: 'other' }).$('openFileKbd').textContent, 'Ctrl+O');
+});
+
+test('SESSIONS: the counts follow the live session twice a second, never while the window is hidden', () => {
+  const { p, live, $ } = shellPage();
+  live.all = new Array(1500);
+  p.advance(499);
+  assert.equal($('sessLiveCount').textContent, '0');
+  p.advance(1);
+  assert.equal($('sessLiveCount').textContent, '1 500');
+  p.doc.hidden = true;
+  live.all = new Array(2000);
+  p.advance(1000);
+  assert.equal($('sessLiveCount').textContent, '1 500');
+});
+
+test('sections: the header button folds its list (aria-expanded) and unfolds it', () => {
+  const { $ } = shellPage();
+  const head = $('sessHead');
+  assert.deepEqual([head.getAttribute('aria-expanded'), head.getAttribute('aria-controls'), $('sessionList').hidden], ['true', 'sessionList', false]);
+  head.click();
+  assert.deepEqual([head.getAttribute('aria-expanded'), $('sessionList').hidden], ['false', true]);
+  head.click();
+  assert.deepEqual([head.getAttribute('aria-expanded'), $('sessionList').hidden], ['true', false]);
 });

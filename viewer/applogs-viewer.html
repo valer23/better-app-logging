@@ -30,7 +30,10 @@
 <symbol id="i-file-json" viewBox="0 0 24 24"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" /><path d="M14 2v5a1 1 0 0 0 1 1h5" /><path d="M10 12a1 1 0 0 0-1 1v1a1 1 0 0 1-1 1 1 1 0 0 1 1 1v1a1 1 0 0 0 1 1" /><path d="M14 18a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1 1 1 0 0 1-1-1v-1a1 1 0 0 0-1-1" /></symbol>
 <symbol id="i-file-spreadsheet" viewBox="0 0 24 24"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" /><path d="M14 2v5a1 1 0 0 0 1 1h5" /><path d="M8 13h2" /><path d="M14 13h2" /><path d="M8 17h2" /><path d="M14 17h2" /></symbol>
 <symbol id="i-file-text" viewBox="0 0 24 24"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" /><path d="M14 2v5a1 1 0 0 0 1 1h5" /><path d="M10 9H8" /><path d="M16 13H8" /><path d="M16 17H8" /></symbol>
+<symbol id="i-folder-open" viewBox="0 0 24 24"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" /></symbol>
 <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" /></symbol>
+<symbol id="i-radio" viewBox="0 0 24 24"><path d="M16.247 7.761a6 6 0 0 1 0 8.478" /><path d="M19.075 4.933a10 10 0 0 1 0 14.134" /><path d="M4.925 19.067a10 10 0 0 1 0-14.134" /><path d="M7.753 16.239a6 6 0 0 1 0-8.478" /><circle cx="12" cy="12" r="2" /></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34" /><circle cx="11" cy="11" r="8" /></symbol>
 <symbol id="i-triangle-alert" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" /><path d="M12 9v4" /><path d="M12 17h.01" /></symbol>
 <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></symbol>
 </svg>
@@ -42,12 +45,21 @@
 <div id="app">
 <aside id="sidebar" class="chrome-side" aria-label="Sidebar">
   <div id="sidebarHeader"><span class="side-title">AppLogsViewer</span></div>
-  <nav id="sidebarBody" aria-label="Devices and sessions"></nav>
+  <nav id="sidebarBody" aria-label="Devices and sessions">
+    <!-- The command palette's trigger: a stub until P13 (aria-disabled, so it keeps its tooltip in WebKit). -->
+    <button type="button" id="cmdTrigger" class="side-cmd" aria-disabled="true"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-search"/></svg><span class="side-label">Search actions…</span></button>
+    <section class="side-sec" aria-labelledby="sessHead">
+      <h2 class="side-sec-h"><button type="button" id="sessHead" class="nav-group-head" aria-expanded="true" aria-controls="sessionList"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-chevron-down"/></svg><span class="section-label">Sessions</span><span class="meta" id="sessCount"></span></button></h2>
+      <ul id="sessionList" class="side-list">
+        <li><button type="button" id="sessLive" class="nav-item"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-radio"/></svg><span class="side-label">Live session</span><span class="meta" id="sessLiveCount"></span></button></li>
+        <li id="sessFileItem" hidden><button type="button" id="sessFile" class="nav-item"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-file-text"/></svg><span class="side-label" id="sessFileName"></span><span class="meta" id="sessFileCount"></span></button></li>
+        <li data-rail-hide><button type="button" id="openFileBtn" class="nav-item"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-folder-open"/></svg><span class="side-label">Open log file…</span><span class="kbd" id="openFileKbd"></span></button></li>
+      </ul>
+    </section>
+  </nav>
 </aside>
 <div id="main">
 <div class="lg-scope" id="topbar">
-  <button class="mode-tab"        id="tabFile" onclick="selectSession(fileSession)">📂 File Import</button>
-  <button class="mode-tab active" id="tabLive" onclick="selectSession(liveSession)">📱 Live Devices</button>
   <div class="topbar-spacer"></div>
   <div class="zoom-group">
     <button class="zoom-btn" onclick="setLogZoom(-1)" title="Zoom out (Ctrl+-)">A−</button>
@@ -531,8 +543,8 @@ LEVELS.forEach(lvl => {
 });
 
 // ── Sessions ──
-// The File Import / Live Devices tabs pick the session on screen (the sidebar SESSIONS list replaces
-// them in P4). Each session keeps its own <tbody>: the shown one sits in #logTableEl with id="tbody",
+// The sidebar SESSIONS rows (assets/js/shell.js) and "Open log file…" pick the session on screen. Each
+// session keeps its own <tbody>: the shown one sits in #logTableEl with id="tbody",
 // the others stay detached with their rows, so switching back brings back the same window, its
 // selection and (through the saved anchor row) its scroll position. The live session keeps ingesting
 // while detached: following, its DOM work is skipped (domStale) and the tail is rebuilt on return;
@@ -548,8 +560,7 @@ function selectSession(next) {
     cur = next;
   }
   const live = next.kind === 'live';
-  document.getElementById('tabFile').classList.toggle('active', !live);
-  document.getElementById('tabLive').classList.toggle('active', live);
+  shellSync();
   ['autoScrollBtn','pauseBtn'].forEach(id => document.getElementById(id).style.display = live ? '' : 'none');
   document.getElementById('clearBtn').style.display = '';   // Clear empties the session on screen; on File it brings the dropzone back
   document.getElementById('autoScrollBtn').classList.toggle('active', next.follow);
@@ -815,9 +826,22 @@ document.getElementById('logTable').addEventListener('click', e => {
 });
 
 // ── App shell (assets/js/shell.js): the sidebar and the window drag bands ──
-shell = ALV.createShell({ doc: document, win: window, dom: ALV.dom });
+// The shell reads the page only through shellState() and acts only through these functions.
+shell = ALV.createShell({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, keys: ALV.keys, state: shellState,
+  actions: { selectSession, openFile: openLogFile } });
+function shellState() {
+  return { cur, sessions: [liveSession, fileSession] };
+}
+function shellSync() { if (shell) shell.sync(); }
+// "Open log file…" (the SESSIONS row and ⌘O): the file session, then the picker. The picker is the
+// dropzone's file input, so a picked file loads exactly like a dropped one (handleFile).
+function openLogFile() {
+  if (document.querySelector('.modal-overlay.visible')) return;   // not over the legacy setup / stall modal
+  selectSession(fileSession);
+  document.getElementById('fileInput').click();
+}
 
-// Open on the Live Devices tab — most common starting point for new sessions.
+// Open on the Live session: the most common starting point.
 selectSession(liveSession);
 
 // ── File import ──
@@ -893,6 +917,8 @@ function handleFile(file) {
       discardBacklog(fileSession);
       ALV.session.reset(fileSession, msgs);
       fileSession.query = -1;   // not filtered yet: rendered below, or by selectSession if the user switched away meanwhile
+      if (file.name) fileSession.name = file.name;   // the SESSIONS row shows it
+      shellSync();
       setTimeout(() => { if (gen !== fileLoadGen || cur !== fileSession) return; applyFilters(); showOnly('logWrapper'); updateExportVisibility(); }, 50);
     } catch(err) {
       alert('Failed to parse file: ' + err.message);
@@ -1532,7 +1558,7 @@ function clearLogs() {
     fileLoadGen++;   // a load still reading or waiting to render is cancelled (see handleFile)
     showOnly('dropzone');   // Clear on File: the dropzone is the only way to load another file
   }
-  updateStats(); updateExportVisibility(); updateNewerPill();
+  updateStats(); updateExportVisibility(); updateNewerPill(); shellSync();
 }
 
 // ── Live retention ──

@@ -90,6 +90,22 @@ test('app grid: #app holds aside#sidebar (labelled, with the #sidebarHeader band
   for (const id of ['setupModal', 'stallModal', 'overlayRoot']) assert.equal(findById(root, id).parent, body, `#${id} stays on <body>`);
 });
 
+test('sidebar: "Search actions…" is an aria-disabled stub, SESSIONS rows are buttons, and the mode tabs are gone', () => {
+  const cmd = findById(root, 'cmdTrigger');
+  assert.deepEqual([cmd.tag, cmd.attrs.type, cmd.attrs['aria-disabled'], 'disabled' in cmd.attrs], ['button', 'button', 'true', false],
+    'aria-disabled, never disabled: WebKit gives a disabled button no hover, so no tooltip');
+  for (const id of ['sessLive', 'sessFile', 'openFileBtn', 'sessHead']) {
+    assert.deepEqual([findById(root, id).tag, findById(root, id).attrs.type], ['button', 'button'], id);
+  }
+  assert.ok('hidden' in findById(root, 'sessFileItem').attrs, 'the file row is hidden until a file is open');
+  assert.equal(findById(root, 'tabFile'), null);
+  assert.equal(findById(root, 'tabLive'), null);
+  assert.doesNotMatch(read(path.join(ASSETS, 'css', 'legacy.css')), /\.mode-tab\b/);
+  const hides = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')))
+    .filter(r => C.declarations(r.body).some(d => d.prop === 'display' && d.value === 'none')).flatMap(r => r.selectors);
+  assert.ok(hides.includes('.side-list[hidden]'), '.side-list sets display: flex, so a folded list needs [hidden] back');
+});
+
 test('window chrome: the macOS traffic-light inset is on #sidebarHeader, no longer on #topbar', () => {
   const shellRules = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')));
   const inset = shellRules.filter(r => r.selectors.includes('.app[data-platform="mac"] #sidebarHeader')).flatMap(r => C.declarations(r.body));

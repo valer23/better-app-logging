@@ -16,4 +16,20 @@
   .app[data-platform="mac"] #sidebarHeader { padding-left: 78px; }
   .app[data-platform="mac"] .side-title { display: none; }
   #sidebarBody { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 0 8px 8px; }
+
+  /* Sidebar content (spec: command trigger, then sections with a collapsible header, label and count). */
+  .side-cmd { display: flex; align-items: center; gap: 8px; width: 100%; height: var(--ctl-h); margin: 0 0 8px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text-2); }
+  .side-cmd[aria-disabled="true"] { cursor: not-allowed; }
+  .side-sec { margin-top: 12px; }
+  .side-sec-h { margin: 0; font: inherit; }
+  .nav-group-head { color: var(--text-2); border-radius: 6px; }
+  .nav-group-head:hover { background: var(--fill-hover); }
+  .nav-group-head .icon { transition: transform var(--t-fast) var(--ease); }
+  .nav-group-head[aria-expanded="false"] .icon { transform: rotate(-90deg); }
+  .nav-group-head .meta { margin-left: auto; font-size: var(--ui-fs-xs); font-variant-numeric: tabular-nums; }
+  .side-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+  /* display: flex beats the UA [hidden] rule (as for .menu and .btn in base.css): a folded list must hide. */
+  .side-list[hidden] { display: none; }
+  .side-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .nav-item .kbd { margin-left: auto; }
 }

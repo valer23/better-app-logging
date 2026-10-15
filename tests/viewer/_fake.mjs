@@ -1,7 +1,8 @@
 // A small fake page for the DOM side of the primitives (ui.test.mjs) and the shell (shell.test.mjs):
 // elements with attributes, children, listeners and the few layout reads they make, a fake window with a
 // manual clock, and the viewer's classic scripts loaded into one EMPTY vm context.
-import { loadPureModules } from './_load.mjs';
+import { loadPureModules, read, HTML_PATH } from './_load.mjs';
+import { parseHtml, findById } from './_html.mjs';
 
 // fakePage({ files, platform, tauri }): `files` are the viewer scripts to load (dom.js, keys.js and ui.js
 // by default); `tauri` becomes window.__TAURI__. win.listeners records the window listeners.
@@ -103,3 +104,34 @@ export function fakePage({ files = ['dom.js', 'keys.js', 'ui.js'], platform = 'm
 }
 
 export const texts = n => (n.textContent || '') + n.children.map(texts).join('');
+
+const PAGE = parseHtml(read(HTML_PATH)).root;
+// Builds the page's markup for `id` (viewer/applogs-viewer.html) as fake nodes on `p`'s <body>, so the DOM
+// tests run against the ids, roles and attributes the page ships. Text between tags is not kept: the shell
+// writes every text it shows.
+export function mount(p, id) {
+  const build = el => {
+    const n = p.doc.createElement(el.tag);
+    for (const [k, v] of Object.entries(el.attrs)) {
+      if (k === 'class') n.className = v; else if (k === 'hidden') n.hidden = true; else n.setAttribute(k, v);
+    }
+    for (const c of el.children) n.appendChild(build(c));
+    return n;
+  };
+  return p.doc.body.appendChild(build(findById(PAGE, id)));
+}
+
+// A shell (ALV.createShell) on a fake page with the page's sidebar mounted. `st` overrides what the legacy
+// script's shellState() returns; an action without a function in `actions` is recorded in `calls`.
+export function shellPage({ platform = 'mac', st = {}, actions = {}, files = ['dom.js', 'keys.js', 'ui.js', 'shell.js'] } = {}) {
+  const p = fakePage({ files, platform });
+  mount(p, 'sidebar');
+  const live = { kind: 'live', name: 'Live session', all: [], follow: true };
+  const file = { kind: 'file', name: 'File', all: [], follow: false };
+  const calls = [];
+  const state = { cur: live, sessions: [live, file], ...st };
+  const act = new Proxy(actions, { get: (o, k) => o[k] || ((...a) => calls.push([k, ...a])) });
+  const shell = p.ALV.createShell({ doc: p.doc, win: p.win, dom: p.dom, ui: p.ui, keys: p.keys, state: () => state, actions: act });
+  shell.sync();
+  return { p, shell, state, live, file, calls, $: id => p.byId[id] };
+}
