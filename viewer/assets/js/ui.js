@@ -256,7 +256,9 @@
       let popEsc = null;
       let returnTo = null;   // open({ returnFocus }): where a shortcut opener had focus
       const ctl = {
+        trigger,
         isOpen: () => !surface.hidden,
+        inSurface: node => surface.contains(node),
         owns: node => surface.contains(node) || trigger.contains(node),
         reposition() { if (ctl.isOpen()) position(trigger, surface, placement); },
         open(o = {}) {
@@ -569,7 +571,7 @@
     }
 
     // Modal dialog: role="dialog" aria-modal="true" over a scrim. Everything else is inert (body children
-    // except #overlayRoot, the popover and tip layers, and lower dialogs); Tab and Shift+Tab wrap inside;
+    // except #overlayRoot and lower dialogs; the popover and tip layers stay live for menus in the dialog); Tab and Shift+Tab wrap inside;
     // Esc closes when dismissible; Mod+Enter clicks [data-primary]; focus returns to the opener, or to
     // `returnFocus` when the opener is gone. Hand-rolled: <dialog>.showModal() puts the dialog in the top
     // layer, above the toasts, and the Popover API needs Safari 17.
@@ -608,12 +610,16 @@
         isOpen: () => !host.hidden,
         open(from) {
           if (ctl.isOpen()) return;
+          // A dialog opened from a menu item comes back to the menu button: the item is hidden by then.
+          opener = from || doc.activeElement;
+          if (openPopup && openPopup.inSurface(opener)) opener = openPopup.trigger;
           if (openPopup) openPopup.close({ restoreFocus: false });
           hideTip();
-          opener = from || doc.activeElement;
           const root = doc.getElementById('overlayRoot');
+          // The popover and tip layers stay live: a menu, popover or tooltip opened from a control inside
+          // the dialog must work. Anything open now was just closed above.
           inerted = Array.from(doc.body.children).filter(el => el !== root)
-            .concat([doc.getElementById('ovPopovers'), doc.getElementById('ovTips')], dialogs.map(d => d.host))
+            .concat(dialogs.map(d => d.host))
             .filter(el => el && !el.inert);
           for (const el of inerted) el.inert = true;
           host.hidden = false;

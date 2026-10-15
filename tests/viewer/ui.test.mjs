@@ -480,6 +480,7 @@ test('focus trap: Tab wraps last → first, Shift+Tab wraps first → last, the 
 function fakePage() {
   const byId = {};
   let focused = null;
+  let focusVisible = false;   // what ':focus-visible' answers; tests flip it with setFocusVisible
   const node = tag => {
     const n = {
       tagName: tag.toUpperCase(), attrs: {}, children: [], parent: null, listeners: {}, dataset: {}, style: {},
@@ -499,7 +500,7 @@ function fakePage() {
       querySelector(sel) { return all(this).find(c => matches(c, sel)) || null; },
       querySelectorAll(sel) { return all(this).filter(c => matches(c, sel)); },
       closest(sel) { for (let p = this; p; p = p.parent) if (matches(p, sel)) return p; return null; },
-      matches() { return false; },
+      matches(sel) { return sel === ':focus-visible' ? focusVisible : false; },
       getClientRects() { return this.hidden ? [] : [1]; },
       getBoundingClientRect: () => ({ left: 500, top: 40, right: 580, bottom: 68, width: 80, height: 28 }),
       focus() { focused = this; },
@@ -554,7 +555,7 @@ function fakePage() {
   const dom = ALV.createDom(doc);
   const keys = ALV.createKeys({ platform: 'mac' });
   const ui = ALV.createUi({ doc, win, dom, keys, now: () => clock });
-  return { doc, byId, dom, keys, ui, advance, node, focus: n => { focused = n; } };
+  return { doc, byId, dom, keys, ui, advance, node, focus: n => { focused = n; }, setFocusVisible: v => { focusVisible = v; } };
 }
 const texts = n => (n.textContent || '') + n.children.map(texts).join('');
 
@@ -815,4 +816,187 @@ test('tooltip: a role=tooltip element referenced by aria-describedby; 400 ms hov
   tipApi.destroy();
   assert.equal(btn.attrs['aria-describedby'], 'other');
   assert.equal(tip.parent, null);
+});
+
+// ---- Task 5 review: dialog hosts menus, focus return, and the gaps mutation testing found ----
+
+const esc = p => p.keys.dispatch({ key: 'Escape', preventDefault() {} }, p.doc.activeElement);
+function simpleMenu(p, trigger, labels = ['Plain Text'], onSelect) {
+  const list = p.dom.el('div', { role: 'menu' }, ...labels.map(t => p.dom.el('button', { role: 'menuitem', tabindex: '-1', text: t })));
+  const surface = p.dom.portal(p.dom.el('div', { hidden: true }, list), 'popover');
+  return { list, surface, ctl: p.ui.menu(trigger, surface, { onSelect }) };
+}
+
+test('dialog: a menu and a tooltip opened from a control inside it work, and close before the dialog', () => {
+  const p = fakePage();
+  const inner = p.dom.el('button', { text: 'More' });
+  const panel = p.dom.el('div', null, inner);
+  panel.querySelectorAll = () => [inner];
+  const d = p.ui.dialog(panel, { label: 'Sheet' });
+  const m = simpleMenu(p, inner, ['One', 'Two']);
+  const tip = p.ui.tooltip(inner, { text: 'More' });
+  p.focus(inner);
+  d.open();
+  assert.deepEqual([p.byId.ovPopovers.inert, p.byId.ovTips.inert], [false, false], 'the popover and tip layers stay live');
+  m.ctl.open({ focus: 'first' });
+  assert.equal(m.ctl.isOpen(), true);
+  assert.equal(p.doc.activeElement, m.list.children[0], 'focus reaches the first item');
+  assert.equal(p.byId.ovPopovers.inert, false);
+  assert.equal(esc(p), 'esc');
+  assert.deepEqual([m.ctl.isOpen(), d.isOpen()], [false, true], 'Esc closes the menu before the dialog');
+  assert.equal(p.doc.activeElement, inner);
+  inner.fire('pointerenter', { pointerType: 'mouse' });
+  p.advance(400);
+  assert.equal(p.byId[inner.attrs['aria-describedby']].hidden, false, 'a tooltip shows inside a dialog');
+  assert.equal(esc(p), 'esc');
+  assert.deepEqual([p.byId[inner.attrs['aria-describedby']].hidden, d.isOpen()], [true, true], 'Esc hides the tooltip before the dialog');
+  assert.equal(esc(p), 'esc');
+  assert.equal(d.isOpen(), false);
+  tip.destroy();
+});
+
+test('dialog opened from a menu item: closing it puts focus back on the menu button', () => {
+  const p = fakePage();
+  const trigger = p.dom.el('button', { text: 'More' });
+  p.byId.filterbar.appendChild(trigger);
+  const ok = p.dom.el('button', { text: 'OK' });
+  const panel = p.dom.el('div', null, ok);
+  panel.querySelectorAll = () => [ok];
+  const d = p.ui.dialog(panel, { label: 'Sheet' });
+  const m = simpleMenu(p, trigger, ['Report a bug'], () => d.open());
+  trigger.click();
+  assert.equal(p.doc.activeElement, m.list.children[0]);
+  m.list.children[0].click();
+  assert.deepEqual([m.ctl.isOpen(), d.isOpen(), p.doc.activeElement], [false, true, ok]);
+  // The menu item is hidden by now, as in a browser.
+  m.surface.hidden = true;
+  assert.equal(esc(p), 'esc');
+  assert.equal(d.isOpen(), false);
+  assert.equal(p.doc.activeElement, trigger, 'focus is on the menu button, not lost to <body>');
+  assert.equal(p.keys.escDepth(), 0);
+});
+
+test('dialog: dismissible and dismissOnScrim gate the scrim and Esc; the opener, then returnFocus, get focus back', () => {
+  const p = fakePage();
+  const ok = p.dom.el('button', { text: 'OK' });
+  const fallback = p.dom.el('button', { text: 'Fallback' });
+  const opener = p.dom.el('button', { text: 'Open' });
+  p.byId.filterbar.appendChild(fallback);
+  p.byId.filterbar.appendChild(opener);
+  const make = opts => {
+    const panel = p.dom.el('div', null, ok);
+    panel.querySelectorAll = () => [ok];
+    const d = p.ui.dialog(panel, opts);
+    return { d, scrim: panel.parent.children[0] };
+  };
+  let a = make({ dismissOnScrim: false });
+  p.focus(opener);
+  a.d.open();
+  a.scrim.fire('click');
+  assert.equal(a.d.isOpen(), true, 'dismissOnScrim:false ignores a scrim click');
+  assert.equal(esc(p), 'esc');
+  assert.equal(a.d.isOpen(), false, 'but Esc still closes it');
+  a = make({ dismissible: false });
+  p.focus(opener);
+  a.d.open();
+  a.scrim.fire('click');
+  assert.equal(a.d.isOpen(), true, 'a non-dismissible dialog ignores the scrim');
+  esc(p);
+  assert.equal(a.d.isOpen(), true, 'and Esc');
+  a.d.close();
+  a = make({ returnFocus: fallback });
+  p.focus(opener);
+  a.d.open();
+  a.d.close();
+  assert.equal(p.doc.activeElement, opener, 'a shown opener wins over returnFocus');
+  p.focus(opener);
+  a.d.open();
+  opener.hidden = true;
+  a.d.close();
+  assert.equal(p.doc.activeElement, fallback, 'a hidden opener falls back to returnFocus');
+  a = make({});
+  opener.hidden = false;
+  p.focus(opener);
+  a.d.open();
+  a.scrim.fire('click');
+  assert.equal(a.d.isOpen(), false, 'the default scrim click closes');
+  assert.equal(p.keys.escDepth(), 0);
+});
+
+test('menu: ArrowUp on the trigger opens on the last item; Home/End and typeahead move inside; disabled items do nothing', () => {
+  const p = fakePage();
+  const trigger = p.dom.el('button');
+  p.byId.filterbar.appendChild(trigger);
+  const picked = [];
+  const m = simpleMenu(p, trigger, ['Alpha', 'Beta', 'Gamma', 'Delta'], it => picked.push(it.textContent));
+  m.list.children[1].setAttribute('aria-disabled', 'true');
+  trigger.fire('keydown', { key: 'ArrowUp' });
+  assert.equal(p.doc.activeElement, m.list.children[3], 'ArrowUp opens on the last item');
+  m.list.fire('keydown', { key: 'Home' });
+  assert.equal(p.doc.activeElement, m.list.children[0]);
+  m.list.fire('keydown', { key: 'End' });
+  assert.equal(p.doc.activeElement, m.list.children[3]);
+  m.list.fire('keydown', { key: 'g' });
+  assert.equal(p.doc.activeElement, m.list.children[2], 'typeahead jumps to Gamma');
+  p.advance(600);
+  m.list.fire('keydown', { key: 'a' });
+  assert.equal(p.doc.activeElement, m.list.children[0], 'a new search after the pause');
+  m.list.children[1].click();
+  assert.deepEqual([picked, m.ctl.isOpen()], [[], true], 'an aria-disabled item neither selects nor closes');
+  m.list.children[2].click();
+  assert.deepEqual([picked, m.ctl.isOpen()], [['Gamma'], false]);
+});
+
+test('menu: returnFocus is ignored when hidden, inside the surface or <body>; the trigger gets focus instead', () => {
+  const p = fakePage();
+  const trigger = p.dom.el('button');
+  const away = p.dom.el('button');
+  p.byId.filterbar.appendChild(trigger);
+  p.byId.filterbar.appendChild(away);
+  const m = simpleMenu(p, trigger);
+  away.hidden = true;
+  m.ctl.open({ focus: 'first', returnFocus: away });
+  m.ctl.close();
+  assert.equal(p.doc.activeElement, trigger, 'a hidden returnFocus goes to the trigger');
+  away.hidden = false;
+  m.ctl.open({ focus: 'first', returnFocus: m.list.children[0] });
+  m.ctl.close();
+  assert.equal(p.doc.activeElement, trigger, 'a returnFocus inside the surface goes to the trigger');
+  p.focus(away);
+  m.ctl.open({ focus: 'first', returnFocus: p.doc.body });
+  m.ctl.close();
+  assert.equal(p.doc.activeElement, trigger, '<body> is not a place to return to');
+});
+
+test('tooltip: hiding or destroying it pops its Esc entry; it stays hidden while the trigger controls an open menu; keyboard focus shows it', () => {
+  const p = fakePage();
+  const btn = p.dom.el('button');
+  p.byId.filterbar.appendChild(btn);
+  const t = p.ui.tooltip(btn, { text: 'Export' });
+  const tip = p.byId[btn.attrs['aria-describedby']];
+  btn.fire('pointerenter', { pointerType: 'mouse' });
+  p.advance(400);
+  assert.deepEqual([tip.hidden, p.keys.escDepth()], [false, 1]);
+  btn.fire('pointerleave');
+  p.advance(100);
+  assert.deepEqual([tip.hidden, p.keys.escDepth()], [true, 0], 'hiding pops the Esc entry');
+  btn.fire('pointerenter', { pointerType: 'mouse' });
+  p.advance(400);
+  t.destroy();
+  assert.equal(p.keys.escDepth(), 0, 'destroying a shown tooltip pops it too');
+  const t2 = p.ui.tooltip(btn, { text: 'Export' });
+  const tip2 = p.byId[btn.attrs['aria-describedby'].split(' ').pop()];
+  btn.fire('focus');
+  assert.equal(tip2.hidden, true, 'a mouse focus (not :focus-visible) does not show it');
+  p.setFocusVisible(true);
+  btn.fire('focus');
+  assert.equal(tip2.hidden, false, 'keyboard focus shows it at once');
+  btn.fire('blur');
+  assert.deepEqual([tip2.hidden, p.keys.escDepth()], [true, 0]);
+  btn.setAttribute('aria-expanded', 'true');
+  btn.fire('focus');
+  btn.fire('pointerenter', { pointerType: 'mouse' });
+  p.advance(500);
+  assert.equal(tip2.hidden, true, 'no tooltip while the trigger has its menu open');
+  t2.destroy();
 });
