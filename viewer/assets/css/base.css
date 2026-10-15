@@ -6,9 +6,11 @@
   .app[data-material="glass"] { --app-bg: transparent; }
 
   /* Overlay root (roadmap P3). A direct child of <body>: an ancestor with backdrop-filter (the glass
-     #topbar / #filterbar, P4's .chrome toolbar) would become the containing block of a position: fixed
-     surface and misplace it. Above legacy .modal-overlay (100). Only the surfaces take pointer events. */
-  #overlayRoot { position: fixed; inset: 0; z-index: 200; pointer-events: none; --toast-right: 16px; --toast-bottom: 16px; }
+     #filterbar, the .chrome toolbar and status bar) would become the containing block of a position: fixed
+     surface and misplace it. Above legacy .modal-overlay (100). Only the surfaces take pointer events.
+     Toasts sit 16 px above the status bar and left of an open drawer (spec "Toasts"): P9 sets --drawer-w here
+     while the detail drawer is open. */
+  #overlayRoot { position: fixed; inset: 0; z-index: 200; pointer-events: none; --drawer-w: 0px; --toast-right: calc(16px + var(--drawer-w)); --toast-bottom: calc(var(--status-h) + 16px); }
   .ov { position: fixed; top: 0; left: 0; pointer-events: auto; }
   .toast-region { position: fixed; right: var(--toast-right); bottom: var(--toast-bottom); display: flex; flex-direction: column; gap: 8px; pointer-events: auto; }
   .toast-stack { display: flex; flex-direction: column; gap: 8px; }

@@ -284,6 +284,15 @@ test('#overlayRoot is a direct child of <body>, the last element before the scri
   assert.ok(body.children.indexOf(ov) < body.children.indexOf(scripts[0]), '#overlayRoot comes before the scripts');
 });
 
+test('toasts sit 16 px above the status bar and left of an open drawer (spec "Toasts"; P3 follow-up c)', () => {
+  const root_ = C.cssRules(read(path.join(ASSETS, 'css', 'base.css'))).filter(r => r.selectors.includes('#overlayRoot')).flatMap(r => C.declarations(r.body));
+  const v = prop => (root_.find(d => d.prop === prop) || {}).value;
+  assert.deepEqual([v('--toast-bottom'), v('--toast-right'), v('--drawer-w')], ['calc(var(--status-h) + 16px)', 'calc(16px + var(--drawer-w))', '0px'],
+    'P9 sets --drawer-w on #overlayRoot while the drawer is open');
+  const region = C.cssRules(read(path.join(ASSETS, 'css', 'base.css'))).filter(r => r.selectors.includes('.toast-region')).flatMap(r => C.declarations(r.body));
+  assert.deepEqual(['right', 'bottom'].map(p => region.find(d => d.prop === p).value), ['var(--toast-right)', 'var(--toast-bottom)']);
+});
+
 test('hidden overlay surfaces really hide: base.css gives [hidden] back to every foundation class that sets display', () => {
   const rules = C.cssRules(read(path.join(ASSETS, 'css', 'base.css')));
   const hiddenSelectors = rules.filter(r => C.declarations(r.body).some(d => d.prop === 'display' && d.value === 'none')).flatMap(r => r.selectors);
