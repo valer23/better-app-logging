@@ -76,6 +76,16 @@
     const pending = [];
     const start = (t, now) => { t.startedAt = now; t.paused = false; };
     const promote = now => { while (visible.length < max && pending.length) { const t = pending.shift(); start(t, now); visible.push(t); } };
+    // Policy: sticky toasts (errors) never expire, so when every visible slot is sticky a waiting toast
+    // would never be shown or announced. Evict the oldest visible one instead, until nothing waits.
+    // Runs after every add and dismiss: a dismissal can promote a sticky toast into the last free slot.
+    const settle = now => {
+      promote(now);
+      while (pending.length && visible.length >= max && visible.every(t => toastTimeout(t.spec) === Infinity)) {
+        visible.shift();
+        promote(now);
+      }
+    };
     const find = id => visible.find(t => t.id === id) || pending.find(t => t.id === id);
     return {
       add(spec, now) {
@@ -90,19 +100,13 @@
         }
         seq += 1;
         pending.push({ id: seq, spec, remaining: toastTimeout(spec), startedAt: 0, paused: false });
-        promote(now);
-        // Policy: sticky toasts (errors) never expire, so when every visible slot is sticky a newcomer
-        // would wait forever and never be announced. Evict the oldest visible one instead, until nothing waits.
-        while (pending.length && visible.length >= max && visible.every(t => toastTimeout(t.spec) === Infinity)) {
-          visible.shift();
-          promote(now);
-        }
+        settle(now);
         return seq;
       },
       dismiss(id, now) {
         for (const list of [visible, pending]) {
           const i = list.findIndex(t => t.id === id);
-          if (i >= 0) { list.splice(i, 1); promote(now); return true; }
+          if (i >= 0) { list.splice(i, 1); settle(now); return true; }
         }
         return false;
       },

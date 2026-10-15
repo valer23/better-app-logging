@@ -179,6 +179,23 @@ test('toast queue: when every visible slot is a sticky error, a new toast evicts
   assert.deepEqual(ids(q2.pending()), [late]);
 });
 
+test('toast queue: dismissing a toast never leaves every visible slot sticky with toasts still waiting', () => {
+  const q = U.createToastQueue({ max: 3 });
+  const e1 = q.add({ kind: 'error', title: 'e1' }, 0);
+  const e2 = q.add({ kind: 'error', title: 'e2' }, 0);
+  const s = q.add({ kind: 'success', title: 's' }, 0);
+  const e3 = q.add({ kind: 'error', title: 'e3' }, 10);
+  const s2 = q.add({ kind: 'success', title: 's2' }, 20);
+  assert.deepEqual(ids(q.visible()), [e1, e2, s]);
+  assert.deepEqual(ids(q.pending()), [e3, s2]);
+  // s times out: e3 takes the slot, which would leave [e1, e2, e3] all sticky with s2 stuck behind them
+  assert.equal(q.dismiss(s, 5000), true);
+  assert.deepEqual(ids(q.visible()), [e2, e3, s2], 'the oldest sticky toast is evicted so s2 is shown');
+  assert.deepEqual(ids(q.pending()), []);
+  assert.equal(q.get(e1), null);
+  assert.notEqual(q.nextDeadline(5000), Infinity, 's2 has a running timer');
+});
+
 test('announcement throttle: one per 5 s, the newest waiting text is spoken when the window ends', () => {
   const th = U.createThrottle(5000);
   assert.equal(th.push('12 lines match', 0), '12 lines match');
