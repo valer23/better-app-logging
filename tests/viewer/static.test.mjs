@@ -98,6 +98,14 @@ test('Windows High Contrast: the active menu item gets an outline (the bar is a 
   assert.ok(hit, '@media (forced-colors: active) { .menu-item:focus { outline: 2px solid Highlight } } is missing from base.css');
 });
 
+test('a tall dialog scrolls inside the viewport instead of being clipped by the fixed host (review F13)', () => {
+  const rules = C.cssRules(read(path.join(ASSETS, 'css', 'base.css')));
+  const panel = rules.filter(r => r.selectors.includes('.dialog-host > [role="dialog"]')).flatMap(r => C.declarations(r.body));
+  const maxH = panel.find(d => d.prop === 'max-height');
+  assert.ok(maxH && /100(?:d)?vh/.test(maxH.value) && /96px/.test(maxH.value), 'the panel is bounded by the viewport minus the 96 px top padding');
+  assert.ok(panel.some(d => d.prop === 'overflow' && d.value === 'auto'), 'and scrolls');
+});
+
 test('the Export menu lives in the popover layer: one menu button, three formats, two scope radios, the note outside the menu', () => {
   const btn = findById(root, 'exportBtn');
   assert.ok(closestWithin(btn, '[id=filterbar]', root), '#exportBtn stays in #filterbar (P4 re-parents it)');

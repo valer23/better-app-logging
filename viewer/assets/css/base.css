@@ -41,7 +41,9 @@
   .toast-error > .icon { color: var(--err); }
   .dialog-host { position: fixed; inset: 0; display: grid; justify-items: center; align-content: start; padding-top: 96px; pointer-events: auto; }
   .dialog-host > .scrim { position: fixed; }
-  .dialog-host > [role="dialog"] { position: relative; max-width: calc(100vw - 32px); }
+  /* The host is fixed and does not scroll, so a panel taller than the space under its 96 px top padding
+     (plus a 16 px bottom margin) would lose its bottom row. Bound it here so no sheet has to. */
+  .dialog-host > [role="dialog"] { position: relative; max-width: calc(100vw - 32px); max-height: calc(100vh - 96px - 16px); overflow: auto; }
 
   /* Export menu (P3 proof of concept on ALV.ui.menu; P11 replaces its content and its 340 px width). */
   .export-menu { width: min(240px, calc(100vw - 16px)); }
