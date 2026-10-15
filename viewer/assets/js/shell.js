@@ -101,7 +101,7 @@
     ios: { badge: 'i', cls: 'plat plat-i', fallback: 'iPhone' },
   };
 
-  // createShell({ doc, win, dom, ui, keys, prefs, state, actions, now }) → { sync(), markStalled(platform), closeMenus() }.
+  // createShell({ doc, win, dom, ui, keys, prefs, state, actions, now }) → { sync(), devices(), onTick(fn), onSidebar(fn), markStalled(platform), closeMenus() }.
   // Called once, by the legacy script, before its first selectSession. state() returns what the shell shows
   // (the legacy shellState()); actions are the legacy functions it calls. Without `state` only the drag
   // bands are wired (the drag tests).
@@ -175,8 +175,13 @@
     railTip($('sessLive'), 'Live session');
     // The DEVICES rows by platform (filled below). Declared here: syncSidebar runs now, at creation.
     const rows = {};
+    // Called when the rail state flips (not on creation or any other preference): the status bar's left group
+    // moves with the grid column, and a popup is placed on open and on resize only (live.js re-places its own).
+    const sidebarFns = [];
+    let wasCollapsed = rail();
     function syncSidebar() {
       const collapsed = rail();
+      if (collapsed !== wasCollapsed) { wasCollapsed = collapsed; for (const fn of sidebarFns) fn(collapsed); }
       const label = collapsed ? 'Show sidebar' : 'Hide sidebar';
       setAttr(toggle, 'aria-label', label);
       setAttr(toggle, 'aria-expanded', String(!collapsed));
@@ -369,6 +374,8 @@
       devices: () => devState,
       // Runs fn after every tick's refresh (the toolbar's badge and the status bar, live.js).
       onTick(fn) { tickFns.push(fn); },
+      // Runs fn(collapsed) after the sidebar went to or from the rail (⌘B or the toggle), once the layout moved.
+      onSidebar(fn) { sidebarFns.push(fn); },
       // The iOS bridge reported a stall (the legacy onmessage, paused or not): the row says "Stalled 15 s"
       // until the next log line. Lines that arrived before the report are not that line.
       markStalled(p) { seen[p] = state().lines[p]; stalled[p] = true; sync(); },

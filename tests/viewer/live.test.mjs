@@ -251,6 +251,38 @@ test('status bar: the open drops popover is repositioned when a platform block a
   assert.equal(pop.style.top, closed, 'closed: nothing is placed');
 });
 
+// The status bar's left group moves with the grid column (248 px sidebar vs the 52 px rail at size M), and
+// ui.popup places a surface only on open and on resize. ⌘B (inText, no popup guard) still runs while the
+// non-modal popover is open, so the toggle must place it again (review F12).
+test('status bar: ⌘B and the sidebar toggle re-place the open drops popover under its button, and a closed one stays closed', () => {
+  const { p, live, state, prefs, $ } = livePage();
+  const pop = $('dropsPopover');
+  let left = 500;
+  $('dropsBtn').getBoundingClientRect = () => ({ left, top: 700, right: left + 80, bottom: 728, width: 80, height: 28 });
+  state.dropped.ios = 312;
+  live.sync();
+  const cmdB = () => p.keys.dispatch({ key: 'b', code: 'KeyB', metaKey: true, preventDefault() {} }, p.byId.filterbar);
+  assert.equal(cmdB(), 'view.sidebar');   // collapsed, popover closed: nothing is placed
+  left = 304;
+  assert.equal(cmdB(), 'view.sidebar');
+  assert.equal(prefs.get('sidebar'), 'expanded');
+  assert.equal(pop.hidden, true);
+  $('dropsBtn').click();
+  assert.equal(pop.hidden, false);
+  const at = Number.parseFloat(pop.style.left);
+  left = 108;   // the column went from 248 to 52 px: the button moved 196 px left
+  assert.equal(cmdB(), 'view.sidebar');
+  assert.equal(pop.hidden, false, 'it stays open');
+  assert.equal(Number.parseFloat(pop.style.left), at - 196, 're-placed under the moved button');
+  left = 304;
+  $('sidebarToggle').click();
+  assert.equal(Number.parseFloat(pop.style.left), at, 'the toggle button does the same');
+  prefs.set('theme', 'light');
+  left = 50;
+  prefs.set('logFontSize', 15);
+  assert.equal(Number.parseFloat(pop.style.left), at, 'an unrelated preference does not re-place it');
+});
+
 test('status bar: Following / Not following for the live session, nothing for a file; its tooltip carries the Retained text', () => {
   const { p, live, state, $ } = livePage({ st: { maxRetained: 100 } });
   assert.deepEqual([$('followText').textContent, $('followState').getAttribute('data-on'), $('followState').hidden], ['Following', 'true', false]);

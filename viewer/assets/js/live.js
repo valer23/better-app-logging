@@ -181,6 +181,10 @@
     // light-dismiss): #overlayRoot (z 200) would paint an open menu above them. Focus stays where it is.
     function closeMenus() { for (const m of menus) m.close({ restoreFocus: false }); }
     shell.onTick(sync);
+    // ⌘B and the toggle move the status bar's left group (248 px sidebar <-> 52 px rail) while a non-modal popover
+    // may be open on its button; ui.popup places a surface on open and on resize only. (reposition() is a
+    // no-op while closed; the toolbar's controls are right-anchored and the menus there do not move.)
+    shell.onSidebar(() => { if (dropsCtl) dropsCtl.reposition(); });
     return { sync, closeMenus };
   }
 
