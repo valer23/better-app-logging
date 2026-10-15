@@ -25,6 +25,12 @@
   /* Menu items take real focus (APG menu button) and aria-selected is not valid on a menuitem, so the
      foundation's 2 px active-item bar is keyed on :focus. Radio items show their check only when checked. */
   .menu-item:focus { background: var(--fill-hover); box-shadow: inset 2px 0 0 var(--accent); }
+  /* The bar is a background and a box-shadow, which forced-colors drops, and a mouse-opened menu focuses its
+     first item programmatically (not :focus-visible, so the global ring does not show). Mirrors the
+     foundation's [aria-selected] rule. */
+  @media (forced-colors: active) {
+    .menu-item:focus { outline: 2px solid Highlight; outline-offset: -2px; }
+  }
   .menu-item[aria-checked="false"] .menu-check { visibility: hidden; }
   .menu-item[aria-disabled="true"] { color: var(--text-2); cursor: not-allowed; }
   .toast-body { flex: 1; min-width: 0; }

@@ -91,6 +91,13 @@ test('hidden overlay surfaces really hide: base.css gives [hidden] back to every
   }
 });
 
+test('Windows High Contrast: the active menu item gets an outline (the bar is a background and a box-shadow, both dropped) (review F12)', () => {
+  const rules = C.cssRules(read(path.join(ASSETS, 'css', 'base.css')));
+  const hit = rules.find(r => r.selectors.includes('.menu-item:focus') && r.atRules.some(a => /^@media \(forced-colors: active\)/.test(a))
+    && C.declarations(r.body).some(d => d.prop === 'outline' && /Highlight/.test(d.value)));
+  assert.ok(hit, '@media (forced-colors: active) { .menu-item:focus { outline: 2px solid Highlight } } is missing from base.css');
+});
+
 test('the Export menu lives in the popover layer: one menu button, three formats, two scope radios, the note outside the menu', () => {
   const btn = findById(root, 'exportBtn');
   assert.ok(closestWithin(btn, '[id=filterbar]', root), '#exportBtn stays in #filterbar (P4 re-parents it)');
