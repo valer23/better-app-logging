@@ -313,6 +313,9 @@
       trigger.addEventListener('click', () => ctl.toggle({ focus: 'first' }));
       trigger.addEventListener('keydown', e => {
         if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+        // Cmd/Ctrl/Alt + arrow belong to the shortcut registry (jump to latest / oldest line): neither open
+        // the menu nor swallow the event, or a global binding could never fire from a menu button.
+        if (e.metaKey || e.ctrlKey || e.altKey) return;
         e.preventDefault();
         ctl.open({ focus: e.key === 'ArrowUp' ? 'last' : 'first' });
       });

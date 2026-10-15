@@ -1098,3 +1098,19 @@ test('menu: auto-repeated Enter / Space on an item is ignored, so holding Enter 
   assert.equal(hit('ArrowDown', { repeat: true }), true, 'a held arrow key still roves');
   assert.equal(p.doc.activeElement, m.list.children[1]);
 });
+
+test('menu: modified arrows on the trigger (Cmd/Ctrl/Alt+Down/Up) do not open it and are not swallowed (review F8)', () => {
+  const p = fakePage();
+  const trigger = p.dom.el('button');
+  p.byId.filterbar.appendChild(trigger);
+  const m = simpleMenu(p, trigger);
+  for (const mod of ['metaKey', 'ctrlKey', 'altKey']) {
+    for (const key of ['ArrowDown', 'ArrowUp']) {
+      let prevented = false;
+      trigger.fire('keydown', { key, [mod]: true, preventDefault() { prevented = true; } });
+      assert.deepEqual([mod, key, m.ctl.isOpen(), prevented], [mod, key, false, false]);
+    }
+  }
+  trigger.fire('keydown', { key: 'ArrowDown', shiftKey: false });
+  assert.equal(m.ctl.isOpen(), true, 'a plain arrow still opens it');
+});
