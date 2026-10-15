@@ -319,8 +319,27 @@ pkill -f idevicesyslog</pre>
   </div>
 </div>
 
+<!-- Overlay root (roadmap P3). Every menu, popover, tooltip, toast and dialog is placed here, outside any
+     backdrop-filter ancestor (the glass chrome), so position: fixed is relative to the viewport. It is the
+     last element before the scripts, so overlays follow the page in Tab order. Layers paint in DOM order. -->
+<div id="overlayRoot">
+  <div class="ov-layer" id="ovDialogs"></div>
+  <div class="ov-layer" id="ovPopovers"></div>
+  <section class="toast-region" id="toastRegion" aria-label="Notifications">
+    <div class="toast-stack" id="toastAlerts"></div>
+    <div class="toast-stack" id="toastLive" aria-live="polite" aria-relevant="additions"></div>
+  </section>
+  <div class="ov-layer" id="ovTips"></div>
+  <div class="sr-only" id="announcer" role="status" aria-live="polite"></div>
+</div>
+
 <!-- Per-session buffers and view state (pure). Synchronous, before the legacy script that uses it. -->
 <script src="assets/js/session.js"></script>
+<!-- UI primitives (roadmap P3): DOM builders, shortcut registry, menus/tooltips/toasts/dialogs. Synchronous,
+     in dependency order, before the legacy script that uses them. -->
+<script src="assets/js/dom.js"></script>
+<script src="assets/js/keys.js"></script>
+<script src="assets/js/ui.js"></script>
 <script>
 // ─── Topbar drag-region (Tauri IPC) ──────────────────────────────────────
 // The macOS window uses titleBarStyle:Overlay + hiddenTitle, so the native
@@ -332,7 +351,7 @@ pkill -f idevicesyslog</pre>
 (function initTopbarDrag() {
   const topbar = document.getElementById('topbar');
   if (!topbar) return;
-  const INTERACTIVE = 'button, input, label, select, textarea, a, .zoom-group, .theme-switch, .glass-switch';
+  const INTERACTIVE = ALV.dom.INTERACTIVE;   // assets/js/dom.js: semantic roles, [data-no-drag], legacy topbar classes
   // Drag is gesture-based: arm on mousedown, fire startDragging only when
   // the cursor actually moves. This keeps dblclick clean — without the
   // movement gate, calling startDragging() on the first mousedown enters

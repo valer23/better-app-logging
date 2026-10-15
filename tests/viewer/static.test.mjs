@@ -68,6 +68,27 @@ test('drag band: every control inside #topbar matches INTERACTIVE', () => {
   assert.deepEqual(C.dragErrors(root, jsText, ['topbar']), []);
 });
 
+test('#overlayRoot is a direct child of <body>, the last element before the scripts, with its layers in paint order', () => {
+  const body = root.children.find(el => el.tag === 'html').children.find(el => el.tag === 'body');
+  const nonScript = body.children.filter(el => el.tag !== 'script');
+  assert.equal(nonScript.at(-1).attrs.id, 'overlayRoot');
+  const ov = nonScript.at(-1);
+  assert.deepEqual(ov.children.map(el => el.attrs.id), ['ovDialogs', 'ovPopovers', 'toastRegion', 'ovTips', 'announcer']);
+  const byId = id => elements(ov).find(el => el.attrs.id === id);
+  assert.equal(byId('toastLive').attrs['aria-live'], 'polite', 'toasts live in one persistent polite region');
+  assert.equal(byId('toastAlerts').attrs['aria-live'], undefined, 'error toasts carry role=alert themselves');
+  assert.equal(byId('announcer').attrs['aria-live'], 'polite');
+  const scripts = body.children.filter(el => el.tag === 'script');
+  assert.ok(body.children.indexOf(ov) < body.children.indexOf(scripts[0]), '#overlayRoot comes before the scripts');
+});
+
+test('INTERACTIVE is one literal, in dom.js, and the legacy drag code reads it from ALV.dom', () => {
+  const literals = allJs.filter(s => /const INTERACTIVE\s*=\s*'/.test(s.code)).map(s => s.filename);
+  assert.deepEqual(literals, ['viewer/assets/js/dom.js']);
+  assert.equal((jsText.match(/const INTERACTIVE\s*=\s*'/g) || []).length, 1);
+  assert.match(inlineScripts(html).at(-1).code, /const INTERACTIVE = ALV\.dom\.INTERACTIVE;/);
+});
+
 test('the checks reject deliberately broken input', () => {
   const h = s => parseHtml(s).root;
   assert.notDeepEqual(parseHtml('<div><span></div>').errors, []);
@@ -116,6 +137,9 @@ test('the checks reject deliberately broken input', () => {
   assert.notDeepEqual(C.xssErrors('frame.srcdoc = s;'), []);
   assert.notDeepEqual(C.dragErrors(h('<div id="topbar"><span tabindex="0">x</span></div>'), "const INTERACTIVE = 'button';", ['topbar']), []);
   assert.deepEqual(C.dragErrors(h('<div id="topbar"><div class="grp"><span role="switch">x</span></div></div>'), "const INTERACTIVE = 'button, .grp';", ['topbar']), []);
+  assert.deepEqual(C.dragErrors(h('<div id="topbar"><span role="switch" tabindex="0">x</span></div>'), "const INTERACTIVE = 'button, [role=switch]';", ['topbar']), []);
+  assert.notDeepEqual(C.dragErrors(h('<div id="topbar"><span role="tab" tabindex="0">x</span></div>'), "const INTERACTIVE = 'button, [role=switch]';", ['topbar']), []);
+  assert.deepEqual(C.dragErrors(h('<div id="topbar"><div data-no-drag><span tabindex="0">x</span></div></div>'), "const INTERACTIVE = '[data-no-drag]';", ['topbar']), []);
   assert.notDeepEqual(C.offlineErrors("@import url('https://fonts.googleapis.com/css2');", 'x.css'), []);
   assert.deepEqual(C.offlineErrors("new WebSocket('ws://localhost:8765')", 'x.js'), []);
   assert.notDeepEqual(C.lgScopeSpecificityErrors('.lg-scope * { margin: 0 }'), []);
