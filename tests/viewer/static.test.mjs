@@ -194,10 +194,26 @@ test('status bar: devices, drops (with its popover in the popover layer), the mo
   assert.deepEqual([...new Set(tiers.flatMap(r => r.atRules.filter(a => a.startsWith('@container'))))].sort(),
     ['@container statusbar (max-width: 975px)', '@container toolbar (max-width: 1011px)', '@container toolbar (max-width: 1151px)'],
     'the spec\'s tiers, as border-box widths minus the padding');
-  assert.deepEqual(tiers.filter(r => r.atRules.includes('@container statusbar (max-width: 975px)')).flatMap(r => r.selectors), ['#retainedText:not([data-note])'],
-    'the narrow tier hides the plain count, never the #45 discard note');
-  const sbDev = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css'))).filter(r => r.selectors.includes('.sb-dev')).flatMap(r => C.declarations(r.body));
+  assert.deepEqual(tiers.filter(r => r.atRules.includes('@container statusbar (max-width: 975px)')).flatMap(r => r.selectors), ['#retainedText:not([data-note])', '#readingWindowHint'],
+    'the narrow tier hides the plain count and the #58 hint (the right group would not fit next to the devices at 1100 px), never the #45 discard note');
+  const shellRules = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')));
+  const declsOf = sel => shellRules.filter(r => r.selectors.includes(sel) && !r.atRules.some(a => a.startsWith('@container'))).flatMap(r => C.declarations(r.body));
+  const sbDev = declsOf('.sb-dev');
   assert.ok(!sbDev.some(d => d.prop === 'height'), '.btn-sm sets the height: at least the 24×24 target');
+  assert.ok(!sbDev.some(d => d.prop === 'overflow'), 'the button is not clipped: its focus ring is outside its box');
+  // Overflow at the minimum window (a 852 px bar): the device name, free text from the bridge, is the part that
+  // gives way; only its inner span is clipped; the left group shrinks before the right one.
+  const nameDecls = declsOf('.sb-name');
+  const has = (ds, prop, value) => ds.some(d => d.prop === prop && d.value === value);
+  assert.ok(has(nameDecls, 'max-width', '160px') && has(nameDecls, 'overflow', 'hidden') && has(nameDecls, 'text-overflow', 'ellipsis') && has(nameDecls, 'min-width', '0'),
+    'the name span is clipped with an ellipsis at 160 px');
+  assert.ok(has(declsOf('.sb-left'), 'flex', '0 1 auto') && has(declsOf('.sb-right'), 'flex', 'none'), 'the left group shrinks first');
+  for (const id of ['sbAndroid', 'sbIos']) {
+    const b = findById(root, id);
+    assert.deepEqual([b.attrs['aria-labelledby'], b.attrs['aria-describedby']], [`${id}Name`, `${id}Rate`], `#${id} is named by the device, described by the rate`);
+    assert.equal(findById(root, `${id}Name`).attrs.class, 'sb-name');
+    assert.ok(closestWithin(findById(root, `${id}Name`), `[id=${id}]`, root));
+  }
 });
 
 test('window chrome: the macOS traffic-light inset is on #sidebarHeader, no longer on #topbar', () => {

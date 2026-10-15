@@ -130,6 +130,7 @@
     function syncStatus(st) {
       const dev = shell.devices();
       let total = 0;
+      let grew = false;   // a per-platform block of the drops popover appeared or went away
       for (const [p, id] of PLAT) {
         const d = dev[p] || { state: 'disconnected', rate: 0, name: '' };
         setText($(`${id}Name`), d.name);
@@ -142,6 +143,7 @@
         dropSeen[p] = n;
         total += n;
         const box = p === 'android' ? 'dropsAndroid' : 'dropsIos';
+        if ($(box) && $(box).hidden !== (n === 0)) grew = true;
         setHidden($(box), n === 0);
         if (n) {
           const detail = dropDetail(n, d.name, dropRate[p]);
@@ -151,7 +153,14 @@
       }
       setText($('dropsText'), dropsText(total));
       setHidden($('dropsBtn'), total === 0);
-      if (!total && dropsCtl) dropsCtl.close({ restoreFocus: false });
+      // No drops left: close. Otherwise: ui.popup places a surface on open and on resize only, and side 'top'
+      // fixes its top edge from the height at that moment, so a block that appears while it is open would grow
+      // it down over #dropsBtn and out of the window. One layout read per change of a block, never per tick
+      // (reposition() is a no-op while closed).
+      if (dropsCtl) {
+        if (!total) dropsCtl.close({ restoreFocus: false });
+        else if (grew) dropsCtl.reposition();
+      }
       const showFollow = st.cur.kind === 'live';
       setHidden($('followState'), !showFollow);
       setAttr($('followState'), 'data-on', String(!!st.cur.follow));

@@ -93,8 +93,16 @@
      paint containment: it would clip focus rings). */
   #statusBar { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: var(--status-h); padding: 0 12px; flex: none; border-top: 1px solid var(--hairline); font-size: var(--ui-fs-sm); color: var(--text-2); container: statusbar / inline-size; contain: size layout style; }
   .sb-left, .sb-right { display: flex; align-items: center; gap: 12px; min-width: 0; white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .sb-dev { gap: 6px; }   /* .btn-sm's --ctl-h-sm (24/24/28 px): at least the 24×24 target (WCAG 2.5.8) */
+  /* Overflow rule: the right group keeps its size and the left one gives way first. A device name is free text
+     from the bridge, so it is the part that shrinks: it is clipped to 160 px, and further when the bar is
+     narrower, on the inner span only (clipping the button would cut its focus ring). The platform badge and the
+     rate never shrink. */
+  .sb-left { flex: 0 1 auto; }
+  .sb-right { flex: none; }
+  .sb-dev { gap: 6px; min-width: 0; }   /* .btn-sm's --ctl-h-sm (24/24/28 px): at least the 24×24 target (WCAG 2.5.8) */
+  .sb-dev .plat, .sb-dev .sb-rate { flex: none; }
   .sb-dev .plat { width: 16px; height: 16px; }
+  .sb-name { min-width: 0; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
   .sb-dev[data-state="streaming"] .sb-rate { color: var(--ok); }
   .sb-dev[data-state="stalled"] .sb-rate { color: var(--warn); }
   #dropsBtn { color: var(--warn); }
@@ -104,8 +112,10 @@
   #followState .dot { color: var(--text-3); }
   #followState[data-on="true"] .dot { color: var(--ok); }
   /* Below the tier the plain count hides, but the #45 discard note (data-note, updateStats) stays: it is the
-     only place that warning lives (#45 parity). */
-  @container statusbar (max-width: 975px) { #retainedText:not([data-note]) { display: none; } }
+     only place that warning lives (#45 parity). The #58 hint hides with it: with the note, the hint and Following
+     the right group is about 560 px, which the app's minimum window (a 828 px bar) cannot give next to the
+     device buttons, even with their names clipped; without the hint it is about 380 px. */
+  @container statusbar (max-width: 975px) { #retainedText:not([data-note]), #readingWindowHint { display: none; } }
   .drops-pop { width: 320px; max-width: calc(100vw - 16px); padding: 12px; display: flex; flex-direction: column; gap: 12px; background: var(--raised); border: 1px solid var(--hairline); border-radius: 8px; box-shadow: var(--shadow-md); }
   .drops-pop[hidden] { display: none; }
   .drops-title { font-weight: 600; }

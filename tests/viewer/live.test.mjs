@@ -156,6 +156,27 @@ test('status bar: one button per device (name, rate or state, aria-pressed) that
   assert.deepEqual(calls.at(-1), ['togglePlatform', 'ios']);
 });
 
+// As the sidebar rows (P4a): the toggle is named by the device alone and the rate describes it. The rate is
+// rewritten twice a second, and a focused button whose name changed would be re-announced at that pace.
+test('status bar: a device button is named by the device alone; the rate (rewritten at 2 Hz) only describes it', () => {
+  const { p, live, state, $ } = livePage({ st: { devices: { android: { id: 'a1', name: 'Pixel 8 Pro' }, ios: { id: '', name: '' } } } });
+  for (const [id, name] of [['sbAndroid', 'Pixel 8 Pro'], ['sbIos', 'iPhone']]) {
+    const b = $(id);
+    const labelledby = b.getAttribute('aria-labelledby');
+    const describedby = b.getAttribute('aria-describedby');
+    assert.deepEqual([labelledby, describedby], [`${id}Name`, `${id}Rate`], 'attributes name the two spans');
+    assert.equal(p.byId[labelledby].textContent, name);
+    assert.ok(!p.byId[labelledby].textContent.includes(p.byId[describedby].textContent), 'the name excludes the rate');
+    assert.notEqual(labelledby, describedby);
+  }
+  state.live.android = true;
+  p.advance(500);
+  state.lines.android = 421;
+  p.advance(500);
+  assert.equal($('sbAndroidRate').textContent, '842/s');
+  assert.equal($('sbAndroidName').textContent, 'Pixel 8 Pro', 'the name does not change with the rate');
+});
+
 test('status bar: the drops button sums both platforms; its popover says how many, from which device, at what rate', () => {
   const { p, live, state, $ } = livePage({ st: { live: { android: false, ios: true }, devices: { android: { id: '', name: '' }, ios: { id: 'u1', name: 'iPhone 15' } } } });
   assert.equal($('dropsBtn').hidden, true);
@@ -177,6 +198,39 @@ test('status bar: the drops button sums both platforms; its popover says how man
   state.dropped.ios = 0;
   live.sync();
   assert.deepEqual([$('dropsBtn').hidden, $('dropsText').textContent], [true, '0 lines dropped'], 'Clear resets them');
+});
+
+// ui.popup places a surface on open and on resize; with side 'top' its top edge comes from its height at that
+// moment. A platform that starts dropping while it is open un-hides a block and grows it.
+test('status bar: the open drops popover is repositioned when a platform block appears or goes away, and not otherwise', () => {
+  const { p, live, state, $ } = livePage();
+  const pop = $('dropsPopover');
+  const blocks = () => ['dropsAndroid', 'dropsIos'].filter(id => !$(id).hidden).length;
+  Object.defineProperty(pop, 'offsetHeight', { get: () => 40 + 60 * blocks(), configurable: true });
+  $('dropsBtn').getBoundingClientRect = () => ({ left: 500, top: 700, right: 580, bottom: 728, width: 80, height: 28 });
+  const top = () => Number.parseFloat(pop.style.top);
+  state.dropped.ios = 312;
+  live.sync();
+  $('dropsBtn').click();
+  assert.equal(pop.hidden, false);
+  const one = top();
+  assert.equal(one, 700 - 100 - 6, 'one block: its bottom edge sits 6 px above the button');
+  state.dropped.ios = 400;
+  live.sync();
+  assert.equal(top(), one, 'a count change that keeps the blocks does not re-place it');
+  state.dropped.android = 1;
+  live.sync();
+  assert.equal(blocks(), 2);
+  assert.equal(top(), 700 - 160 - 6, 'the second block appeared: still 6 px above the button, grown upwards');
+  state.dropped.ios = 0;
+  live.sync();
+  assert.equal(blocks(), 1);
+  assert.equal(top(), one, 'a block went away: placed again');
+  live.closeMenus();
+  const closed = pop.style.top;
+  state.dropped.ios = 5;
+  live.sync();
+  assert.equal(pop.style.top, closed, 'closed: nothing is placed');
 });
 
 test('status bar: Following / Not following for the live session, nothing for a file; its tooltip carries the Retained text', () => {
