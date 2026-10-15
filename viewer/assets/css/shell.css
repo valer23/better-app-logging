@@ -87,4 +87,27 @@
      with P5's Space / End; until then the toolbar shows none. */
   @container toolbar (max-width: 1151px) { #exportBtn .tb-label, #exportBtn .tb-chev { display: none; } }
   @container toolbar (max-width: 1011px) { #zoomGroup, .tb-zoom-div { display: none; } }
+
+  /* Status bar (spec: --status-h, .chrome, top hairline, padding 0 12, gap 12). Its height is fixed, so size
+     and layout containment keep the Retained text and the #58 hint, written on every flush, inside it (no
+     paint containment: it would clip focus rings). */
+  #statusBar { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: var(--status-h); padding: 0 12px; flex: none; border-top: 1px solid var(--hairline); font-size: var(--ui-fs-sm); color: var(--text-2); container: statusbar / inline-size; contain: size layout style; }
+  .sb-left, .sb-right { display: flex; align-items: center; gap: 12px; min-width: 0; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .sb-dev { gap: 6px; }   /* .btn-sm's --ctl-h-sm (24/24/28 px): at least the 24×24 target (WCAG 2.5.8) */
+  .sb-dev .plat { width: 16px; height: 16px; }
+  .sb-dev[data-state="streaming"] .sb-rate { color: var(--ok); }
+  .sb-dev[data-state="stalled"] .sb-rate { color: var(--warn); }
+  #dropsBtn { color: var(--warn); }
+  #readingWindowHint:not(.visible), #retainedText:empty { display: none; }
+  #followState { display: inline-flex; align-items: center; gap: 6px; }
+  #followState[hidden] { display: none; }
+  #followState .dot { color: var(--text-3); }
+  #followState[data-on="true"] .dot { color: var(--ok); }
+  /* Below the tier the plain count hides, but the #45 discard note (data-note, updateStats) stays: it is the
+     only place that warning lives (#45 parity). */
+  @container statusbar (max-width: 975px) { #retainedText:not([data-note]) { display: none; } }
+  .drops-pop { width: 320px; max-width: calc(100vw - 16px); padding: 12px; display: flex; flex-direction: column; gap: 12px; background: var(--raised); border: 1px solid var(--hairline); border-radius: 8px; box-shadow: var(--shadow-md); }
+  .drops-pop[hidden] { display: none; }
+  .drops-title { font-weight: 600; }
+  .drops-desc { margin: 4px 0 0; color: var(--text-2); font-size: var(--ui-fs-sm); }
 }

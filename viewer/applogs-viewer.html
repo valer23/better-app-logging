@@ -116,7 +116,8 @@
   <div class="sep"></div>
   <div class="toggle-group" id="platToggles"></div>
   <div class="bar-spacer"></div>
-  <div class="stats" id="stats"></div>
+  <!-- The line count waits here for P6's chip row ("47 106 of 48 310 lines"). -->
+  <div class="stats" id="filterCount"></div>
 </div>
 
 <!-- File mode -->
@@ -198,27 +199,6 @@
   </div>
 </div>
 
-<!-- Live status bar (shown above log table when live) -->
-<div class="lg-scope" id="liveBar">
-  <div class="live-bar-item">
-    <div class="live-bar-platform">🤖 Android</div>
-    <span class="status-pill disconnected" id="liveBarAndroid">
-      <span class="status-dot"></span><span id="liveBarAndroidText">Disconnected</span>
-    </span>
-    <button class="btn-secondary" id="liveBarAndroidBtn" onclick="toggleAndroid()" style="font-size:11px;padding:3px 8px">Connect</button>
-    <span class="status-pill dropped" id="liveBarAndroidDropped" title=""><span id="liveBarAndroidDroppedText"></span></span>
-  </div>
-  <div class="sep" style="height:16px"></div>
-  <div class="live-bar-item">
-    <div class="live-bar-platform">🍎 iOS</div>
-    <span class="status-pill disconnected" id="liveBarIos">
-      <span class="status-dot"></span><span id="liveBarIosText">Disconnected</span>
-    </span>
-    <button class="btn-secondary" id="liveBarIosBtn" onclick="toggleIos()" style="font-size:11px;padding:3px 8px">Connect</button>
-    <span class="status-pill dropped" id="liveBarIosDropped" title=""><span id="liveBarIosDroppedText"></span></span>
-  </div>
-</div>
-
 <!-- Loading -->
 <div class="lg-scope" id="loading"><div class="spinner"></div><span id="loadingText">Parsing…</span></div>
 
@@ -250,8 +230,20 @@
     </table>
   </div>
   <button type="button" class="newer-pill" id="newerPill" onclick="jumpToLatest(event)" aria-label="" title="Jump to the newest line and turn auto-scroll back on"><span class="newer-count" id="newerPillCount"></span><span class="newer-sep" aria-hidden="true">·</span><span class="newer-action">Jump to latest ↓</span></button>
-  <span id="readingWindowHint" class="reading-window-hint" title="The scrollbar covers only the loaded window of the history, not every line. Scroll near the top or bottom of the table to load more."></span>
 </div>
+<footer id="statusBar" class="chrome">
+  <div class="sb-left">
+    <button type="button" id="sbAndroid" class="btn btn-ghost btn-sm sb-dev" aria-pressed="true"><span class="plat plat-a" aria-hidden="true">A</span><span id="sbAndroidName"></span><span class="sb-rate" id="sbAndroidRate"></span></button>
+    <button type="button" id="sbIos" class="btn btn-ghost btn-sm sb-dev" aria-pressed="true"><span class="plat plat-i" aria-hidden="true">i</span><span id="sbIosName"></span><span class="sb-rate" id="sbIosRate"></span></button>
+    <button type="button" id="dropsBtn" class="btn btn-ghost btn-sm" aria-haspopup="dialog" aria-expanded="false" aria-controls="dropsPopover" hidden><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-triangle-alert"/></svg><span id="dropsText"></span></button>
+  </div>
+  <div class="sb-right">
+    <!-- #58: which slice of the history the table holds, while Follow is off (updateReadingWindowHint). -->
+    <span id="readingWindowHint" title="The scrollbar covers only the loaded window of the history, not every line. Scroll near the top or bottom of the table to load more."></span>
+    <span id="retainedText"></span>
+    <span id="followState"><span class="dot" aria-hidden="true"></span><span id="followText"></span></span>
+  </div>
+</footer>
 </div><!-- #main -->
 </div><!-- #app -->
 
@@ -365,6 +357,11 @@ pkill -f idevicesyslog</pre>
         <button type="button" class="menu-item" role="menuitemcheckbox" aria-checked="false" tabindex="-1" id="moreGlass" data-act="glass"><svg class="icon menu-check" aria-hidden="true" focusable="false"><use href="#i-check"/></svg><span>Glass</span></button>
       </div>
     </div>
+    <!-- The status bar's drops popover (assets/js/live.js), one block per platform. -->
+    <div class="drops-pop ov" id="dropsPopover" aria-label="Dropped lines" hidden>
+      <div id="dropsAndroid" hidden><div class="drops-title" id="dropsAndroidTitle"></div><p class="drops-desc" id="dropsAndroidDesc"></p></div>
+      <div id="dropsIos" hidden><div class="drops-title" id="dropsIosTitle"></div><p class="drops-desc" id="dropsIosDesc"></p></div>
+    </div>
   </div>
   <section class="toast-region" id="toastRegion" aria-label="Notifications">
     <div class="toast-stack" id="toastAlerts"></div>
@@ -449,7 +446,7 @@ const newerPill = document.getElementById('newerPill'), newerPillCount = documen
 let newerPillShown = -1;      // count on screen; 0 = hidden, -1 = unknown (forces a write)
 let newerPillArmed = null;    // spacer class state on #logTable
 let newerPillJumpAt = -Infinity;   // when the pill last re-pinned; see the tbody click guard
-// ── Reading-window position hint ──
+// ── Reading-window position hint (the status bar's "Lines X–Y of Z") ──
 // Since #58 the DOM holds at most LIVE_DOM_CAP rows of `filtered` while reading (auto-scroll off, or the
 // File tab), so the scrollbar thumb measures that window, not the history; the hint says which slice is
 // loaded. Same cost rules as the pill: arithmetic on renderedEnd and the row count (a DOM count, not a
@@ -468,7 +465,7 @@ function updateReadingWindowHint() {
   if (of === hintOf && (!of || (start + 1 === hintFrom && s.renderedEnd === hintTo))) return;
   if (!of !== !hintOf) readingWindowHint.classList.toggle('visible', of > 0);
   hintFrom = start + 1; hintTo = s.renderedEnd; hintOf = of;
-  if (of) readingWindowHint.textContent = `lines ${hintFrom.toLocaleString()}–${hintTo.toLocaleString()} of ${of.toLocaleString()}`;
+  if (of) readingWindowHint.textContent = `Lines ${ALV.shellPure.num(hintFrom)}–${ALV.shellPure.num(hintTo)} of ${ALV.shellPure.num(of)}`;
 }
 function updateNewerPill() {
   if (document.hidden) return;
@@ -496,7 +493,6 @@ function forwardWheelToTable(e) {
   t.scrollTop += e.deltaY * k; t.scrollLeft += e.deltaX * k;
 }
 newerPill.addEventListener('wheel', forwardWheelToTable, { passive: true });
-readingWindowHint.addEventListener('wheel', forwardWheelToTable, { passive: true });
 function jumpToLatest(e) {
   const hadFocus = document.activeElement === newerPill;
   newerPillJumpAt = performance.now();
@@ -575,7 +571,6 @@ function selectSession(next) {
     loadAndroidDevices();
     loadIosDevices();
   } else {
-    document.getElementById('liveBar').classList.remove('visible');
     showOnly(next.all.length ? 'logWrapper' : 'dropzone');
   }
   if (next !== prev) { restoreView(next, t); updateStats(); updateExportVisibility(); }
@@ -734,9 +729,8 @@ async function checkIosDriverStatus() {
 function refreshLiveView() {
   if (cur.kind !== 'live') return;
   const anyConnected = androidLive || iosLive;
-  document.getElementById('liveBar').classList.toggle('visible', anyConnected);
   showOnly(anyConnected ? 'logWrapper' : 'livePanel');
-  updateLiveBar();
+  shellSync();
 }
 
 function showOnly(id) {
@@ -824,12 +818,13 @@ shell = ALV.createShell({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, 
   actions: { selectSession, openFile: openLogFile, togglePlatform, toggleStream: p => (p === 'android' ? toggleAndroid() : toggleIos()),
     repair: () => iosRepairFromHeader(), setup: p => showSetup(p) } });
 liveUi = ALV.createLive({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, keys: ALV.keys, prefs: ALV.prefs, shell, state: shellState,
-  actions: { togglePause, toggleAutoScroll, clear: clearLogs, zoom: setLogZoom, openFile: openLogFile, setGlass } });
+  actions: { togglePause, toggleAutoScroll, clear: clearLogs, zoom: setLogZoom, openFile: openLogFile, setGlass, togglePlatform } });
 function shellState() {
   return {
     cur, sessions: [liveSession, fileSession],
     live: { android: androidLive, ios: iosLive }, status: liveStatus, devices: deviceInfo, driverMissing: iosDriverMissing,
     lines: wsLines, dropped: liveSession.dropped, enabled: enabledPlatforms, paused: livePaused, buffered: pendingBatch.length,
+    maxRetained: MAX_RETAINED,   // the status bar's Following tooltip (Retained text)
   };
 }
 function shellSync() { if (shell) shell.sync(); if (liveUi) liveUi.sync(); }
@@ -1125,23 +1120,15 @@ function clearDeviceBadge(platform) {
 function toggleIos() { iosLive ? disconnectIos() : connectIos(); }
 
 // Lines the backend dropped for this client because its WS stream fell
-// behind the bridge's broadcast buffer (server sends {type:'dropped',count}).
+// behind the bridge's broadcast buffer (server sends {type:'dropped',count}). The status bar's drops
+// button and popover and the sidebar rows show them (assets/js/live.js, shell.js).
 // Per platform, held on the live session; reset by Clear on Live (a loaded file is its own session
 // and leaves it alone). Disconnect/reconnect keeps it because the earlier lines (and their gaps)
 // are still in the table.
 // The count covers every lost broadcast frame, so a devices/error update in
 // the gap is included and its effect is lost (e.g. an iOS stall prompt never appears).
-function updateDroppedIndicator(platform) {
-  const pre = platform === 'android' ? 'liveBarAndroid' : 'liveBarIos';
-  const pill = document.getElementById(pre + 'Dropped');
-  const n = liveSession.dropped[platform];
-  pill.classList.toggle('visible', n > 0);
-  document.getElementById(pre + 'DroppedText').textContent =
-    `\u26A0 ${n.toLocaleString()} ${n === 1 ? 'line' : 'lines'} dropped`;
-  pill.title = `${n.toLocaleString()} ${platform === 'android' ? 'Android' : 'iOS'} ${n === 1 ? 'message' : 'messages'} (log lines, plus any device/status updates in the gap) never reached the viewer: ` +
-    'this connection could not keep up with the stream, so the app\'s server-side buffer overflowed ' +
-    'and the oldest unsent messages were dropped. The table and exports may have gaps where this happened (unless those lines were later discarded by the viewer\'s retention cap). Resets on Clear.';
-  shellSync();   // the sidebar row's "312 dropped"
+function updateDroppedIndicator() {
+  shellSync();
 }
 
 function handleWsMsg(e, platform) {
@@ -1491,23 +1478,7 @@ function setStatus(platform, state, text) {
   document.getElementById(ids.pill).className = 'status-pill ' + state;
   document.getElementById(ids.txt).textContent = text;
   liveStatus[platform] = { state, text };
-  updateLiveBar();
   shellSync();
-}
-
-function updateLiveBar() {
-  // Android bar
-  const aState = androidLive ? 'connected' : 'disconnected';
-  const aText  = androidLive ? 'Connected'  : 'Disconnected';
-  document.getElementById('liveBarAndroid').className = 'status-pill ' + aState;
-  document.getElementById('liveBarAndroidText').textContent = aText;
-  document.getElementById('liveBarAndroidBtn').textContent = androidLive ? 'Disconnect' : 'Connect';
-  // iOS bar
-  const iState = iosLive ? 'connected' : 'disconnected';
-  const iText  = iosLive ? 'Connected'  : 'Disconnected';
-  document.getElementById('liveBarIos').className = 'status-pill ' + iState;
-  document.getElementById('liveBarIosText').textContent = iText;
-  document.getElementById('liveBarIosBtn').textContent = iosLive ? 'Disconnect' : 'Connect';
 }
 
 function setConnectBtn(platform, connected) {
@@ -1873,15 +1844,25 @@ function applyFilters() {
   document.getElementById('logTable').scrollTop = 0; // explicit reset only on full re-render
 }
 
+// The filter bar's line count (until P6's chip row) and the status bar's Retained text with the #45 note,
+// whose long form is its title. Runs on every flush: statText writes a text only when it changed.
 function updateStats() {
-  const s = cur, el = document.getElementById('stats');
-  el.textContent = `${s.filtered.length.toLocaleString()} / ${s.all.length.toLocaleString()} lines` +
-    (!s.discarded ? '' : s.overflowed ? `, ${s.discarded.toLocaleString()} discarded, resume skips to newest`
-                                      : `, ${s.discarded.toLocaleString()} older discarded`);
-  const title = !s.discarded ? ''
-    : s.overflowed ? `The paused backlog exceeded ${MAX_RETAINED.toLocaleString()} lines, so its oldest frames were discarded. On resume the lines shown now are discarded and the view continues from the newest lines.`
-    : `Live view keeps the newest ${MAX_RETAINED.toLocaleString()} lines; older lines are discarded to bound memory.`;
+  const s = cur, live = s.kind === 'live';
+  statText('filterCount', ALV.livePure.lineCount(s.filtered.length, s.all.length));
+  statText('retainedText', live ? ALV.livePure.retainedText(s.all.length, MAX_RETAINED, s.discarded, s.overflowed) : '');
+  const max = ALV.shellPure.num(MAX_RETAINED);
+  const title = !live || !s.discarded ? ''
+    : s.overflowed ? `The paused backlog exceeded ${max} lines, so its oldest frames were discarded. On resume the lines shown now are discarded and the view continues from the newest lines.`
+    : `Live view keeps the newest ${max} lines; older lines are discarded to bound memory.`;
+  const el = document.getElementById('retainedText');
   if (el.title !== title) el.title = title;   // avoid an attribute write on every flush
+  // data-note keeps the #45 note visible at the status bar's narrow tier (shell.css), written on change only.
+  const note = live && s.discarded > 0;
+  if (el._note !== note) { el._note = note; el.toggleAttribute('data-note', note); }
+}
+function statText(id, text) {
+  const el = document.getElementById(id);
+  if (el._statText !== text) { el._statText = text; el.textContent = text; }
 }
 
 let currentSearch = '';

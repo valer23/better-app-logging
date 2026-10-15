@@ -21,6 +21,9 @@ const VIEW = {
 const PINNED = {
   dropTooltipEnd: 'Resets on Clear.',
 };
+// P4b: #stats became the filter bar's #filterCount ("N of M lines") and the status bar's #retainedText
+// ("Retained N of MAX" with the #45 note; the long explanation is its title). The drops moved from the live
+// bar's pills to the status bar's #dropsBtn (the total) and its popover (per platform).
 
 const NAMES = ['handleWsMsg', 'flushBatch', 'togglePause', 'toggleAutoScroll', 'clearLogs', 'handleFile', 'updateNewerPill', 'doExport', 'openLogFile'];
 const frame = i => JSON.stringify({
@@ -46,18 +49,20 @@ function boot() {
   };
 }
 
-test('#45: past MAX_RETAINED the oldest live lines go, and #stats says how many', () => {
+test('#45: past MAX_RETAINED the oldest live lines go, and the Retained text says how many', () => {
   const v = boot();
   v.run('MAX_RETAINED = 100');
   v.send(150); v.api.flushBatch();
   assert.equal(v.get('liveAll').length, 90);
   assert.equal(v.get('liveAll')[0].msg, 'line 60');
   assert.equal(v.get('liveDiscarded'), 60);
-  assert.equal(v.text('stats'), '90 / 90 lines, 60 older discarded');
-  assert.equal(v.title('stats'), 'Live view keeps the newest 100 lines; older lines are discarded to bound memory.');
+  assert.equal(v.text('filterCount'), '90 of 90 lines');
+  assert.equal(v.text('retainedText'), 'Retained 90 of 100 · 60 older discarded');
+  assert.equal(v.title('retainedText'), 'Live view keeps the newest 100 lines; older lines are discarded to bound memory.');
+  assert.equal(v.run("document.getElementById('retainedText')._note"), true, 'data-note: the narrow status-bar tier keeps the note');
 });
 
-test('#45: while paused the backlog is capped, #stats says resume skips to newest, and Resume drains the rest', () => {
+test('#45: while paused the backlog is capped, the Retained text says resume skips to newest, and Resume drains the rest', () => {
   const v = boot();
   v.run('MAX_RETAINED = 100');
   v.send(5); v.api.flushBatch();        // lines shown before the pause: Resume drops them (skip to newest)
@@ -65,13 +70,13 @@ test('#45: while paused the backlog is capped, #stats says resume skips to newes
   v.send(101, 5);
   assert.equal(v.run('pendingBatch.length'), 90);
   assert.equal(v.get('liveDiscarded'), 11);
-  assert.equal(v.text('stats'), '5 / 5 lines, 11 discarded, resume skips to newest');
-  assert.match(v.title('stats'), /^The paused backlog exceeded 100 lines/);
+  assert.equal(v.text('retainedText'), 'Retained 5 of 100 · 11 discarded, resume skips to newest');
+  assert.match(v.title('retainedText'), /^The paused backlog exceeded 100 lines/);
   v.api.togglePause();
   assert.equal(v.get('liveAll').length, 90);
   assert.equal(v.get('liveAll')[0].msg, 'line 16');
   assert.equal(v.get('liveDiscarded'), 16);
-  assert.equal(v.text('stats'), '90 / 90 lines, 16 older discarded');
+  assert.equal(v.text('retainedText'), 'Retained 90 of 100 · 16 older discarded');
 });
 
 test('#55: Clear while paused discards the backlog, so Resume adds nothing', () => {
@@ -83,31 +88,32 @@ test('#55: Clear while paused discards the backlog, so Resume adds nothing', () 
   assert.equal(v.run('pendingBatch.length'), 0);
   v.api.togglePause();
   assert.equal(v.get('liveAll').length, 0);
-  assert.equal(v.text('stats'), '0 / 0 lines');
+  assert.equal(v.text('filterCount'), '0 of 0 lines');
 });
 
-test('#45: Clear resets the discarded count, so #stats stops reporting older discarded lines', () => {
+test('#45: Clear resets the discarded count, so the Retained text stops reporting older discarded lines', () => {
   const v = boot();
   v.run('MAX_RETAINED = 100');
   v.send(150); v.api.flushBatch();
   assert.equal(v.get('liveDiscarded'), 60);
   v.api.clearLogs();
   assert.equal(v.get('liveDiscarded'), 0);
-  assert.equal(v.text('stats'), '0 / 0 lines');
+  assert.equal(v.text('retainedText'), 'Retained 0 of 100');
 });
 
-test('#46: server drops are counted per platform on the live bar and reset by Clear', () => {
+test('#46: server drops are counted per platform in the status bar and reset by Clear', () => {
   const v = boot();
   v.drop('android', 5);
   v.drop('ios', 1);
   v.drop('ios', -3);   // not a positive integer: ignored
   assert.deepEqual({ ...v.get('liveDropped') }, { android: 5, ios: 1 });
-  assert.equal(v.text('liveBarAndroidDroppedText'), '⚠ 5 lines dropped');
-  assert.equal(v.text('liveBarIosDroppedText'), '⚠ 1 line dropped');
-  assert.ok(v.title('liveBarIosDropped').endsWith(PINNED.dropTooltipEnd), v.title('liveBarIosDropped'));
+  assert.equal(v.text('dropsText'), '6 lines dropped');
+  assert.equal(v.text('dropsAndroidTitle'), '5 lines dropped from Android device');
+  assert.equal(v.text('dropsIosTitle'), '1 line dropped from iPhone');
+  assert.ok(v.text('dropsIosDesc').endsWith(PINNED.dropTooltipEnd), v.text('dropsIosDesc'));
   v.api.clearLogs();
   assert.deepEqual({ ...v.get('liveDropped') }, { android: 0, ios: 0 });
-  assert.equal(v.text('liveBarAndroidDroppedText'), '⚠ 0 lines dropped');
+  assert.equal(v.text('dropsText'), '0 lines dropped');
 });
 
 test('#55 per session: a file load keeps the paused live backlog and drop counts; Clear on Live still discards them', () => {
@@ -418,15 +424,16 @@ test('Live reading (Follow off) behind a filter change still renders around its 
   assert.equal(v.run('liveSession.renderedEnd') < 1210, true);
 });
 
-// Change 1: the File tab shows only the loaded file, so #stats and Export count and write only it.
-test('File tab: #stats and Export cover only the file; Live keeps its own counts', async () => {
+// Change 1: the File tab shows only the loaded file, so the line count and Export count and write only it.
+test('File tab: the line count and Export cover only the file; Live keeps its own counts', async () => {
   const v = boot();
   v.send(3); v.api.flushBatch();
   v.run('setTimeout = f => (f(), 0)');          // the file render timer runs at once
   v.run('globalThis.__saved = null; legacyDownload = (name, content) => { __saved = content; }');
   v.go('toFile');
   v.api.handleFile({ text: fileText(4) });
-  assert.equal(v.text('stats'), '4 / 4 lines');
+  assert.equal(v.text('filterCount'), '4 of 4 lines');
+  assert.equal(v.text('retainedText'), '', 'Retained is about the live session');
   assert.equal(display(v, 'exportWrap'), '');
   for (const scope of ['all', 'filtered']) {
     v.doc.querySelector = sel => (assert.equal(sel, '#exportMenu [aria-checked="true"]'), { value: scope });
@@ -437,13 +444,13 @@ test('File tab: #stats and Export cover only the file; Live keeps its own counts
     assert.ok(lines.every(l => l.includes('file ')) && !lines.some(l => l.includes('line ')), `export (${scope}) holds no live line`);
   }
   v.go('toLive');
-  assert.equal(v.text('stats'), '3 / 3 lines');
+  assert.equal(v.text('filterCount'), '3 of 3 lines');
   v.run('__saved = null');
   await v.api.doExport('txt');
   assert.equal(v.run('__saved').split('\n').length, 3, 'on Live, Export writes the live lines');
   v.go('toFile');
   v.api.clearLogs();                            // Clear on File: nothing left to export there
-  assert.equal(v.text('stats'), '0 / 0 lines');
+  assert.equal(v.text('filterCount'), '0 of 0 lines');
   assert.equal(display(v, 'exportWrap'), 'none');
   v.go('toLive');
   assert.equal(display(v, 'exportWrap'), '', 'live still has lines to export');

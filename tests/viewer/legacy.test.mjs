@@ -72,7 +72,22 @@ test('a sticky document hands out one stub per id, keeps what the legacy script 
   assert.equal(doc.hidden, false);
   const { run } = loadLegacy([], { document: doc });
   run('updateStats()');
-  assert.equal(doc.getElementById('stats').textContent, '0 / 0 lines');
+  assert.equal(doc.getElementById('filterCount').textContent, '0 of 0 lines');
+});
+
+test('updateStats (every flush) writes the line count and the Retained text only when they change (P4b)', () => {
+  const { run } = loadLegacy([], { document: stickyDocument() });
+  const writes = run(`(() => {
+    const seen = { filterCount: 0, retainedText: 0 }, get = document.getElementById;
+    const els = { filterCount: { set textContent(v) { seen.filterCount++; } }, retainedText: { title: '', toggleAttribute() {}, set textContent(v) { seen.retainedText++; } } };
+    document.getElementById = id => els[id] || get(id);
+    updateStats(); updateStats(); updateStats();
+    liveSession.all.push({}); liveSession.filtered.push({});
+    updateStats();
+    document.getElementById = get;
+    return JSON.stringify(seen);
+  })()`);
+  assert.equal(writes, '{"filterCount":2,"retainedText":2}', 'one write per change, none for a repeat');
 });
 
 test('the page wires both window drag bands through the shell: one mousedown and one dblclick listener each', () => {
@@ -229,7 +244,7 @@ const settle = () => new Promise(r => setImmediate(r));
 test('shellState has the shape the shell reads: live, status, devices, driverMissing, lines, dropped and enabled', () => {
   const { run } = loadLegacy([], { document: stickyDocument() });
   const st = run('shellState()');
-  assert.deepEqual(Object.keys(st).sort(), ['buffered', 'cur', 'devices', 'driverMissing', 'dropped', 'enabled', 'lines', 'live', 'paused', 'sessions', 'status']);
+  assert.deepEqual(Object.keys(st).sort(), ['buffered', 'cur', 'devices', 'driverMissing', 'dropped', 'enabled', 'lines', 'live', 'maxRetained', 'paused', 'sessions', 'status']);
   assert.deepEqual([st.cur === run('liveSession'), st.sessions[0] === run('liveSession'), st.sessions[1] === run('fileSession')], [true, true, true]);
   assert.equal(st.dropped, run('liveSession.dropped'), 'the same object, so a drop shows without a copy');
   assert.equal(st.lines, run('wsLines'));

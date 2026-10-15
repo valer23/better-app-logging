@@ -22,16 +22,17 @@ const jsText = allJs.map(s => s.code).join('\n');
 const cssFiles = assetFiles.filter(p => p.endsWith('.css')).map(p => ({ path: p, text: read(path.join(ASSETS, p)) }));
 // Ids that JS creates at runtime (createElement + id) and therefore are not in the HTML. None today.
 const DYNAMIC_IDS = [];
-// Ids the JS resolves through getElementById but only as indirect string literals (arrays passed to
-// forEach / showOnly / runPairAction, a status-pill map, 'liveBar' + platform + 'Dropped'), which
-// referencedIds cannot see. Listed by hand so renaming one in a redesign still fails CI.
+// Ids the JS resolves only as indirect string literals (arrays passed to forEach / showOnly /
+// runPairAction, a status-pill map, the shell's [id, text] tables and live.js's template literals such as
+// `${id}Name`), which referencedIds cannot see. Listed by hand so renaming one in a redesign still fails CI.
 const INDIRECT_IDS = [
   'autoScrollBtn', 'pauseBtn', 'clearBtn',
   'dropzone', 'livePanel', 'loading', 'logWrapper',
   'iosRepairBtn', 'setupRepairBtn', 'setupUnpairBtn', 'setupPairBtn', 'stallRepairBtn',
   'androidStatus', 'androidStatusText', 'iosStatus', 'iosStatusText',
   'settingsBtn', 'shortcutsBtn',   // shell.js: tooltips over an [id, text] array
-  'liveBarAndroidDropped', 'liveBarAndroidDroppedText', 'liveBarIosDropped', 'liveBarIosDroppedText',
+  'sbAndroid', 'sbIos', 'sbAndroidName', 'sbAndroidRate', 'sbIosName', 'sbIosRate',   // live.js status bar
+  'dropsAndroid', 'dropsIos', 'dropsAndroidTitle', 'dropsAndroidDesc', 'dropsIosTitle', 'dropsIosDesc',
 ];
 
 test('page HTML is well formed: tags balance, no duplicate attributes', () => {
@@ -77,6 +78,30 @@ test('drag bands: every control inside each band in shell.js DRAG_BANDS matches 
   assert.deepEqual(C.dragErrors(root, jsText, DRAG_BANDS), []);
 });
 
+test('toolbar and status bar are fixed-height flex: none children of #main under size containment, so neither can size the log column (P4a perf fix, must-keep)', () => {
+  const rules = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')));
+  const decls = sel => rules.filter(r => r.selectors.includes(sel)).flatMap(r => C.declarations(r.body));
+  for (const sel of ['#toolbar', '#statusBar']) {
+    assert.ok(decls(sel).some(d => d.prop === 'flex' && d.value === 'none'), `${sel} is flex: none`);
+    assert.ok(decls(sel).some(d => d.prop === 'contain' && d.value === 'size layout style'), `${sel} keeps contain: size layout style (its text changes at the flush cadence)`);
+  }
+  const main = decls('#main');
+  assert.ok(main.some(d => d.prop === 'flex-direction' && d.value === 'column') && main.some(d => d.prop === 'min-height' && d.value === '0'), '#main is a min-height: 0 flex column');
+});
+
+test('the page passes every action that shell.js and live.js call (the fake pages answer any action name, so a missing one only throws on a real click)', () => {
+  const code = inlineScripts(html).at(-1).code;
+  for (const [file, factory] of [['shell.js', 'createShell'], ['live.js', 'createLive']]) {
+    const used = [...new Set([...read(path.join(ASSETS, 'js', file)).matchAll(/\bactions\.(\w+)/g)].map(m => m[1]))];
+    const call = code.slice(code.indexOf(`ALV.${factory}(`));
+    const open = call.indexOf('actions: {') + 'actions: '.length;
+    let depth = 0, end = open;
+    for (; end < call.length; end++) { if (call[end] === '{') depth++; else if (call[end] === '}' && --depth === 0) break; }
+    const given = call.slice(open, end + 1);
+    for (const name of used) assert.match(given, new RegExp(`[{,]\\s*${name}\\s*[:,}]`), `${factory}: the page passes actions.${name}`);
+  }
+});
+
 test('app grid: #app holds aside#sidebar (labelled, with the #sidebarHeader band) and #main, which holds every legacy region', () => {
   const body = root.children.find(el => el.tag === 'html').children.find(el => el.tag === 'body');
   const app = findById(root, 'app');
@@ -85,7 +110,7 @@ test('app grid: #app holds aside#sidebar (labelled, with the #sidebarHeader band
   const side = findById(root, 'sidebar');
   assert.deepEqual([side.tag, side.attrs['aria-label']], ['aside', 'Sidebar']);
   assert.equal(findById(root, 'sidebarHeader').parent, side);
-  for (const id of ['toolbar', 'filterbar', 'dropzone', 'livePanel', 'liveBar', 'loading', 'logWrapper']) {
+  for (const id of ['toolbar', 'filterbar', 'dropzone', 'livePanel', 'loading', 'logWrapper', 'statusBar']) {
     assert.equal(findById(root, id).parent.attrs.id, 'main', `#${id} is a child of #main`);
   }
   for (const id of ['setupModal', 'stallModal', 'overlayRoot']) assert.equal(findById(root, id).parent, body, `#${id} stays on <body>`);
@@ -150,6 +175,29 @@ test('toolbar: the legacy top bar and its glass switch are gone; the controls mo
   assert.equal(more.attrs.role, 'menu');
   assert.equal(findById(root, 'moreSurface').parent.attrs.id, 'ovPopovers');
   assert.deepEqual(elements(more).filter(el => el.attrs.role).map(el => el.attrs.role), ['menuitem', 'separator', 'menuitemcheckbox']);
+});
+
+test('status bar: devices, drops (with its popover in the popover layer), the moved #58 hint, Retained and Follow; the live bar and #stats are gone', () => {
+  const sb = findById(root, 'statusBar');
+  assert.deepEqual([sb.tag, sb.attrs.class, sb.parent.attrs.id], ['footer', 'chrome', 'main']);
+  assert.equal(findById(root, 'main').children.at(-1), sb, 'last in the main column');
+  for (const id of ['sbAndroid', 'sbIos', 'dropsBtn', 'readingWindowHint', 'retainedText', 'followState']) {
+    assert.ok(closestWithin(findById(root, id), '[id=statusBar]', root), `#${id} is in the status bar`);
+  }
+  assert.equal(findById(root, 'dropsPopover').parent.attrs.id, 'ovPopovers');
+  assert.ok(closestWithin(findById(root, 'filterCount'), '[id=filterbar]', root), 'the line count waits in the filter bar for P6');
+  for (const id of ['liveBar', 'stats', 'liveBarAndroidDropped', 'liveBarIosDropped']) assert.equal(findById(root, id), null, `#${id} is gone`);
+  const legacy = read(path.join(ASSETS, 'css', 'legacy.css'));
+  assert.doesNotMatch(legacy, /#liveBar|\.live-bar|\.reading-window-hint|\.stats-export|status-pill\.dropped/);
+  assert.doesNotMatch(inlineScripts(html).at(-1).code, /updateLiveBar|liveBar|getElementById\('stats'\)/);
+  const tiers = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css'))).filter(r => r.atRules.some(a => a.startsWith('@container')));
+  assert.deepEqual([...new Set(tiers.flatMap(r => r.atRules.filter(a => a.startsWith('@container'))))].sort(),
+    ['@container statusbar (max-width: 975px)', '@container toolbar (max-width: 1011px)', '@container toolbar (max-width: 1151px)'],
+    'the spec\'s tiers, as border-box widths minus the padding');
+  assert.deepEqual(tiers.filter(r => r.atRules.includes('@container statusbar (max-width: 975px)')).flatMap(r => r.selectors), ['#retainedText:not([data-note])'],
+    'the narrow tier hides the plain count, never the #45 discard note');
+  const sbDev = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css'))).filter(r => r.selectors.includes('.sb-dev')).flatMap(r => C.declarations(r.body));
+  assert.ok(!sbDev.some(d => d.prop === 'height'), '.btn-sm sets the height: at least the 24×24 target');
 });
 
 test('window chrome: the macOS traffic-light inset is on #sidebarHeader, no longer on #topbar', () => {
@@ -297,7 +345,7 @@ test('no emoji in the primitives, the shell, the app-layer CSS, the overlay root
   for (const p of ['js/dom.js', 'js/keys.js', 'js/ui.js', 'js/shell.js', 'css/base.css', 'css/shell.css']) assert.doesNotMatch(read(path.join(ASSETS, p)), EMOJI, p);
   const lines = html.split('\n');
   for (const p of ['js/live.js']) assert.doesNotMatch(read(path.join(ASSETS, p)), EMOJI, p);
-  for (const id of ['overlayRoot', 'exportWrap', 'sidebar', 'toolbar']) {
+  for (const id of ['overlayRoot', 'exportWrap', 'sidebar', 'toolbar', 'statusBar']) {
     const el = findById(root, id);
     const last = elements(el).at(-1);
     const text = lines.slice(el.line - 1, (last ? last.line : el.line)).join('\n');

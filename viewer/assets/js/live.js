@@ -19,6 +19,34 @@
     return { tone: 'idle', pulse: false, text: `Stopped · ${num(b.lines)} lines` };
   }
 
+  const lines = n => (n === 1 ? 'line' : 'lines');
+  // The filter count (the filter bar until P6's chip row): "47 106 of 48 310 lines".
+  function lineCount(shown, all) { return `${sp().num(shown)} of ${sp().num(all)} lines`; }
+  // The status bar's Retained text with the #45 discard note (spec "Status bar"; the note is the legacy
+  // stats wording). max is MAX_RETAINED; Infinity (no cap, set from the console) leaves "of …" out.
+  function retainedText(n, max, discarded, overflowed) {
+    const { num } = sp();
+    const head = Number.isFinite(max) ? `Retained ${num(n)} of ${num(max)}` : `Retained ${num(n)}`;
+    if (!discarded) return head;
+    return overflowed ? `${head} · ${num(discarded)} discarded, resume skips to newest` : `${head} · ${num(discarded)} older discarded`;
+  }
+  // The drops button and its popover (spec "Status bar"). The spec's "the log shows a gap row where it
+  // happened" and "Jump to gap" wait for P10's gap rows. rate: the device's rate when the drop was counted.
+  function dropsText(n) { return `${sp().num(n)} ${lines(n)} dropped`; }
+  function dropDetail(n, name, rate) {
+    const at = rate > 0 ? ` at ${sp().fmtRate(rate).slice(0, -2)} lines/s` : '';
+    return {
+      title: `${sp().num(n)} ${lines(n)} dropped from ${name}`,
+      desc: `The viewer fell behind${at}, so the bridge dropped the oldest unsent lines. Exports will have the same gap. Resets on Clear.`,
+    };
+  }
+  // A status-bar device button's rate (spec): "842/s", "connecting…", "stalled" or "stopped".
+  function deviceRate(state, rate) {
+    if (state === 'streaming') return sp().fmtRate(rate);
+    if (state === 'connecting') return 'connecting…';
+    return state === 'stalled' ? 'stalled' : 'stopped';
+  }
+
   // ---- DOM ----
 
   // createLive({ doc, win, dom, ui, keys, prefs, shell, state, actions }) → { sync(), closeMenus() }. state() is the legacy
@@ -88,7 +116,51 @@
       setAttr($('autoScrollBtn'), 'aria-pressed', String(st.cur.follow));
     }
 
-    function sync() { syncToolbar(state()); }
+    // ---- Status bar (spec): a button per device, the drops button and its popover, then (right) the #58
+    // hint and the Retained text that the legacy script writes, and Following. ----
+    const PLAT = [['android', 'sbAndroid'], ['ios', 'sbIos']];
+    for (const [p, id] of PLAT) onClick(id, () => actions.togglePlatform(p));
+    const dropsCtl = $('dropsBtn') ? ui.popover($('dropsBtn'), $('dropsPopover'), { side: 'top', align: 'start' }) : null;
+    if (dropsCtl) menus.push(dropsCtl);   // closeMenus() closes it too
+    const dropSeen = { android: 0, ios: 0 };
+    const dropRate = { android: 0, ios: 0 };
+    // Spec: Following / Not following has a tooltip that carries the Retained text.
+    const followTip = $('followState') ? ui.tooltip($('followState'), { text: '' }) : null;
+    let followTipText = '';
+    function syncStatus(st) {
+      const dev = shell.devices();
+      let total = 0;
+      for (const [p, id] of PLAT) {
+        const d = dev[p] || { state: 'disconnected', rate: 0, name: '' };
+        setText($(`${id}Name`), d.name);
+        setText($(`${id}Rate`), deviceRate(d.state, d.rate));
+        setAttr($(id), 'data-state', d.state);
+        setAttr($(id), 'aria-pressed', String(st.enabled.has(p)));
+        const n = st.dropped[p];
+        if (n > dropSeen[p]) dropRate[p] = d.rate;   // the rate when this platform last dropped lines
+        else if (n < dropSeen[p]) dropRate[p] = 0;   // Clear
+        dropSeen[p] = n;
+        total += n;
+        const box = p === 'android' ? 'dropsAndroid' : 'dropsIos';
+        setHidden($(box), n === 0);
+        if (n) {
+          const detail = dropDetail(n, d.name, dropRate[p]);
+          setText($(`${box}Title`), detail.title);
+          setText($(`${box}Desc`), detail.desc);
+        }
+      }
+      setText($('dropsText'), dropsText(total));
+      setHidden($('dropsBtn'), total === 0);
+      if (!total && dropsCtl) dropsCtl.close({ restoreFocus: false });
+      const showFollow = st.cur.kind === 'live';
+      setHidden($('followState'), !showFollow);
+      setAttr($('followState'), 'data-on', String(!!st.cur.follow));
+      setText($('followText'), st.cur.follow ? 'Following' : 'Not following');
+      const kept = showFollow ? retainedText(st.cur.all.length, st.maxRetained, st.cur.discarded, st.cur.overflowed) : '';
+      if (followTip && kept !== followTipText) { followTipText = kept; followTip.setText(kept); }
+    }
+
+    function sync() { const st = state(); syncToolbar(st); syncStatus(st); }
     // The legacy setup and stall modals call this as they open (a stall arrives in a frame, with no press to
     // light-dismiss): #overlayRoot (z 200) would paint an open menu above them. Focus stays where it is.
     function closeMenus() { for (const m of menus) m.close({ restoreFocus: false }); }
@@ -97,6 +169,6 @@
   }
 
   const ALV = g.ALV || (g.ALV = {});
-  ALV.livePure = Object.freeze({ streamBadge });
+  ALV.livePure = Object.freeze({ streamBadge, lineCount, retainedText, dropsText, dropDetail, deviceRate });
   ALV.createLive = createLive;
 })(typeof window !== 'undefined' ? window : globalThis);

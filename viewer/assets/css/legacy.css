@@ -78,18 +78,15 @@
   /* Chrome text gains a 1px shadow against the bg color so it stays legible
      when the blurred desktop behind is bright/noisy. */
   [data-glass="on"] #filterbar,
-  [data-glass="on"] #liveBar,
   [data-glass="on"] .modal,
   [data-glass="on"] .connect-card { text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25); }
   [data-glass="on"][data-theme="light"] #filterbar,
-  [data-glass="on"][data-theme="light"] #liveBar,
   [data-glass="on"][data-theme="light"] .modal,
   [data-glass="on"][data-theme="light"] .connect-card { text-shadow: 0 1px 1px rgba(255, 255, 255, 0.55); }
 
   /* Apply backdrop-filter only to chrome surfaces when glass is on.
      Log rows + tbody intentionally stay opaque for readability. */
   [data-glass="on"] #filterbar,
-  [data-glass="on"] #liveBar,
   [data-glass="on"] thead th,
   [data-glass="on"] .modal,
   [data-glass="on"] .connect-card,
@@ -210,10 +207,6 @@
   .status-pill.connecting   { color: var(--lg-yellow); border-color: var(--lg-yellow); background: #e3b34110; }
   .status-pill.connected    { color: var(--lg-green);  border-color: var(--lg-green);  background: #56d36415; }
   .status-pill.error        { color: var(--lg-red);    border-color: var(--lg-red);    background: #ff7b7215; }
-  /* Server-side frame drops (ws `dropped` frames). Warning tint like
-     .connecting, but static: it is a persistent fact, not an in-progress state. */
-  .status-pill.dropped { color: var(--lg-yellow); border-color: var(--lg-yellow); background: #e3b34110; display: none; cursor: help; }
-  .status-pill.dropped.visible { display: inline-flex; }
   /* "N lines below" pill over the bottom of the log table (live mode, auto-scroll off). A sibling of the
      scroller, so repainting it never relayouts the rows or changes #logTable.scrollHeight. bottom: 18px
      also clears the horizontal scrollbar shown below 960px. No transition: nothing animates per flush. */
@@ -232,25 +225,12 @@
      last line), not the count, so the content end does not jump as the count crosses 0. While armed the
      200px end-detection in extendReadingWindow and the scroll handler is effectively ~144px from the last row. */
   #logTable.newer-room::after { content: ''; display: block; height: 56px; }
-  /* "lines X–Y of Z" (updateReadingWindowHint) over the right end of the sticky header. A sibling of the
-     scroller like .newer-pill, so its per-flush text change never relayouts the rows; inside the header's
-     height it can't cover row text, and the header's own surface/muted pair keeps it legible in every theme.
-     top 4px + 18px tall fits the fixed-size header (~27px, independent of the log zoom); right 14px clears
-     the vertical scrollbar. */
-  .reading-window-hint { position: absolute; top: 4px; right: 14px; z-index: 6; display: none; padding: 1px 8px; line-height: 14px; border: 1px solid var(--lg-border); border-radius: 999px; background: var(--lg-surface); color: var(--lg-muted); font-family: var(--font-log); font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; cursor: help; }
-  .reading-window-hint.visible { display: inline-block; }
   .status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
   .status-pill.connecting .status-dot { animation: blink 1s ease-in-out infinite; }
   @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
 
   .device-badge { background: var(--lg-surface2); border: 1px solid var(--lg-border); border-radius: 6px; padding: 7px 10px; font-family: var(--font-log); font-size: 10px; color: var(--lg-muted); line-height: 1.6; display: none; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 96px; overflow-y: auto; }
   .device-badge.visible { display: block; }
-
-  /* ── Live status bar (shown above log table in live mode) ── */
-  #liveBar { background: var(--lg-surface); border-bottom: 1px solid var(--lg-border); padding: 6px 16px; display: none; align-items: center; gap: 16px; flex-shrink: 0; flex-wrap: wrap; }
-  #liveBar.visible { display: flex; }
-  .live-bar-item { display: flex; align-items: center; gap: 8px; font-size: 12px; }
-  .live-bar-platform { font-weight: 600; font-size: 12px; display: flex; align-items: center; gap: 5px; }
 
   /* ── Setup modal ── */
   .modal-overlay { position: fixed; inset: 0; background: #000000cc; z-index: 100; display: none; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
@@ -294,7 +274,7 @@
   .ts-manual pre .cmt { color: var(--lg-muted); }
 
   /* ── Log table ── */
-  #logWrapper { flex: 1; overflow: hidden; display: none; flex-direction: column; position: relative; /* anchor for .newer-pill and .reading-window-hint */ }
+  #logWrapper { flex: 1; overflow: hidden; display: none; flex-direction: column; position: relative; /* anchor for .newer-pill */ }
   #logWrapper.visible { display: flex; }
   #logTable { flex: 1; overflow-y: auto; overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--lg-border) transparent; }
   /* `--log-fs` is set on `:root` by prefs.js (zoom buttons, keyboard

@@ -14,6 +14,22 @@ test('live.js loads after shell.js in an empty context and exposes its pure help
   assert.equal(typeof ALV.createLive, 'function');
 });
 
+test('status-bar copy: line count, Retained with the #45 note, drops (singular / plural) and the drop detail', () => {
+  assert.equal(L.lineCount(47106, 48310), `47${T}106 of 48${T}310 lines`);
+  assert.equal(L.retainedText(48310, 500000, 0, false), `Retained 48${T}310 of 500${T}000`);
+  assert.equal(L.retainedText(90, 100, 60, false), 'Retained 90 of 100 · 60 older discarded');
+  assert.equal(L.retainedText(5, 100, 11, true), 'Retained 5 of 100 · 11 discarded, resume skips to newest');
+  assert.equal(L.retainedText(5, Infinity, 0, false), 'Retained 5', 'no cap (MAX_RETAINED = Infinity from the console)');
+  assert.deepEqual([L.dropsText(1), L.dropsText(312)], ['1 line dropped', '312 lines dropped']);
+  assert.deepEqual({ ...L.dropDetail(312, 'iPhone 15', 2700) }, {
+    title: '312 lines dropped from iPhone 15',
+    desc: 'The viewer fell behind at 2.7k lines/s, so the bridge dropped the oldest unsent lines. Exports will have the same gap. Resets on Clear.',
+  });
+  assert.equal(L.dropDetail(1, 'Pixel 8 Pro', 0).desc, 'The viewer fell behind, so the bridge dropped the oldest unsent lines. Exports will have the same gap. Resets on Clear.');
+  assert.deepEqual(['streaming', 'connecting', 'stalled', 'ready', 'disconnected', 'driver', 'error'].map(s => L.deviceRate(s, 842)),
+    ['842/s', 'connecting…', 'stalled', 'stopped', 'stopped', 'stopped', 'stopped']);
+});
+
 test('streamBadge: the spec states, File and Paused winning over Streaming', () => {
   const b = o => ({ ...L.streamBadge({ kind: 'live', paused: false, streaming: false, rate: 0, buffered: 0, lines: 0, ...o }) });
   assert.deepEqual(b({ streaming: true, rate: 2700 }), { tone: 'ok', pulse: true, text: 'Streaming · 2.7k/s' });
@@ -27,7 +43,7 @@ const LIVE_FILES = ['prefs.js', 'dom.js', 'keys.js', 'ui.js', 'shell.js', 'live.
 function livePage(o = {}) {
   const page = shellPage({ files: LIVE_FILES, ...o, st: { paused: false, buffered: 0, ...(o.st || {}) } });
   const { p, shell, state, prefs, calls } = page;
-  for (const id of ['toolbar', 'moreSurface']) mount(p, id);
+  for (const id of ['toolbar', 'moreSurface', 'statusBar', 'dropsPopover']) mount(p, id);
   const act = new Proxy({}, { get: (_, k) => (...a) => calls.push([k, ...a]) });
   const live = p.ALV.createLive({ doc: p.doc, win: p.win, dom: p.dom, ui: p.ui, keys: p.keys, prefs, shell, state: () => state, actions: act });
   live.sync();
@@ -118,4 +134,101 @@ test('toolbar: closeMenus() closes the More menu without moving focus (showStall
   assert.deepEqual([$('moreBtn').getAttribute('aria-expanded'), $('moreSurface').hidden, p.keys.escDepth(), p.doc.activeElement === before],
     ['false', true, 0, true], '#overlayRoot (z 200) would paint it above the legacy modal');
   assert.doesNotThrow(() => live.closeMenus(), 'nothing open: a no-op');
+});
+
+// ---- Status bar ----
+
+test('status bar: one button per device (name, rate or state, aria-pressed) that toggles it in the filter', () => {
+  const { p, live, shell, state, calls, $ } = livePage({ st: { devices: { android: { id: 'a1', name: 'Pixel 8 Pro' }, ios: { id: '', name: '' } } } });
+  assert.deepEqual([$('sbAndroidName').textContent, $('sbAndroidRate').textContent, $('sbAndroid').getAttribute('data-state'), $('sbAndroid').getAttribute('aria-pressed')],
+    ['Pixel 8 Pro', 'stopped', 'ready', 'true']);
+  assert.deepEqual([$('sbIosName').textContent, $('sbIosRate').textContent], ['iPhone', 'stopped']);
+  state.live.android = true;
+  p.advance(500);
+  state.lines.android = 421;
+  p.advance(500);
+  assert.deepEqual([$('sbAndroidRate').textContent, $('sbAndroid').getAttribute('data-state')], ['842/s', 'streaming']);
+  state.status.ios = { state: 'connecting', text: 'Connecting…' };
+  state.enabled = new Set(['android']);
+  shell.sync(); live.sync();   // as shellSync() does
+  assert.deepEqual([$('sbIosRate').textContent, $('sbIos').getAttribute('aria-pressed')], ['connecting…', 'false']);
+  $('sbIos').click();
+  assert.deepEqual(calls.at(-1), ['togglePlatform', 'ios']);
+});
+
+test('status bar: the drops button sums both platforms; its popover says how many, from which device, at what rate', () => {
+  const { p, live, state, $ } = livePage({ st: { live: { android: false, ios: true }, devices: { android: { id: '', name: '' }, ios: { id: 'u1', name: 'iPhone 15' } } } });
+  assert.equal($('dropsBtn').hidden, true);
+  p.advance(500);
+  state.lines.ios = 1350;
+  p.advance(500);
+  state.dropped.ios = 312;
+  live.sync();
+  assert.deepEqual([$('dropsBtn').hidden, $('dropsText').textContent], [false, '312 lines dropped']);
+  assert.deepEqual([$('dropsIos').hidden, $('dropsIosTitle').textContent, $('dropsAndroid').hidden], [false, '312 lines dropped from iPhone 15', true]);
+  assert.match($('dropsIosDesc').textContent, /^The viewer fell behind at 2\.7k lines\/s, so the bridge/, 'the rate when the drop was counted');
+  state.dropped.android = 1;
+  live.sync();
+  assert.deepEqual([$('dropsText').textContent, $('dropsAndroidTitle').textContent], ['313 lines dropped', '1 line dropped from Android device']);
+  assert.equal($('dropsBtn').getAttribute('aria-haspopup'), 'dialog');
+  $('dropsBtn').click();
+  assert.equal($('dropsPopover').hidden, false, 'the popover opens');
+  state.dropped.android = 0;
+  state.dropped.ios = 0;
+  live.sync();
+  assert.deepEqual([$('dropsBtn').hidden, $('dropsText').textContent], [true, '0 lines dropped'], 'Clear resets them');
+});
+
+test('status bar: Following / Not following for the live session, nothing for a file; its tooltip carries the Retained text', () => {
+  const { p, live, state, $ } = livePage({ st: { maxRetained: 100 } });
+  assert.deepEqual([$('followText').textContent, $('followState').getAttribute('data-on'), $('followState').hidden], ['Following', 'true', false]);
+  state.cur.all = new Array(90);
+  state.cur.discarded = 60;
+  live.sync();
+  assert.equal(tipText(p, $('followState')), 'Retained 90 of 100 · 60 older discarded', 'the #45 note, also where the narrow tier hides #retainedText');
+  state.cur.follow = false;
+  live.sync();
+  assert.deepEqual([$('followText').textContent, $('followState').getAttribute('data-on')], ['Not following', 'false']);
+  state.cur = state.sessions[1];
+  live.sync();
+  assert.equal($('followState').hidden, true);
+});
+
+test('status bar: closeMenus() also closes the drops popover, without moving focus', () => {
+  const { p, live, state, $ } = livePage();
+  state.dropped.ios = 3;
+  live.sync();
+  $('dropsBtn').click();
+  assert.equal($('dropsPopover').hidden, false);
+  const before = p.doc.activeElement;
+  live.closeMenus();
+  assert.deepEqual([$('dropsPopover').hidden, $('dropsBtn').getAttribute('aria-expanded'), p.doc.activeElement === before], [true, 'false', true]);
+});
+
+// The 2 Hz tick and every flush (shellSync from refreshLiveView) run live.sync(): with nothing changed it must
+// not write a text, an attribute or a hidden flag (the diffed writers; P4a judge, perf budget).
+test('live.sync() with nothing changed writes nothing to the toolbar, the status bar or the drops popover', () => {
+  const { p, live, state, $ } = livePage({ st: { live: { android: true, ios: false }, devices: { android: { id: 'a1', name: 'Pixel 8 Pro' }, ios: { id: '', name: '' } } } });
+  state.dropped.android = 2;
+  p.advance(1000);
+  live.sync();
+  let writes = [];
+  const watch = n => {
+    if (!n || !n.attrs) return;
+    const set = n.setAttribute, rm = n.removeAttribute;
+    n.setAttribute = function (k, v) { writes.push(`${n.id || n.tagName} @${k}`); return set.call(this, k, v); };
+    n.removeAttribute = function (k) { writes.push(`${n.id || n.tagName} -${k}`); return rm.call(this, k); };
+    for (const prop of ['textContent', 'hidden']) {
+      let v = n[prop];
+      Object.defineProperty(n, prop, { get: () => v, set: x => { writes.push(`${n.id || n.tagName} .${prop}`); v = x; }, configurable: true });
+    }
+    n.children.forEach(watch);
+  };
+  for (const id of ['toolbar', 'statusBar', 'dropsPopover']) watch($(id));
+  live.sync();
+  p.advance(500);   // the shell's tick runs live.sync() too
+  assert.deepEqual(writes, []);
+  state.paused = true;
+  live.sync();
+  assert.ok(writes.length > 0, 'the watch sees a real change');
 });
