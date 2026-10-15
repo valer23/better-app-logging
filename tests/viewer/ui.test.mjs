@@ -1114,3 +1114,58 @@ test('menu: modified arrows on the trigger (Cmd/Ctrl/Alt+Down/Up) do not open it
   trigger.fire('keydown', { key: 'ArrowDown', shiftKey: false });
   assert.equal(m.ctl.isOpen(), true, 'a plain arrow still opens it');
 });
+
+test('popups: opening one closes the open one and its tooltip; the Esc stack keeps one menu entry (review F17)', () => {
+  const p = fakePage();
+  const ta = p.dom.el('button', { text: 'A' });
+  const tb = p.dom.el('button', { text: 'B' });
+  p.byId.filterbar.appendChild(ta);
+  p.byId.filterbar.appendChild(tb);
+  const a = simpleMenu(p, ta, ['a1']);
+  const b = simpleMenu(p, tb, ['b1']);
+  const tip = p.ui.tooltip(tb, { text: 'B tip' });
+  const tipEl = p.byId[tb.attrs['aria-describedby']];
+  a.ctl.open({ focus: 'first' });
+  p.setFocusVisible(true);
+  tb.fire('focus');
+  assert.equal(tipEl.hidden, false, 'precondition: the tooltip of B shows');
+  b.ctl.open({ focus: 'first' });
+  assert.deepEqual([a.ctl.isOpen(), b.ctl.isOpen(), ta.attrs['aria-expanded'], tb.attrs['aria-expanded']], [false, true, 'false', 'true'], 'only one menu is open');
+  assert.equal(tipEl.hidden, true, 'opening a menu hides the tooltip');
+  assert.equal(p.keys.escDepth(), 1, 'A gave back its Esc entry');
+  p.doc.listeners.pointerdown[0]({ target: p.byId.filterbar });
+  assert.deepEqual([b.ctl.isOpen(), p.keys.escDepth()], [false, 0], 'an outside press closes the one that is open');
+  tip.destroy();
+});
+
+test('dialogs: a stacked dialog makes the lower one inert and keeps page shortcuts off until the last closes (review F17)', () => {
+  const p = fakePage();
+  const hits = [];
+  p.keys.register({ id: 'page.e', keys: 'Mod+E', scope: 'global', run: () => hits.push('e') });
+  const cmdE = () => p.keys.dispatch({ key: 'e', metaKey: true, preventDefault() {} }, p.doc.body);
+  const mk = label => {
+    const ok = p.dom.el('button', { text: label });
+    const panel = p.dom.el('div', null, ok);
+    panel.querySelectorAll = () => [ok];
+    return { d: p.ui.dialog(panel, { label }), host: panel.parent, ok };
+  };
+  const one = mk('One');
+  const two = mk('Two');
+  p.byId.filterbar.appendChild(p.dom.el('button', { text: 'Open' }));
+  one.d.open();
+  assert.equal(cmdE(), null, 'page shortcuts are off behind dialog 1');
+  assert.deepEqual([one.host.inert, p.byId.filterbar.inert], [false, true]);
+  two.d.open(one.ok);
+  assert.equal(one.host.inert, true, 'dialog 1 is inert behind dialog 2');
+  assert.equal(two.host.inert, false);
+  assert.equal(p.keys.escDepth(), 2);
+  two.d.close();
+  assert.equal(one.host.inert, false, 'and live again when dialog 2 closes');
+  assert.equal(p.doc.activeElement, one.ok, 'focus returns into dialog 1');
+  assert.equal(cmdE(), null, 'page shortcuts stay off while dialog 1 is still open');
+  assert.equal(p.byId.filterbar.inert, true);
+  one.d.close();
+  assert.equal(p.byId.filterbar.inert, false);
+  assert.equal(cmdE(), 'page.e', 'with no dialog left, the shortcut fires again');
+  assert.deepEqual([hits, p.keys.escDepth()], [['e'], 0]);
+});
