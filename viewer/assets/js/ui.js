@@ -570,8 +570,12 @@
       announceTimer = win.setTimeout(flushAnnounce, throttle.wait(t));
     }
 
-    // Modal dialog: role="dialog" aria-modal="true" over a scrim. Everything else is inert (body children
-    // except #overlayRoot and lower dialogs; the popover and tip layers stay live for menus in the dialog); Tab and Shift+Tab wrap inside;
+    // Modal dialog: role="dialog" over a scrim. Everything else is inert (body children except
+    // #overlayRoot, and lower dialogs; the popover and tip layers stay live for menus in the dialog), which
+    // already takes the page out of the accessibility tree. aria-modal is NOT set: browsers then drop
+    // everything outside the panel from that tree, including #toastRegion and #announcer (siblings of the
+    // dialog layer in #overlayRoot), so a toast or announcement made while a dialog is open would never be
+    // spoken. Tab and Shift+Tab wrap inside;
     // Esc closes when dismissible; Mod+Enter clicks [data-primary]; focus returns to the opener, or to
     // `returnFocus` when the opener is gone. Hand-rolled: <dialog>.showModal() puts the dialog in the top
     // layer, above the toasts, and the Popover API needs Safari 17.
@@ -586,7 +590,6 @@
     function dialog(panel, opts = {}) {
       const { label, labelledBy, describedBy, initialFocus, returnFocus = null, dismissible = true, dismissOnScrim = true, escLevel = 'sheet', onClose } = opts;
       panel.setAttribute('role', 'dialog');
-      panel.setAttribute('aria-modal', 'true');
       if (label) panel.setAttribute('aria-label', label);
       if (labelledBy) panel.setAttribute('aria-labelledby', labelledBy);
       if (describedBy) panel.setAttribute('aria-describedby', describedBy);

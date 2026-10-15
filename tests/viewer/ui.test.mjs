@@ -763,7 +763,7 @@ test('dialog: inert behind, focus inside, Tab wraps, Mod+Enter clicks the primar
   panel.querySelectorAll = () => [a, b];   // focusables(panel)
   let closed = null;
   const d = p.ui.dialog(panel, { label: 'Bug report', onClose: r => { closed = r; } });
-  assert.deepEqual([panel.attrs.role, panel.attrs['aria-modal'], panel.attrs['aria-label']], ['dialog', 'true', 'Bug report']);
+  assert.deepEqual([panel.attrs.role, panel.attrs['aria-modal'], panel.attrs['aria-label']], ['dialog', undefined, 'Bug report']);
   assert.equal(d.isOpen(), false);
   p.focus(opener);
   d.open();
@@ -999,4 +999,38 @@ test('tooltip: hiding or destroying it pops its Esc entry; it stays hidden while
   p.advance(500);
   assert.equal(tip2.hidden, true, 'no tooltip while the trigger has its menu open');
   t2.destroy();
+});
+
+
+// ---- P3 whole-diff review, round 1 ----
+
+// What Chromium / WebView2 / WebKit do with aria-modal: while an open modal dialog exists, everything
+// outside it leaves the accessibility tree, so a live region there is never announced. Inert does the
+// same for the page behind, and also drops anything below an inert ancestor.
+function hiddenFromAt(p, n) {
+  const modals = [];
+  const walk = x => { if (x.attrs && x.attrs['aria-modal'] === 'true') modals.push(x); x.children.forEach(walk); };
+  walk(p.doc.body);
+  if (modals.length && !modals.some(m => m.contains(n))) return true;
+  for (let x = n; x; x = x.parent) if (x.inert) return true;
+  return false;
+}
+
+test('dialog: the toast regions and #announcer stay announceable while a dialog is open (review F1)', () => {
+  const p = fakePage();
+  for (const id of ['ovDialogs', 'ovPopovers', 'toastAlerts', 'toastLive', 'ovTips', 'announcer']) p.byId.overlayRoot.appendChild(p.byId[id]);
+  const ok = p.dom.el('button', { text: 'Copy' });
+  const panel = p.dom.el('div', null, ok);
+  panel.querySelectorAll = () => [ok];
+  const d = p.ui.dialog(panel, { label: 'Bug report' });
+  d.open();
+  p.ui.toast({ kind: 'success', title: 'Bug report copied' });
+  p.ui.toast({ kind: 'error', title: 'Export failed' });
+  p.ui.announce('Stalled for 15 s');
+  assert.equal(hiddenFromAt(p, p.byId.filterbar), true, 'the page behind the dialog is out of the accessibility tree');
+  assert.equal(hiddenFromAt(p, panel), false, 'the dialog itself is reachable');
+  for (const [name, n] of [['polite toast', p.byId.toastLive.children[0]], ['alert toast', p.byId.toastAlerts.children[0]], ['announcer', p.byId.announcer]]) {
+    assert.equal(hiddenFromAt(p, n), false, `${name} is announced while the dialog is open`);
+  }
+  d.close();
 });
