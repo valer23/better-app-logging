@@ -216,6 +216,17 @@ test('status bar: devices, drops (with its popover in the popover layer), the mo
   }
 });
 
+// #statusBar is the last child of the full-height #main column, so its bottom edge is the viewport's. Its
+// .btn-sm controls (24/24/28 px) sit in a 26/28/30 px bar with 0.5-2 px below them: the global 2 px ring with a
+// 2 px offset would be drawn past the window edge and lose its bottom side (also in forced-colours mode).
+test('status bar: focus rings are inset, the bar being flush with the bottom of the window', () => {
+  const rules = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')));
+  const ring = rules.filter(r => r.selectors.includes('#statusBar button:focus-visible')).flatMap(r => C.declarations(r.body));
+  assert.ok(ring.some(d => d.prop === 'outline-offset' && d.value === '-2px'), 'inset like a log row (spec Focus: inset -2 px where it would be cut)');
+  assert.ok(!ring.some(d => d.prop === 'outline'), 'only the offset changes: the ring colour, width and forced-colours Highlight stay the foundation\'s');
+  assert.match(read(path.join(ASSETS, 'css', 'foundation.css')), /^@layer foundation, legacy, app;/m, 'the app layer, where the override sits, wins over the foundation\'s ring in both modes');
+});
+
 test('rail: the header toggle, the 52 px rail column, and on macOS a full 52 px band above the rail (spec Open item 5)', () => {
   const t = findById(root, 'sidebarToggle');
   assert.deepEqual([t.tag, t.parent.attrs.id, t.attrs['aria-controls'], t.attrs['aria-expanded'], t.attrs['aria-label']],

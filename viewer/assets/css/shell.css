@@ -116,6 +116,9 @@
      and layout containment keep the Retained text and the #58 hint, written on every flush, inside it (no
      paint containment: it would clip focus rings). */
   #statusBar { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: var(--status-h); padding: 0 12px; flex: none; border-top: 1px solid var(--hairline); font-size: var(--ui-fs-sm); color: var(--text-2); container: statusbar / inline-size; contain: size layout style; }
+  /* The bar is flush with the bottom of the window and its buttons nearly fill it, so the global ring (2 px
+     outside a 2 px offset) would be drawn past the window edge: inset it, as for a log row. */
+  #statusBar button:focus-visible { outline-offset: -2px; }
   .sb-left, .sb-right { display: flex; align-items: center; gap: 12px; min-width: 0; white-space: nowrap; font-variant-numeric: tabular-nums; }
   /* Overflow rule: the right group keeps its size and the left one gives way first. A device name is free text
      from the bridge, so it is the part that shrinks: it is clipped to 160 px, and further when the bar is
