@@ -4,21 +4,21 @@
 // prove parity. Deleted with the legacy inline script in P13 (P11 moves the parser tests first).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadLegacy } from './_load.mjs';
+import { loadLegacy, pageScriptSrcs, stickyDocument } from './_load.mjs';
 
 process.env.TZ = 'UTC';   // formatTs formats in local time
 
 const BENCH_BINDINGS = [
-  'flushBatch', 'handleWsMsg', 'pendingBatch', 'MAX_RETAINED', 'iosLive', 'autoScroll',
+  'flushBatch', 'handleWsMsg', 'pendingBatch', 'MAX_RETAINED', 'iosLive', 'liveSession', 'cur',
   'toggleAutoScroll', 'togglePause', 'refreshLiveView', 'FOLLOW_DOM_CAP', 'LIVE_DOM_CAP',
-  'allMessages', 'discardedCount',
+  'fileSession', 'selectSession', 'discardBacklog',
 ];
 // dev-bench.js assigns these top-level bindings, so none of them may be `const`.
 const BENCH_REASSIGNED = ['flushBatch', 'iosLive', 'MAX_RETAINED'];
 
 const { api, run } = loadLegacy([
   'toggleTheme', 'setLogZoom',
-  'firstIndexWhere', 'csvCell', 'formatTs', 'parseIosText', 'parseCsvRows', 'doExport', 'handleFile',
+  'csvCell', 'formatTs', 'parseIosText', 'parseCsvRows', 'doExport', 'handleFile',
   ...BENCH_BINDINGS,
 ]);
 const prefs = run('ALV.prefs');
@@ -55,13 +55,22 @@ test('the legacy bindings dev-bench.js uses exist and the reassigned ones are no
   }
 });
 
-test('firstIndexWhere finds the first index where a monotone predicate holds', () => {
-  const a = [1, 2, 3, 4, 5];
-  assert.equal(api.firstIndexWhere(a, 0, x => x >= 3), 2);
-  assert.equal(api.firstIndexWhere(a, 0, x => x > 9), 5);
-  assert.equal(api.firstIndexWhere(a, 0, () => true), 0);
-  assert.equal(api.firstIndexWhere(a, 3, x => x >= 1), 3);
-  assert.equal(api.firstIndexWhere([], 0, () => true), 0);
+test('pageScriptSrcs lists the <script src> files in page order and skips inline scripts', () => {
+  const html = '<head><script src="assets/js/a.js"></script></head><body><script>x()</script><script src="assets/js/b.js"></script></body>';
+  assert.deepEqual(pageScriptSrcs(html), ['assets/js/a.js', 'assets/js/b.js']);
+  assert.equal(pageScriptSrcs()[0], 'assets/js/prefs.js');
+});
+
+test('a sticky document hands out one stub per id, keeps what the legacy script writes, and has a writable hidden flag', () => {
+  const doc = stickyDocument();
+  assert.equal(doc.getElementById('stats'), doc.getElementById('stats'));
+  assert.equal(doc.getElementById('search').value, '');
+  assert.equal(doc.hidden, true);
+  doc.hidden = false;
+  assert.equal(doc.hidden, false);
+  const { run } = loadLegacy([], { document: doc });
+  run('updateStats()');
+  assert.equal(doc.getElementById('stats').textContent, '0 / 0 lines');
 });
 
 test('csvCell quotes only cells with a comma, quote or newline', () => {
@@ -109,13 +118,13 @@ const ANDROID = [
 
 // Export through the real doExport (saveFile captured), import through the real handleFile.
 async function roundTrip(fmt, messages) {
-  run(`allMessages = ${JSON.stringify(messages)};
+  run(`liveSession.all = ${JSON.stringify(messages)};
        saveFile = async (name, content) => { globalThis.__saved = { name, content }; };`);
   await api.doExport(fmt);
   const saved = run('globalThis.__saved');
-  run('allMessages = [];');
+  run('ALV.session.reset(fileSession, []);');   // an unrecognised file leaves the file session as it was
   api.handleFile({ text: saved.content });
-  return { name: saved.name, content: saved.content, parsed: JSON.parse(JSON.stringify(run('allMessages'))) };
+  return { name: saved.name, content: saved.content, parsed: JSON.parse(JSON.stringify(run('fileSession.all'))) };
 }
 
 test('TXT export of iOS lines re-imports unchanged', async () => {

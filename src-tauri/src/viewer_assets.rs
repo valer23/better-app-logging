@@ -44,6 +44,7 @@ pub static FILES: &[(&str, &[u8])] = embed![
     "fonts/jetbrains-mono-5.3.0-latin.woff2",
     "js/dev-bench.js",
     "js/prefs.js",
+    "js/session.js",
 ];
 
 /// Files under `viewer/assets/` that are kept in the repo but never served.
