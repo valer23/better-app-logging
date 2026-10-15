@@ -63,8 +63,8 @@
     <section class="side-sec" aria-labelledby="sessHead">
       <h2 class="side-sec-h"><button type="button" id="sessHead" class="nav-group-head" aria-expanded="true" aria-controls="sessionList"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-chevron-down"/></svg><span class="section-label">Sessions</span><span class="meta" id="sessCount"></span></button></h2>
       <ul id="sessionList" class="side-list">
-        <li><button type="button" id="sessLive" class="nav-item"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-radio"/></svg><span class="side-label">Live session</span><span class="meta" id="sessLiveCount"></span></button></li>
-        <li id="sessFileItem" hidden><button type="button" id="sessFile" class="nav-item"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-file-text"/></svg><span class="side-label" id="sessFileName"></span><span class="meta" id="sessFileCount"></span></button></li>
+        <li><button type="button" id="sessLive" class="nav-item" aria-labelledby="sessLiveName"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-radio"/></svg><span class="side-label" id="sessLiveName">Live session</span><span class="meta" id="sessLiveCount" aria-hidden="true"></span></button></li>
+        <li id="sessFileItem" hidden><button type="button" id="sessFile" class="nav-item" aria-labelledby="sessFileName"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-file-text"/></svg><span class="side-label" id="sessFileName"></span><span class="meta" id="sessFileCount" aria-hidden="true"></span></button></li>
         <li data-rail-hide><button type="button" id="openFileBtn" class="nav-item"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-folder-open"/></svg><span class="side-label">Open log file…</span><span class="kbd" id="openFileKbd"></span></button></li>
       </ul>
     </section>

@@ -2,7 +2,7 @@
 // thin-space number format, the rate format and meter, the device status line and the theme button view.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadPureModule } from './_load.mjs';
+import { loadPureModule, read, HTML_PATH } from './_load.mjs';
 import { fakePage, texts, shellPage, DARK } from './_fake.mjs';
 
 const ALV = loadPureModule('shell.js');
@@ -163,6 +163,23 @@ test('SESSIONS: the counts follow the live session twice a second, never while t
   live.all = new Array(2000);
   p.advance(1000);
   assert.equal($('sessLiveCount').textContent, '1 500');
+});
+
+test('SESSIONS: a row is named by its label alone; the line count (rewritten twice a second) is aria-hidden, never part of the name', () => {
+  const { p, live, file, $ } = shellPage();
+  live.all = new Array(48310);
+  file.all = new Array(12044);
+  file.name = 'pixel-crash-0412.logcat';
+  p.advance(500);
+  for (const [btn, count, name] of [['sessLive', 'sessLiveCount', 'sessLiveName'], ['sessFile', 'sessFileCount', 'sessFileName']]) {
+    const by = $(btn).getAttribute('aria-labelledby');
+    assert.equal(by, name, `${btn} is named by its label span`);
+    assert.notEqual(by, count);
+    assert.ok($(btn).children.includes(p.byId[by]), `${btn}: the label is inside the button`);
+    assert.equal($(count).getAttribute('aria-hidden'), 'true', `${count} stays out of the accessible name`);
+  }
+  assert.equal($('sessFileName').textContent, 'pixel-crash-0412.logcat', 'the file row is named by the file name');
+  assert.match(read(HTML_PATH), /id="sessLiveName">Live session<\/span>/, 'the Live row is named "Live session"');
 });
 
 test('sections: the header button folds its list (aria-expanded) and unfolds it', () => {
