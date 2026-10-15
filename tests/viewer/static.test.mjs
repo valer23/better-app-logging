@@ -194,8 +194,8 @@ test('status bar: devices, drops (with its popover in the popover layer), the mo
   assert.deepEqual([...new Set(tiers.flatMap(r => r.atRules.filter(a => a.startsWith('@container'))))].sort(),
     ['@container statusbar (max-width: 975px)', '@container toolbar (max-width: 1011px)', '@container toolbar (max-width: 1151px)'],
     'the spec\'s tiers, as border-box widths minus the padding');
-  assert.deepEqual(tiers.filter(r => r.atRules.includes('@container statusbar (max-width: 975px)')).flatMap(r => r.selectors), ['#retainedText:not([data-note])', '#readingWindowHint'],
-    'the narrow tier hides the plain count and the #58 hint (the right group would not fit next to the devices at 1100 px), never the #45 discard note');
+  assert.deepEqual(tiers.filter(r => r.atRules.includes('@container statusbar (max-width: 975px)')).flatMap(r => r.selectors), ['#retainedText:not([data-note])', '#statusBar:has(#retainedText[data-note]) #readingWindowHint'],
+    'the narrow tier hides the plain count, and the #58 hint only when the #45 note is present (the one case the right group does not fit next to the devices); the note itself is never hidden');
   const shellRules = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')));
   const declsOf = sel => shellRules.filter(r => r.selectors.includes(sel) && !r.atRules.some(a => a.startsWith('@container'))).flatMap(r => C.declarations(r.body));
   const sbDev = declsOf('.sb-dev');

@@ -112,10 +112,15 @@
   #followState .dot { color: var(--text-3); }
   #followState[data-on="true"] .dot { color: var(--ok); }
   /* Below the tier the plain count hides, but the #45 discard note (data-note, updateStats) stays: it is the
-     only place that warning lives (#45 parity). The #58 hint hides with it: with the note, the hint and Following
-     the right group is about 560 px, which the app's minimum window (a 828 px bar) cannot give next to the
-     device buttons, even with their names clipped; without the hint it is about 380 px. */
-  @container statusbar (max-width: 975px) { #retainedText:not([data-note]), #readingWindowHint { display: none; } }
+     only place that warning lives (#45 parity). The #58 hint (shown whenever the user is reading, at any width)
+     gives way only when the note is present, the one case where the right group does not fit: note, hint and
+     Following are about 570 px, which the app's minimum window (a 828 px content box) cannot give next to the
+     device buttons, even with their names clipped. Without the note the right group is at most the hint and
+     Following, which fits. */
+  @container statusbar (max-width: 975px) {
+    #retainedText:not([data-note]) { display: none; }
+    #statusBar:has(#retainedText[data-note]) #readingWindowHint { display: none; }
+  }
   .drops-pop { width: 320px; max-width: calc(100vw - 16px); padding: 12px; display: flex; flex-direction: column; gap: 12px; background: var(--raised); border: 1px solid var(--hairline); border-radius: 8px; box-shadow: var(--shadow-md); }
   .drops-pop[hidden] { display: none; }
   .drops-title { font-weight: 600; }
