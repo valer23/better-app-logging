@@ -124,14 +124,17 @@ test('toolbar: the Reset button\'s accessible name starts with its visible size 
 test('toolbar: More holds "Open log file…" (⌘O) and, on macOS only, the Glass checkbox that sets the material', () => {
   const { p, prefs, calls, $ } = livePage();
   assert.deepEqual([$('moreGlass').hidden, $('moreOpenKbd').textContent, tipText(p, $('moreBtn'))], [false, '⌘O', 'More']);
-  $('moreBtn').click();
-  assert.equal($('moreGlass').getAttribute('aria-checked'), 'false');
-  $('moreGlass').click();
-  assert.deepEqual(calls.at(-1), ['setGlass', true]);
+  // The material can change without this menu (a saved Glass at startup, P14's Settings): the markup ships
+  // aria-checked="false", so the first open must read prefs, not the last click on the item (review F11).
   prefs.set('material', 'glass');
   $('moreBtn').click();
+  assert.equal($('moreGlass').getAttribute('aria-checked'), 'true', 'read from prefs on the first open');
+  $('moreBtn').click();   // closes
+  prefs.set('material', 'solid');
   $('moreBtn').click();
-  assert.equal($('moreGlass').getAttribute('aria-checked'), 'true', 're-read from prefs on open');
+  assert.equal($('moreGlass').getAttribute('aria-checked'), 'false', 're-read from prefs on every open');
+  $('moreGlass').click();
+  assert.deepEqual(calls.at(-1), ['setGlass', true]);
   p.doc.listeners.pointerdown[0]({ target: p.byId.filterbar });
   $('moreBtn').click();
   $('moreMenu').children[0].click();

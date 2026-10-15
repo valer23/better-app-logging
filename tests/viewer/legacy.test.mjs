@@ -298,3 +298,38 @@ test('loadDevices fills deviceInfo on the list, restore, empty and error paths; 
   await settle();
   assert.deepEqual([info().ios, run('shellState().driverMissing')], [NONE, false], 'a failed discovery clears the device; a missing endpoint fails open');
 });
+
+// ---- The Liquid Glass switch moved into the toolbar's More menu (P4b): setGlass and its startup re-sync ----
+
+// A fetch that records the requests and answers 200.
+function glassPage(o) {
+  const calls = [];
+  const fetchImpl = (url, init) => { calls.push([url, init.method, init.headers['Content-Type'], init.body]); return Promise.resolve({ ok: true, status: 200 }); };
+  const page = loadLegacy(['setGlass'], { document: stickyDocument(), fetchImpl, ...o });
+  return { ...page, calls, prefs: page.run('ALV.prefs') };
+}
+
+test('setGlass stores the material and, on macOS, POSTs it to /window/glass-mode as {enabled}', () => {
+  const { api, calls, prefs } = glassPage({ platform: 'mac' });
+  assert.deepEqual(calls, [], 'solid at startup: nothing to sync');
+  api.setGlass(true);
+  assert.equal(prefs.get('material'), 'glass');
+  assert.deepEqual(calls, [['/window/glass-mode', 'POST', 'application/json', '{"enabled":true}']]);
+  api.setGlass(false);
+  assert.equal(prefs.get('material'), 'solid');
+  assert.deepEqual(calls.at(-1), ['/window/glass-mode', 'POST', 'application/json', '{"enabled":false}']);
+  assert.equal(calls.length, 2);
+});
+
+test('setGlass never calls the window endpoint off macOS (the preference is still kept)', () => {
+  const { api, calls, prefs } = glassPage({ platform: 'win32' });
+  api.setGlass(true);
+  assert.deepEqual([prefs.get('material'), calls], ['glass', []]);
+});
+
+test('a saved Glass material re-syncs the native window at startup on macOS only (the macOS conf starts with no effects)', () => {
+  const saved = { stored: { 'applogs-viewer.material': 'glass' } };
+  assert.deepEqual(glassPage({ platform: 'mac', ...saved }).calls, [['/window/glass-mode', 'POST', 'application/json', '{"enabled":true}']]);
+  assert.deepEqual(glassPage({ platform: 'mac', stored: { 'applogs-viewer.material': 'solid' } }).calls, [], 'solid: nothing to sync');
+  assert.deepEqual(glassPage({ platform: 'win32', ...saved }).calls, [], 'not macOS: no native effect');
+});

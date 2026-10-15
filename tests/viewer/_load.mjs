@@ -180,18 +180,21 @@ export function stickyDocument({ hidden = true, values = { search: '', tagFilter
 // with stubbed browser globals. Returns { api, run } where api holds the requested top-level
 // bindings and run(code) evaluates more code in the same global scope (to read or assign top-level
 // bindings). `now` pins Date (ms since epoch) so year-dependent parsers are deterministic.
-// `document` replaces the default deepStub (see stickyDocument).
+// `document` replaces the default deepStub (see stickyDocument). `stored` seeds localStorage (unprefixed keys
+// are the caller's: 'applogs-viewer.material'), `fetchImpl` replaces the never-settling fetch, and `platform`
+// gives <html> a data-platform attribute (the page's IS_MAC reads it) on top of a deepStub document.
 // Deleted in P13 together with the last of the legacy inline script.
-export function loadLegacy(names, { now = Date.UTC(2026, 9, 14, 13, 53, 43, 120), document = deepStub('document') } = {}) {
+export function loadLegacy(names, { now = Date.UTC(2026, 9, 14, 13, 53, 43, 120), document = deepStub('document'), stored = {}, fetchImpl = null, platform = null } = {}) {
   const scripts = inlineScripts();
   const main = scripts[scripts.length - 1];
+  if (platform) document.documentElement.getAttribute = k => (k === 'data-platform' ? platform : null);   // the rest of <html> stays a stub
   const sandbox = {
     console: { log() {}, info() {}, warn() {}, error() {}, debug() {} },
     document,
     navigator: { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)' },
-    localStorage: memoryStorage(),
+    localStorage: memoryStorage(stored),
     location: { search: '' },
-    fetch: () => new Promise(() => {}),
+    fetch: fetchImpl || (() => new Promise(() => {})),
     setTimeout: () => 0, clearTimeout() {}, setInterval: () => 0, clearInterval() {},
     requestAnimationFrame: () => 0, cancelAnimationFrame() {},
     performance: { now: () => 0 },
