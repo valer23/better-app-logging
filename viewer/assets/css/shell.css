@@ -80,6 +80,9 @@
   .app[data-sidebar="collapsed"] .nav-item, .app[data-sidebar="collapsed"] .side-cmd { justify-content: center; padding: 0; }
   .app[data-sidebar="collapsed"] .side-cmd { width: var(--ctl-h); margin: 0 auto 8px; border-color: transparent; background: transparent; }
   .app[data-sidebar="collapsed"] .side-sec { margin-top: 8px; }
+  /* Folding is an expanded-only preference: the rail hides the section heads, so a folded list would have no
+     way back. It shows every list (device badges, Live) whatever the fold state. */
+  .app[data-sidebar="collapsed"] .side-list[hidden] { display: flex; }
   .app[data-sidebar="collapsed"] #sidebarFooter { flex-direction: column; height: auto; padding: 8px 0; }
   /* macOS (spec Open item 5): the 52 px rail is narrower than the traffic lights, so the lights keep the whole
      52 px band and the toggle wraps below it; the toolbar starts past the lights. */

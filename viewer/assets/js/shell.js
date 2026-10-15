@@ -151,13 +151,16 @@
     // while collapsed, on the right (spec). ----
     const rail = () => prefs.get('sidebar') === 'collapsed';
     const railTip = (el, text) => (el ? ui.tooltip(el, { text, side: 'right', when: rail }) : null);
+    // The sidebar's own controls keep the expanded layout's placement (below: a right tip would cover the next
+    // 28 px button of the footer row and, being hoverable, trap the pointer) and go to the right in the rail.
+    const sideOf = () => (rail() ? 'right' : 'bottom');
     const toggle = $('sidebarToggle');
     const toggleSidebar = () => prefs.set('sidebar', rail() ? 'expanded' : 'collapsed');
     // Not over the legacy setup or stall modal (the rule ⌘E and ⌘O follow): collapsing moves focus to the
     // toggle behind the modal.
     const modalOpen = () => !!doc.querySelector('.modal-overlay.visible');
     keys.register({ id: 'view.sidebar', keys: 'Mod+B', inText: true, when: () => !modalOpen(), run: toggleSidebar });
-    const toggleTip = toggle ? ui.tooltip(toggle, { text: 'Hide sidebar', shortcut: 'view.sidebar' }) : null;
+    const toggleTip = toggle ? ui.tooltip(toggle, { text: 'Hide sidebar', shortcut: 'view.sidebar', side: sideOf }) : null;
     if (toggle) toggle.addEventListener('click', toggleSidebar);
     railTip($('cmdTrigger'), 'Search actions');
     railTip($('sessLive'), 'Live session');
@@ -307,11 +310,11 @@
     }
 
     // ---- Footer: Settings and Keyboard shortcuts wait for P14 and P13; the theme cycle (spec) ----
-    for (const [id, text] of [['settingsBtn', 'Settings'], ['shortcutsBtn', 'Keyboard shortcuts']]) if ($(id)) ui.tooltip($(id), { text, side: 'right' });
+    for (const [id, text] of [['settingsBtn', 'Settings'], ['shortcutsBtn', 'Keyboard shortcuts']]) if ($(id)) ui.tooltip($(id), { text, side: sideOf });
     const themeBtn = $('themeBtn');
     const cycleTheme = () => prefs.set('theme', prefs.nextTheme(prefs.get('theme')));
     keys.register({ id: 'view.theme', keys: 'Shift+Mod+L', inText: true, run: cycleTheme });
-    const themeTip = themeBtn ? ui.tooltip(themeBtn, { text: '', shortcut: 'view.theme', side: 'right' }) : null;
+    const themeTip = themeBtn ? ui.tooltip(themeBtn, { text: '', shortcut: 'view.theme', side: sideOf }) : null;
     if (themeBtn) themeBtn.addEventListener('click', cycleTheme);
     let captionSent;   // what the Windows caption was last set to; undefined until the first call
     // prefs calls this on every change, including an OS appearance change while System is chosen.

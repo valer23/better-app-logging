@@ -475,6 +475,30 @@ test('rail: nav items and device rows get a tooltip on the right, shown only whi
   }
 });
 
+// One rule for every sidebar-owned tooltip: expanded, it sits below its trigger (never beside it: in the
+// footer row a right tip would cover the next button, and a tip is hoverable); collapsed, it sits to the right
+// (spec). The toggle carries aria-expanded as a disclosure, so it must show in both states.
+test('tooltips: the toggle and the footer buttons show in both states, below when expanded and to the right in the rail', () => {
+  const { p, prefs, $ } = shellPage();
+  const shownAt = btn => {
+    btn.fire('pointerenter', { pointerType: 'mouse' });
+    p.advance(400);
+    const tip = tipOf(p, btn);
+    const at = [tip.hidden, tip.style.left];
+    btn.fire('pointerleave');
+    p.advance(100);
+    return at;
+  };
+  for (const [state, onRight] of [['expanded', false], ['collapsed', true]]) {
+    prefs.set('sidebar', state);
+    for (const id of ['sidebarToggle', 'settingsBtn', 'themeBtn']) {
+      const [hidden, left] = shownAt($(id));
+      assert.equal(hidden, false, `${state}: #${id} has a tooltip`);
+      assert.equal(left === '586px', onRight, `${state}: #${id} ${onRight ? 'to the right' : 'not beside it'} (left ${left})`);
+    }
+  }
+});
+
 test('rail: ⌘B does nothing over the legacy setup or stall modal (collapsing would move focus behind it)', () => {
   const { p, prefs } = shellPage();
   const modal = p.doc.createElement('div');

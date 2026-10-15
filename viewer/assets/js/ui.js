@@ -421,7 +421,8 @@
     //   shortcut: a binding id (the kbd follows overrides: ⌘E / Ctrl+E), a written combo { combo: 'Mod+-' }
     //             for keys outside the registry, or an array of them: one kbd each, in order.
     //   after:    text after the kbds: "Clear view ⌘⌫ (undo for 10 s)".
-    //   side:     'bottom' (default), 'top', 'right' or 'left' (the collapsed rail).
+    //   side:     'bottom' (default), 'top', 'right' or 'left' (the collapsed rail), or a function returning one,
+    //             read each time the tooltip shows (a rail item's tip is on the right only while collapsed).
     //   when:     () => boolean; while it is false the tooltip does not show (rail labels).
     // Text only, no controls.
     function tooltip(trigger, { text = '', shortcut = null, after = '', side = 'bottom', when = null } = {}) {
@@ -445,15 +446,18 @@
         tail.textContent = after;
         tail.hidden = !after;
       }
+      // A popup trigger (aria-haspopup) with its popup open gets no tooltip: the popup is the answer. A
+      // disclosure button (aria-expanded alone, the sidebar toggle) is not a popup trigger and keeps its tip.
+      const popupOpen = () => trigger.getAttribute('aria-haspopup') !== null && trigger.getAttribute('aria-expanded') === 'true';
       // byKeyboard: shown by keyboard focus (Esc level 'tooltip'), not by hovering ('tooltip-hover'). A hover
       // tooltip that then gets keyboard focus moves up to the keyboard level.
       function show(byKeyboard) {
         clearTimers();
-        if (suppressed || trigger.getAttribute('aria-expanded') === 'true' || !isShown(trigger) || (when && !when())) return;
+        if (suppressed || popupOpen() || !isShown(trigger) || (when && !when())) return;
         if (activeTip && activeTip !== api) activeTip.hide();
         render();
         tip.hidden = false;
-        position(trigger, tip, { side, align: 'center', gap: 6, pad: 8 });
+        position(trigger, tip, { side: typeof side === 'function' ? side() : side, align: 'center', gap: 6, pad: 8 });
         activeTip = api;
         const level = byKeyboard ? 'tooltip' : 'tooltip-hover';
         if (popEsc && escLevel !== level) { popEsc(); popEsc = null; }

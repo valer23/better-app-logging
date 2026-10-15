@@ -235,6 +235,15 @@ test('rail: the header toggle, the 52 px rail column, and on macOS a full 52 px 
   assert.ok(decl('.app[data-sidebar="collapsed"] .side-label').some(d => d.prop === 'clip-path' && d.value === 'inset(50%)'));
 });
 
+test('rail: a folded section still shows its list in the rail (the rail hides the fold buttons)', () => {
+  const rules = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')));
+  const decl = sel => rules.filter(r => r.selectors.includes(sel)).flatMap(r => C.declarations(r.body));
+  assert.ok(decl('.app[data-sidebar="collapsed"] .side-sec-h').length || rules.some(r => r.selectors.some(s => s.includes('.side-sec-h') && s.includes('collapsed'))), 'precondition: the rail hides the section heads');
+  assert.ok(decl('.app[data-sidebar="collapsed"] .side-list[hidden]').some(d => d.prop === 'display' && d.value === 'flex'),
+    'the rail overrides .side-list[hidden] { display: none }: folding is an expanded-only preference');
+  for (const id of ['deviceList', 'sessionList']) assert.ok(String(findById(root, id).attrs.class).split(/\s+/).includes('side-list'), `#${id} is a .side-list`);
+});
+
 test('window chrome: the macOS traffic-light inset is on #sidebarHeader, no longer on #topbar', () => {
   const shellRules = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')));
   const inset = shellRules.filter(r => r.selectors.includes('.app[data-platform="mac"] #sidebarHeader')).flatMap(r => C.declarations(r.body));
