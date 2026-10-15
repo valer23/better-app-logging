@@ -123,10 +123,15 @@ export function interactiveSelector(js) {
   const m = /const INTERACTIVE\s*=\s*'([^']+)'/.exec(js);
   return m ? m[1] : null;
 }
+// Roles that make an element a control. A structural role (group, toolbar, status, img, presentation) is
+// drag space unless the element is focusable or has a handler, so a role=group wrapper needs no exclusion.
+const WIDGET_ROLES = new Set(['button', 'link', 'checkbox', 'radio', 'switch', 'tab', 'slider', 'spinbutton', 'combobox',
+  'textbox', 'searchbox', 'option', 'menuitem', 'menuitemradio', 'menuitemcheckbox', 'treeitem', 'gridcell', 'scrollbar']);
 function isInteractive(el) {
   if (['button', 'input', 'select', 'textarea', 'label', 'summary'].includes(el.tag)) return true;
   if (el.tag === 'a' && 'href' in el.attrs) return true;
-  return ['tabindex', 'role', 'contenteditable'].some(a => a in el.attrs) || Object.keys(el.attrs).some(a => a.startsWith('on'));
+  if (WIDGET_ROLES.has(el.attrs.role)) return true;
+  return ['tabindex', 'contenteditable'].some(a => a in el.attrs) || Object.keys(el.attrs).some(a => a.startsWith('on'));
 }
 export function dragErrors(root, js, bandIds) {
   const sel = interactiveSelector(js);

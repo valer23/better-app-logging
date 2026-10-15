@@ -256,6 +256,11 @@ test('the checks reject deliberately broken input', () => {
   assert.deepEqual(C.dragErrors(h('<div id="topbar"><span role="switch" tabindex="0">x</span></div>'), "const INTERACTIVE = 'button, [role=switch]';", ['topbar']), []);
   assert.notDeepEqual(C.dragErrors(h('<div id="topbar"><span role="tab" tabindex="0">x</span></div>'), "const INTERACTIVE = 'button, [role=switch]';", ['topbar']), []);
   assert.deepEqual(C.dragErrors(h('<div id="topbar"><div data-no-drag><span tabindex="0">x</span></div></div>'), "const INTERACTIVE = '[data-no-drag]';", ['topbar']), []);
+  // Only widget roles make an element a control: a role=group wrapper is drag space, a role=menuitem is not (P4).
+  assert.deepEqual(C.dragErrors(h('<div id="topbar"><div role="group" aria-label="Log text size"><button>A</button></div></div>'), "const INTERACTIVE = 'button';", ['topbar']), []);
+  assert.notDeepEqual(C.dragErrors(h('<div id="topbar"><span role="menuitem">x</span></div>'), "const INTERACTIVE = 'button';", ['topbar']), []);
+  assert.notDeepEqual(C.dragErrors(h('<div id="topbar"><span role="option" aria-selected="false">x</span></div>'), "const INTERACTIVE = 'button';", ['topbar']), []);
+  assert.notDeepEqual(C.dragErrors(h('<div id="topbar"><div role="group" tabindex="0">x</div></div>'), "const INTERACTIVE = 'button';", ['topbar']), [], 'a focusable group is still a control');
   assert.notDeepEqual(C.offlineErrors("@import url('https://fonts.googleapis.com/css2');", 'x.css'), []);
   assert.deepEqual(C.offlineErrors("new WebSocket('ws://localhost:8765')", 'x.js'), []);
   assert.notDeepEqual(C.lgScopeSpecificityErrors('.lg-scope * { margin: 0 }'), []);
