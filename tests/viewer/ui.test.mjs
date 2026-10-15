@@ -145,6 +145,40 @@ test('toast queue: a key replaces the toast and restarts its timer; get returns 
   assert.equal(q.get(12345), null);
 });
 
+test('toast queue: replacing a paused keyed toast keeps it paused with the full new time', () => {
+  const q = U.createToastQueue();
+  const id = q.add({ kind: 'success', title: 'Copied 1 line', key: 'copy' }, 0);
+  q.pause(id, 1000);
+  assert.equal(q.add({ kind: 'success', title: 'Copied 2 lines', key: 'copy' }, 2000), id);
+  assert.equal(q.get(id).title, 'Copied 2 lines');
+  assert.deepEqual(ids(q.due(1e9)), [], 'still paused: the pointer or focus is still on it');
+  assert.equal(q.nextDeadline(1e9), Infinity);
+  q.resume(id, 10000);
+  assert.deepEqual(ids(q.due(14999)), []);
+  assert.deepEqual(ids(q.due(15000)), [id], 'a full 5 s from the resume');
+});
+
+test('toast queue: when every visible slot is a sticky error, a new toast evicts the oldest visible one', () => {
+  const q = U.createToastQueue({ max: 3 });
+  const e = [1, 2, 3].map(n => q.add({ kind: 'error', title: 'Export failed ' + n }, 0));
+  assert.deepEqual(ids(q.visible()), e);
+  const e4 = q.add({ kind: 'error', title: 'Export failed 4' }, 100);
+  assert.deepEqual(ids(q.visible()), [e[1], e[2], e4], 'the newest error is shown, the oldest is evicted');
+  assert.deepEqual(ids(q.pending()), [], 'nothing waits behind sticky toasts');
+  assert.equal(q.get(e[0]), null);
+  const ok = q.add({ kind: 'success', title: 'Copied' }, 200);
+  assert.deepEqual(ids(q.visible()), [e[2], e4, ok]);
+  assert.deepEqual(ids(q.due(5200)), [ok], 'the evicting toast still times out normally');
+  // a non-sticky visible toast means nothing is evicted: the newcomer waits its turn
+  const q2 = U.createToastQueue({ max: 3 });
+  const a = q2.add({ kind: 'error', title: 'a' }, 0);
+  const b = q2.add({ kind: 'error', title: 'b' }, 0);
+  const s = q2.add({ kind: 'success', title: 's' }, 0);
+  const late = q2.add({ kind: 'success', title: 'late' }, 100);
+  assert.deepEqual(ids(q2.visible()), [a, b, s]);
+  assert.deepEqual(ids(q2.pending()), [late]);
+});
+
 test('announcement throttle: one per 5 s, the newest waiting text is spoken when the window ends', () => {
   const th = U.createThrottle(5000);
   assert.equal(th.push('12 lines match', 0), '12 lines match');

@@ -65,7 +65,8 @@
 
   // Toasts: at most `max` visible, the rest wait in FIFO order and their timers start only once shown.
   // 5 s, 10 s with an action, errors never expire. pause/resume keep the remaining time (hover, focus).
-  // A toast with a `key` replaces the one with the same key and restarts its timer.
+  // A toast with a `key` replaces the one with the same key and restarts its timer (a paused one stays paused).
+  // When every visible slot holds a sticky toast (an error), a new toast evicts the oldest visible one.
   const TOAST_MS = 5000;
   const TOAST_ACTION_MS = 10000;
   function toastTimeout(spec) { return spec.kind === 'error' ? Infinity : spec.action ? TOAST_ACTION_MS : TOAST_MS; }
@@ -82,12 +83,20 @@
         if (prev) {
           prev.spec = spec;
           prev.remaining = toastTimeout(spec);
-          if (visible.includes(prev)) start(prev, now);
+          // A paused toast stays paused (the pointer or focus is still on it) and gets the full new time
+          // when it resumes; only a running visible toast restarts its clock.
+          if (visible.includes(prev) && !prev.paused) start(prev, now);
           return prev.id;
         }
         seq += 1;
         pending.push({ id: seq, spec, remaining: toastTimeout(spec), startedAt: 0, paused: false });
         promote(now);
+        // Policy: sticky toasts (errors) never expire, so when every visible slot is sticky a newcomer
+        // would wait forever and never be announced. Evict the oldest visible one instead, until nothing waits.
+        while (pending.length && visible.length >= max && visible.every(t => toastTimeout(t.spec) === Infinity)) {
+          visible.shift();
+          promote(now);
+        }
         return seq;
       },
       dismiss(id, now) {
