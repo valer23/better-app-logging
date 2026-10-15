@@ -290,7 +290,7 @@ test('DEVICES: the toggle is named by the device alone; the status and drops lin
   const a = parts(row(p, 'android'));
   const labelledby = a.main.getAttribute('aria-labelledby');
   assert.equal(p.byId[labelledby].textContent, 'Pixel 8 Pro', 'the name span');
-  assert.deepEqual(a.main.getAttribute('aria-describedby').split(' ').slice(0, 2), [a.status.getAttribute('id'), a.drops.getAttribute('id')], 'then the rail tooltip (P4b)');
+  assert.deepEqual(a.main.getAttribute('aria-describedby').split(' '), [a.status.getAttribute('id'), a.drops.getAttribute('id')], 'and nothing else: the rail tooltip repeats the name, so it is not a description (review F6)');
   assert.equal(p.byId[a.status.getAttribute('id')], a.status);
   assert.equal(p.byId[a.drops.getAttribute('id')], a.drops);
   state.status.android = { state: 'connecting', text: 'Connecting…' };
@@ -476,25 +476,42 @@ test('rail: focus on an item the rail hides (or in a row menu) moves to the togg
     'the menu anchored to the hidden More closes; its focus goes to the toggle');
 });
 
+// The rail tip repeats the item's name (its visually hidden label), so it is not wired to aria-describedby: a
+// hidden element a describedby points to still counts toward the description, and the expanded sidebar would
+// read every name twice ("Live session, button, Live session"; review F6). The tip is found by its text.
+const railTipFor = (p, text) => p.byId.ovTips.children.find(t => t.attrs.role === 'tooltip' && texts(t) === text);
+
 test('rail: nav items and device rows get a tooltip on the right, shown only while collapsed', () => {
   const { p, prefs, $ } = shellPage({ st: { devices: { android: { id: 'a1', name: 'Pixel 8 Pro' }, ios: { id: '', name: '' } } } });
   const live = $('sessLive');
   const dev = parts(row(p, 'android')).main;
-  for (const el of [live, dev]) {
+  for (const [el, text] of [[live, 'Live session'], [dev, 'Pixel 8 Pro']]) {
     el.fire('pointerenter', { pointerType: 'mouse' });
     p.advance(400);
-    assert.equal(tipOf(p, el).hidden, true, 'expanded: the label is visible, no tooltip');
+    assert.equal(railTipFor(p, text).hidden, true, 'expanded: the label is visible, no tooltip');
     el.fire('pointerleave');
     p.advance(100);
   }
   prefs.set('sidebar', 'collapsed');
   for (const [el, text] of [[live, 'Live session'], [dev, 'Pixel 8 Pro'], [$('cmdTrigger'), 'Search actions']]) {
+    const tip = railTipFor(p, text);
     el.fire('pointerenter', { pointerType: 'mouse' });
     p.advance(400);
-    assert.deepEqual([tipOf(p, el).hidden, texts(tipOf(p, el)), tipOf(p, el).style.left], [false, text, '586px'], `${text}: to the right`);
+    assert.deepEqual([tip.hidden, texts(tip), tip.style.left], [false, text, '586px'], `${text}: to the right`);
     el.fire('pointerleave');
     p.advance(100);
   }
+});
+
+test('rail: the rail tooltips are not descriptions, so the expanded sidebar reads each name once (review F6)', () => {
+  const { p, $ } = shellPage({ st: { devices: { android: { id: 'a1', name: 'Pixel 8 Pro' }, ios: { id: '', name: '' } } } });
+  const tipIds = new Set(p.byId.ovTips.children.map(t => t.attrs.id));
+  const described = el => (el.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean);
+  for (const el of [$('sessLive'), $('cmdTrigger'), parts(row(p, 'android')).main, parts(row(p, 'ios')).main]) {
+    assert.deepEqual(described(el).filter(id => tipIds.has(id)), [], `${el.getAttribute('id') || el.textContent}: no tooltip in its description`);
+  }
+  assert.equal($('sessLive').getAttribute('aria-describedby'), null);
+  assert.deepEqual(described($('themeBtn')).filter(id => tipIds.has(id)).length, 1, 'a tooltip that adds information (the theme\'s) still describes its button');
 });
 
 // One rule for every sidebar-owned tooltip: expanded, it sits below its trigger (never beside it: in the

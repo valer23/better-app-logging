@@ -424,15 +424,19 @@
     //   side:     'bottom' (default), 'top', 'right' or 'left' (the collapsed rail), or a function returning one,
     //             read each time the tooltip shows (a rail item's tip is on the right only while collapsed).
     //   when:     () => boolean; while it is false the tooltip does not show (rail labels).
+    //   describe: false leaves aria-describedby alone, for a tip that only repeats the trigger's accessible name
+    //             (a hidden element a describedby points to still counts toward the description).
     // Text only, no controls.
-    function tooltip(trigger, { text = '', shortcut = null, after = '', side = 'bottom', when = null } = {}) {
+    function tooltip(trigger, { text = '', shortcut = null, after = '', side = 'bottom', when = null, describe = true } = {}) {
       const label = dom.el('span', { text });
       const shortcuts = [].concat(shortcut || []);
       const kbds = shortcuts.map(() => dom.el('span', { class: 'kbd', hidden: true }));
       const tail = dom.el('span', { hidden: true });
       const tip = dom.portal(dom.el('div', { class: 'tooltip ov', role: 'tooltip', id: dom.uid('tip'), hidden: true }, label, kbds, tail), 'tip');
-      const prior = (trigger.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean);
-      trigger.setAttribute('aria-describedby', prior.concat(tip.id).join(' '));
+      if (describe) {
+        const prior = (trigger.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean);
+        trigger.setAttribute('aria-describedby', prior.concat(tip.id).join(' '));
+      }
       let showTimer = 0;
       let hideTimer = 0;
       let popEsc = null;
@@ -494,6 +498,7 @@
           hide();
           for (const [type, fn] of Object.entries(on)) trigger.removeEventListener(type, fn);
           tip.remove();
+          if (!describe) return;
           const rest = (trigger.getAttribute('aria-describedby') || '').split(/\s+/).filter(id => id && id !== tip.id);
           if (rest.length) trigger.setAttribute('aria-describedby', rest.join(' '));
           else trigger.removeAttribute('aria-describedby');

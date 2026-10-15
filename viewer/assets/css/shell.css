@@ -72,7 +72,7 @@
   .app[data-sidebar="collapsed"] .side-title, .app[data-sidebar="collapsed"] .side-sec-h,
   .app[data-sidebar="collapsed"] [data-rail-hide], .app[data-sidebar="collapsed"] .nav-item .meta, .app[data-sidebar="collapsed"] .dev-drops,
   .app[data-sidebar="collapsed"] .dev-actions { display: none; }
-  /* A rail item's label is its accessible name (the icons are aria-hidden; the rail tooltip only describes),
+  /* A rail item's label is its accessible name (the icons are aria-hidden; the rail tooltip is a visual hint only, not wired to aria-describedby),
      so it is hidden visually, never with display: none. */
   .app[data-sidebar="collapsed"] .side-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .app[data-sidebar="collapsed"] #sidebarHeader { justify-content: center; padding: 0; }

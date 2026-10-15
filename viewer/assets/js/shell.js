@@ -157,7 +157,9 @@
     // ---- The collapsed rail (⌘B). prefs keeps it (data-sidebar on <html>); a rail item's tooltip shows only
     // while collapsed, on the right (spec). ----
     const rail = () => prefs.get('sidebar') === 'collapsed';
-    const railTip = (el, text) => (el ? ui.tooltip(el, { text, side: 'right', when: rail }) : null);
+    // describe: false: the tip repeats the item's name (its visually hidden label), and a hidden element that
+    // aria-describedby points to still counts toward the description: the name would be read twice.
+    const railTip = (el, text) => (el ? ui.tooltip(el, { text, side: 'right', when: rail, describe: false }) : null);
     // The sidebar's own controls keep the expanded layout's placement (below: a right tip would cover the next
     // 28 px button of the footer row and, being hoverable, trap the pointer) and go to the right in the rail.
     const sideOf = () => (rail() ? 'right' : 'bottom');
