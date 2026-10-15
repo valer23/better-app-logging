@@ -85,7 +85,7 @@ test('app grid: #app holds aside#sidebar (labelled, with the #sidebarHeader band
   const side = findById(root, 'sidebar');
   assert.deepEqual([side.tag, side.attrs['aria-label']], ['aside', 'Sidebar']);
   assert.equal(findById(root, 'sidebarHeader').parent, side);
-  for (const id of ['topbar', 'filterbar', 'dropzone', 'livePanel', 'liveBar', 'loading', 'logWrapper']) {
+  for (const id of ['toolbar', 'filterbar', 'dropzone', 'livePanel', 'liveBar', 'loading', 'logWrapper']) {
     assert.equal(findById(root, id).parent.attrs.id, 'main', `#${id} is a child of #main`);
   }
   for (const id of ['setupModal', 'stallModal', 'overlayRoot']) assert.equal(findById(root, id).parent, body, `#${id} stays on <body>`);
@@ -133,6 +133,25 @@ test('sidebar: "Search actions…" is an aria-disabled stub, SESSIONS rows are b
   assert.ok(hides.includes('.side-list[hidden]'), '.side-list sets display: flex, so a folded list needs [hidden] back');
 });
 
+test('toolbar: the legacy top bar and its glass switch are gone; the controls moved from the filter bar', () => {
+  const tb = findById(root, 'toolbar');
+  assert.deepEqual([tb.tag, tb.attrs.class], ['header', 'chrome']);
+  for (const id of ['pauseBtn', 'autoScrollBtn', 'zoomGroup', 'exportWrap', 'moreBtn', 'clearBtn', 'streamBadge', 'sessionTitle']) {
+    assert.ok(closestWithin(findById(root, id), '[id=toolbar]', root), `#${id} is in the toolbar`);
+  }
+  assert.equal(findById(root, 'autoScrollBtn').attrs['aria-pressed'], 'true', 'Follow is a toggle button');
+  assert.equal(findById(root, 'pauseBtn').attrs['aria-pressed'], undefined, 'Pause swaps its label instead (APG: never both)');
+  for (const id of ['topbar', 'glassSwitch', 'glassSwitchInput']) assert.equal(findById(root, id), null, `#${id} is gone`);
+  const legacy = read(path.join(ASSETS, 'css', 'legacy.css'));
+  assert.doesNotMatch(legacy, /#topbar|\.zoom-group|\.zoom-btn|\.glass-switch|\.topbar-spacer|\.lg-icon-btn/);
+  assert.doesNotMatch(read(path.join(ASSETS, 'js', 'dom.js')), /\.zoom-group|\.glass-switch/, 'INTERACTIVE drops the deleted classes');
+  assert.doesNotMatch(inlineScripts(html).at(-1).code, /initGlassToggle|glassSwitch/);
+  const more = findById(root, 'moreMenu');
+  assert.equal(more.attrs.role, 'menu');
+  assert.equal(findById(root, 'moreSurface').parent.attrs.id, 'ovPopovers');
+  assert.deepEqual(elements(more).filter(el => el.attrs.role).map(el => el.attrs.role), ['menuitem', 'separator', 'menuitemcheckbox']);
+});
+
 test('window chrome: the macOS traffic-light inset is on #sidebarHeader, no longer on #topbar', () => {
   const shellRules = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')));
   const inset = shellRules.filter(r => r.selectors.includes('.app[data-platform="mac"] #sidebarHeader')).flatMap(r => C.declarations(r.body));
@@ -150,12 +169,12 @@ test('#app never sizes to its content: flex-basis 0 and a minmax(0, 1fr) row, so
     'an implicit auto row sizes the grid to the log table\'s full height');
 });
 
-test('#topbar centres its children: the 52 px band must not stretch .zoom-group or .glass-switch into dead (non-dragging) boxes', () => {
+test('#toolbar centres its children: a stretched flex item of the 52 px band would be a dead (non-dragging) box', () => {
   const rules = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')));
-  const decls = rules.filter(r => r.selectors.includes('#topbar')).flatMap(r => C.declarations(r.body));
-  assert.ok(decls.some(d => d.prop === 'min-height' && d.value === 'var(--titlebar-h)'), 'the band is --titlebar-h tall');
+  const decls = rules.filter(r => r.selectors.includes('#toolbar')).flatMap(r => C.declarations(r.body));
+  assert.ok(decls.some(d => d.prop === 'height' && d.value === 'var(--titlebar-h)'), 'the band is --titlebar-h tall');
   assert.ok(decls.some(d => d.prop === 'align-items' && d.value === 'center'),
-    'legacy.css sets #topbar to align-items: stretch; at 52 px that stretches the zoom group and the glass label (both INTERACTIVE) to the full band height');
+    'every toolbar control is INTERACTIVE: stretched to the band, its margins neither draw nor drag like the control');
 });
 
 test('#sidebarBody scrolls, so its top padding keeps the 4 px focus ring of the first stop (#cmdTrigger) unclipped', () => {
@@ -186,7 +205,8 @@ test('#overlayRoot is a direct child of <body>, the last element before the scri
 test('hidden overlay surfaces really hide: base.css gives [hidden] back to every foundation class that sets display', () => {
   const rules = C.cssRules(read(path.join(ASSETS, 'css', 'base.css')));
   const hiddenSelectors = rules.filter(r => C.declarations(r.body).some(d => d.prop === 'display' && d.value === 'none')).flatMap(r => r.selectors);
-  for (const cls of ['menu', 'tooltip', 'toast', 'kbd', 'dialog-host', 'btn']) {
+  // menu-item (P4b): the More menu hides its Glass item off macOS, and .menu-item sets display: flex.
+  for (const cls of ['menu', 'tooltip', 'toast', 'kbd', 'dialog-host', 'btn', 'menu-item']) {
     assert.ok(hiddenSelectors.includes(`.${cls}[hidden]`), `.${cls}[hidden] { display: none } is missing`);
   }
 });
@@ -208,7 +228,7 @@ test('a tall dialog scrolls inside the viewport instead of being clipped by the 
 
 test('the Export menu lives in the popover layer: one menu button, three formats, two scope radios, the note outside the menu', () => {
   const btn = findById(root, 'exportBtn');
-  assert.ok(closestWithin(btn, '[id=filterbar]', root), '#exportBtn stays in #filterbar (P4 re-parents it)');
+  assert.ok(closestWithin(btn, '[id=toolbar]', root), '#exportBtn is in the toolbar (P4b)');
   assert.deepEqual([btn.attrs['aria-haspopup'], btn.attrs['aria-expanded'], btn.attrs['aria-controls'], btn.attrs.onclick], ['menu', 'false', 'exportMenu', undefined]);
   const surface = findById(root, 'exportSurface');
   assert.equal(surface.parent.attrs.id, 'ovPopovers');
@@ -258,7 +278,8 @@ test('no emoji in the primitives, the shell, the app-layer CSS, the overlay root
   const EMOJI = /\p{Extended_Pictographic}/u;
   for (const p of ['js/dom.js', 'js/keys.js', 'js/ui.js', 'js/shell.js', 'css/base.css', 'css/shell.css']) assert.doesNotMatch(read(path.join(ASSETS, p)), EMOJI, p);
   const lines = html.split('\n');
-  for (const id of ['overlayRoot', 'exportWrap', 'sidebar']) {
+  for (const p of ['js/live.js']) assert.doesNotMatch(read(path.join(ASSETS, p)), EMOJI, p);
+  for (const id of ['overlayRoot', 'exportWrap', 'sidebar', 'toolbar']) {
     const el = findById(root, id);
     const last = elements(el).at(-1);
     const text = lines.slice(el.line - 1, (last ? last.line : el.line)).join('\n');
@@ -573,7 +594,8 @@ test('pseudo-elements that set padding, a border or a percentage size declare th
 
 test('every legacy animation or transition is switched off by both Reduce motion rules', () => {
   const legacy = cssFiles.find(f => f.path === 'css/legacy.css').text;
-  assert.ok(C.animatedSelectors(legacy).length >= 20, 'the legacy animation scan found too few selectors');
+  // legacy.css shrinks with every region PR (P4b removes the top bar's switches and buttons: 18 left).
+  assert.ok(C.animatedSelectors(legacy).length >= 15, 'the legacy animation scan found too few selectors');
   assert.deepEqual(C.reducedMotionCoverageErrors(legacy, 'viewer/assets/css/legacy.css'), []);
 });
 

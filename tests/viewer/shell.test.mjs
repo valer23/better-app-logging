@@ -69,15 +69,15 @@ function bandPage(tauri) {
   const p = fakePage({ files: SHELL_FILES, tauri: tauri && tauri.api });
   for (const id of ALV.shellPure.DRAG_BANDS) p.doc.body.appendChild(p.dom.el('div', { id }));
   const ctl = p.dom.el('button', { text: 'A+' });
-  p.byId.topbar.appendChild(ctl);
+  p.byId.toolbar.appendChild(ctl);
   p.ALV.createShell({ doc: p.doc, win: p.win, dom: p.dom });
   const move = (x, y) => p.win.listeners.mousemove.forEach(fn => fn({ clientX: x, clientY: y }));
   const up = () => p.win.listeners.mouseup.forEach(fn => fn({}));
   return { p, ctl, move, up };
 }
 
-test('drag bands: the sidebar header and the top bar; one window listener pair for both', () => {
-  assert.deepEqual([...ALV.shellPure.DRAG_BANDS], ['sidebarHeader', 'topbar']);
+test('drag bands: the sidebar header and the toolbar; one window listener pair for both', () => {
+  assert.deepEqual([...ALV.shellPure.DRAG_BANDS], ['sidebarHeader', 'toolbar']);
   const { p } = bandPage(fakeTauri());
   assert.deepEqual([p.win.listeners.mousemove.length, p.win.listeners.mouseup.length], [1, 1]);
   for (const id of ALV.shellPure.DRAG_BANDS) assert.deepEqual([p.byId[id].listeners.mousedown.length, p.byId[id].listeners.dblclick.length], [1, 1], id);
@@ -92,15 +92,15 @@ test('drag bands: a press on the background arms, 4 px of movement drags once; c
   move(104, 20);
   move(140, 20);
   assert.deepEqual(t.calls, ['drag'], 'startDragging once');
-  p.byId.topbar.fire('mousedown', { button: 0, detail: 1, clientX: 100, clientY: 20 });
+  p.byId.toolbar.fire('mousedown', { button: 0, detail: 1, clientX: 100, clientY: 20 });
   up();
   move(200, 20);
   assert.deepEqual(t.calls, ['drag'], 'mouseup disarms');
   ctl.fire('mousedown', { button: 0, detail: 1, clientX: 100, clientY: 20 });
   move(200, 20);
-  p.byId.topbar.fire('mousedown', { button: 2, detail: 1, clientX: 100, clientY: 20 });
+  p.byId.toolbar.fire('mousedown', { button: 2, detail: 1, clientX: 100, clientY: 20 });
   move(200, 20);
-  p.byId.topbar.fire('mousedown', { button: 0, detail: 2, clientX: 100, clientY: 20 });
+  p.byId.toolbar.fire('mousedown', { button: 0, detail: 2, clientX: 100, clientY: 20 });
   move(200, 20);
   assert.deepEqual(t.calls, ['drag'], 'not from a control, a right button or a double-click');
 });
@@ -113,9 +113,9 @@ test('drag bands: a double-click on the background toggles maximise, on a contro
   assert.deepEqual(t.calls, ['max']);
   const bare = bandPage(null);
   assert.doesNotThrow(() => {
-    bare.p.byId.topbar.fire('mousedown', { button: 0, detail: 1, clientX: 0, clientY: 0 });
+    bare.p.byId.toolbar.fire('mousedown', { button: 0, detail: 1, clientX: 0, clientY: 0 });
     bare.move(50, 50);
-    bare.p.byId.topbar.fire('dblclick', {});
+    bare.p.byId.toolbar.fire('dblclick', {});
   });
 });
 

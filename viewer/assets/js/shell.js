@@ -78,7 +78,7 @@
   // starting the OS drag on the first press would swallow the second click. A press on anything matching
   // ALV.dom.INTERACTIVE never drags. Every control in a band is static markup, so the drag lint in
   // tests/viewer/static.test.mjs (which reads this literal) covers it.
-  const DRAG_BANDS = ['sidebarHeader', 'topbar'];
+  const DRAG_BANDS = ['sidebarHeader', 'toolbar'];
   const DRAG_THRESHOLD_PX = 4;
 
   // The iOS bridge calls a stream stalled after this many seconds of silence (STREAM_STALL_TIMEOUT_SECS in
@@ -178,6 +178,8 @@
     // respawn's "[connected:UDID]" arrives as a devices frame while the stream is still dead).
     const seen = { android: 0, ios: 0 };
     const stalled = { android: false, ios: false };
+    const devState = { android: null, ios: null };   // what each row shows, for the status bar (live.js)
+    const tickFns = [];
     function act(p, what) {
       if (what === 'stream') actions.toggleStream(p);
       else if (what === 'repair') actions.repair(p);
@@ -251,6 +253,7 @@
         const busy = st.status[p].state === 'connecting';
         const s = deviceStatus({ live, state: st.status[p].state, text: st.status[p].text, detected: !!dev.id,
           driverMissing: p === 'ios' && st.driverMissing, stalledFor: stalledFor(p, live), rate: rates[p], dropped: st.dropped[p] });
+        devState[p] = { state: s.state, rate: rates[p], name: r.name };
         setAttr(r.li, 'data-state', s.state);
         setAttr(r.li, 'data-tone', s.tone);
         setText(r.status, s.text);
@@ -312,10 +315,15 @@
         if (st.lines[p] !== seen[p]) { seen[p] = st.lines[p]; stalled[p] = false; }
       }
       render(st);
+      for (const fn of tickFns) fn();
     }
     win.setInterval(tick, TICK_MS);
     return {
       sync,
+      // Each device row's { state, rate, name } after the last sync or tick (the toolbar and status bar).
+      devices: () => devState,
+      // Runs fn after every tick's refresh (the toolbar's badge and the status bar, live.js).
+      onTick(fn) { tickFns.push(fn); },
       // The iOS bridge reported a stall (the legacy onmessage, paused or not): the row says "Stalled 15 s"
       // until the next log line. Lines that arrived before the report are not that line.
       markStalled(p) { seen[p] = state().lines[p]; stalled[p] = true; sync(); },

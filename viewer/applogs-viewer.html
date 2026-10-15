@@ -23,6 +23,7 @@
      edit ICONS in tests/viewer/gen-sprite.mjs and rerun it, never by hand. -->
 <!-- lucide-sprite:start -->
 <svg id="iconSprite" class="icon-sprite" width="0" height="0" aria-hidden="true" focusable="false">
+<symbol id="i-arrow-down-to-line" viewBox="0 0 24 24"><path d="M12 17V3" /><path d="m6 11 6 6 6-6" /><path d="M19 21H5" /></symbol>
 <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5" /></symbol>
 <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></symbol>
 <symbol id="i-circle-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><line x1="12" x2="12" y1="8" y2="12" /><line x1="12" x2="12.01" y1="16" y2="16" /></symbol>
@@ -36,18 +37,20 @@
 <symbol id="i-keyboard" viewBox="0 0 24 24"><path d="M10 8h.01" /><path d="M12 12h.01" /><path d="M14 8h.01" /><path d="M16 12h.01" /><path d="M18 8h.01" /><path d="M6 8h.01" /><path d="M7 16h10" /><path d="M8 12h.01" /><rect width="20" height="16" x="2" y="4" rx="2" /></symbol>
 <symbol id="i-monitor" viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="3" rx="2" /><line x1="8" x2="16" y1="21" y2="21" /><line x1="12" x2="12" y1="17" y2="21" /></symbol>
 <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401" /></symbol>
+<symbol id="i-pause" viewBox="0 0 24 24"><rect x="14" y="3" width="5" height="18" rx="1" /><rect x="5" y="3" width="5" height="18" rx="1" /></symbol>
 <symbol id="i-play" viewBox="0 0 24 24"><path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z" /></symbol>
 <symbol id="i-radio" viewBox="0 0 24 24"><path d="M16.247 7.761a6 6 0 0 1 0 8.478" /><path d="M19.075 4.933a10 10 0 0 1 0 14.134" /><path d="M4.925 19.067a10 10 0 0 1 0-14.134" /><path d="M7.753 16.239a6 6 0 0 1 0-8.478" /><circle cx="12" cy="12" r="2" /></symbol>
 <symbol id="i-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34" /><circle cx="11" cy="11" r="8" /></symbol>
 <symbol id="i-settings" viewBox="0 0 24 24"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" /><circle cx="12" cy="12" r="3" /></symbol>
 <symbol id="i-square" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2" /></symbol>
 <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" /><path d="M12 2v2" /><path d="M12 20v2" /><path d="m4.93 4.93 1.41 1.41" /><path d="m17.66 17.66 1.41 1.41" /><path d="M2 12h2" /><path d="M20 12h2" /><path d="m6.34 17.66-1.41 1.41" /><path d="m19.07 4.93-1.41 1.41" /></symbol>
+<symbol id="i-trash-2" viewBox="0 0 24 24"><path d="M10 11v6" /><path d="M14 11v6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></symbol>
 <symbol id="i-triangle-alert" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" /><path d="M12 9v4" /><path d="M12 17h.01" /></symbol>
 <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></symbol>
 </svg>
 <!-- lucide-sprite:end -->
 
-<!-- App shell (roadmap P4): the sidebar beside the main column. #sidebarHeader and #topbar form the window's
+<!-- App shell (roadmap P4): the sidebar beside the main column. #sidebarHeader and #toolbar form the window's
      drag band (DRAG_BANDS in assets/js/shell.js); every control in them is static markup matching
      ALV.dom.INTERACTIVE, which tests/viewer/static.test.mjs checks. The legacy regions keep their markup. -->
 <div id="app">
@@ -77,22 +80,30 @@
   </div>
 </aside>
 <div id="main">
-<div class="lg-scope" id="topbar">
-  <div class="topbar-spacer"></div>
-  <div class="zoom-group">
-    <button class="zoom-btn" onclick="setLogZoom(-1)" title="Zoom out (Ctrl+-)">A−</button>
-    <button class="zoom-btn" onclick="setLogZoom(0)"  title="Reset zoom (Ctrl+0)">A</button>
-    <button class="zoom-btn" onclick="setLogZoom(1)"  title="Zoom in (Ctrl++)">A+</button>
+<header id="toolbar" class="chrome">
+  <div class="tb-left">
+    <span id="sessionTitle" class="tb-title"></span>
+    <span id="streamBadge" class="badge status-idle"><span id="streamDot" class="dot" aria-hidden="true"></span><span id="streamBadgeText"></span></span>
   </div>
-  <label class="glass-switch" id="glassSwitch" title="Toggle Classic / Liquid Glass (macOS)">
-    <input type="checkbox" id="glassSwitchInput">
-    <span class="glass-switch-track">
-      <span class="glass-switch-thumb"></span>
-      <span class="glass-switch-label classic">Classic</span>
-      <span class="glass-switch-label glass">Glass</span>
-    </span>
-  </label>
-</div>
+  <div class="tb-right">
+    <button type="button" id="pauseBtn" class="btn"><svg class="icon" aria-hidden="true" focusable="false"><use id="pauseIcon" href="#i-pause"/></svg><span id="pauseLabel">Pause</span></button>
+    <button type="button" id="autoScrollBtn" class="btn" aria-pressed="true"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-arrow-down-to-line"/></svg><span>Follow</span></button>
+    <span class="divider-v" aria-hidden="true"></span>
+    <div id="zoomGroup" class="tb-zoom" role="group" aria-label="Log text size">
+      <button type="button" id="zoomOutBtn" class="btn btn-ghost btn-sm" aria-label="Smaller log text">A−</button>
+      <button type="button" id="zoomResetBtn" class="btn btn-ghost btn-sm" aria-label="Reset log text size to 13 px"></button>
+      <button type="button" id="zoomInBtn" class="btn btn-ghost btn-sm" aria-label="Larger log text">A+</button>
+    </div>
+    <span class="divider-v tb-zoom-div" aria-hidden="true"></span>
+    <!-- Export (shown while the session has lines). Its menu is #exportSurface in #overlayRoot. -->
+    <div class="export-wrap" id="exportWrap" style="display:none">
+      <button type="button" class="btn" id="exportBtn" aria-label="Export" aria-haspopup="menu" aria-expanded="false" aria-controls="exportMenu"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-download"/></svg><span class="tb-label">Export</span><svg class="icon tb-chev" aria-hidden="true" focusable="false"><use href="#i-chevron-down"/></svg></button>
+    </div>
+    <button type="button" id="moreBtn" class="icon-btn" aria-label="More" aria-haspopup="menu" aria-expanded="false" aria-controls="moreMenu"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-ellipsis"/></svg></button>
+    <span class="divider-v" aria-hidden="true"></span>
+    <button type="button" id="clearBtn" class="icon-btn danger" aria-label="Clear view"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-trash-2"/></svg></button>
+  </div>
+</header>
 
 <div class="lg-scope" id="filterbar">
   <input type="text" id="search"    placeholder="🔍 Search message…" oninput="queryChanged()">
@@ -105,20 +116,7 @@
   <div class="sep"></div>
   <div class="toggle-group" id="platToggles"></div>
   <div class="bar-spacer"></div>
-  <button class="lg-icon-btn active" id="autoScrollBtn" onclick="toggleAutoScroll()" style="display:none">↓ Auto-scroll</button>
-  <button class="lg-icon-btn"        id="pauseBtn"      onclick="togglePause()"      style="display:none">⏸ Pause</button>
-  <button class="lg-icon-btn lg-danger" id="clearBtn"      onclick="clearLogs()"        style="display:none">🗑 Clear</button>
-  <div class="sep"></div>
-  <!-- Stats counter and Export live in one wrapper so they always wrap as
-       a unit and stay right-anchored together — see `.stats-export` CSS. -->
-  <div class="stats-export">
-    <div class="stats" id="stats"></div>
-    <!-- Export button (always visible when logs are loaded). Its menu is #exportSurface in #overlayRoot:
-         inside #filterbar, the glass backdrop-filter made the bar the containing block of the fixed menu. -->
-    <div class="export-wrap" id="exportWrap" style="display:none; position:relative;">
-      <button type="button" class="lg-icon-btn" id="exportBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="exportMenu" style="color:var(--lg-accent);border-color:var(--lg-accent)"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-download"/></svg>Export<svg class="icon" aria-hidden="true" focusable="false"><use href="#i-chevron-down"/></svg></button>
-    </div>
-  </div>
+  <div class="stats" id="stats"></div>
 </div>
 
 <!-- File mode -->
@@ -359,6 +357,14 @@ pkill -f idevicesyslog</pre>
       </div>
       <div class="export-note" id="exportNoteBox" hidden><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-triangle-alert"/></svg><span id="exportNote"></span></div>
     </div>
+    <!-- The toolbar's More menu (assets/js/live.js). Glass is macOS only; P14's Settings takes it over. -->
+    <div class="menu ov" id="moreSurface" hidden>
+      <div role="menu" id="moreMenu" aria-label="More">
+        <button type="button" class="menu-item" role="menuitem" tabindex="-1" data-act="open"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-folder-open"/></svg><span>Open log file…</span><span class="kbd" id="moreOpenKbd"></span></button>
+        <div class="menu-sep" role="separator" id="moreGlassSep"></div>
+        <button type="button" class="menu-item" role="menuitemcheckbox" aria-checked="false" tabindex="-1" id="moreGlass" data-act="glass"><svg class="icon menu-check" aria-hidden="true" focusable="false"><use href="#i-check"/></svg><span>Glass</span></button>
+      </div>
+    </div>
   </div>
   <section class="toast-region" id="toastRegion" aria-label="Notifications">
     <div class="toast-stack" id="toastAlerts"></div>
@@ -377,54 +383,27 @@ pkill -f idevicesyslog</pre>
 <script src="assets/js/ui.js"></script>
 <!-- App shell (roadmap P4): sidebar, drag bands, theme. ALV.createShell runs from the legacy script. -->
 <script src="assets/js/shell.js"></script>
+<script src="assets/js/live.js"></script>
 <script>
-// ─── Liquid Glass toggle (macOS only) ────────────────────────────────────
-// The material is stored by ALV.prefs (assets/js/prefs.js): set('material') writes data-material
-// and data-glass on <html> and mirrors the legacy glassMode key. This switch goes away in P4.
-(function initGlassToggle() {
-  const isMac = document.documentElement.getAttribute('data-platform') === 'mac';
-
-  function postGlassMode(enabled) {
-    return fetch('/window/glass-mode', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled }),
-    });
-  }
-
-  function bind() {
-    const el = document.getElementById('glassSwitch');
-    const input = document.getElementById('glassSwitchInput');
-    if (!el || !input) return;
-    if (isMac) el.classList.add('platform-mac');
-    const glassAtStart = ALV.prefs.get('material') === 'glass';
-    input.checked = glassAtStart;
-
-    input.addEventListener('change', async () => {
-      const enabled = input.checked;
-      ALV.prefs.set('material', enabled ? 'glass' : 'solid');
-      if (!isMac) return;
-      try {
-        const r = await postGlassMode(enabled);
-        if (!r.ok) console.warn('glass-mode http', r.status);
-      } catch (e) {
-        console.warn('glass-mode fetch failed', e);
-      }
-    });
-
-    // If glass was on at startup, sync the native window now (the macOS
-    // conf starts with effects=[]).
-    if (isMac && glassAtStart) {
-      postGlassMode(true).catch(() => {});
-    }
-  }
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', bind);
-  } else {
-    bind();
-  }
-})();
+// ─── Glass material (macOS only) ─────────────────────────────────────────
+// The material is stored by ALV.prefs (assets/js/prefs.js): set('material') writes data-material and
+// data-glass on <html> and mirrors the legacy glassMode key. The toolbar's More menu calls setGlass (P14's
+// Settings → Material replaces it); on macOS the native window effect follows through POST /window/glass-mode.
+const IS_MAC = document.documentElement.getAttribute('data-platform') === 'mac';
+function postGlassMode(enabled) {
+  return fetch('/window/glass-mode', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
+}
+function setGlass(enabled) {
+  ALV.prefs.set('material', enabled ? 'glass' : 'solid');
+  if (!IS_MAC) return;
+  postGlassMode(enabled).then(r => { if (!r.ok) console.warn('glass-mode http', r.status); }, e => console.warn('glass-mode fetch failed', e));
+}
+// If glass was on at startup, sync the native window now (the macOS conf starts with effects=[]).
+if (IS_MAC && ALV.prefs.get('material') === 'glass') postGlassMode(true).catch(() => {});
 
 // ── Constants ──
 const LEVELS     = ['VERBOSE','DEBUG','INFO','WARN','ERROR','ASSERT'];
@@ -446,6 +425,7 @@ let filterGen = 0;   // bumped by queryChanged(); a session whose `query` differ
 function offscreen(s) { return s !== cur || document.hidden; }
 let wsAndroid = null, wsIos = null;
 let shell = null;   // the app shell (ALV.createShell, assets/js/shell.js), created before the first selectSession
+let liveUi = null;  // the toolbar and status bar (ALV.createLive, assets/js/live.js), created right after it
 // What the sidebar device rows show (shellState): log lines received per platform (the rate meter, and what
 // ends a stall), the last setStatus per platform, the device the picker holds, and whether the iOS driver
 // check failed (Windows).
@@ -589,7 +569,6 @@ function selectSession(next) {
   shellSync();
   ['autoScrollBtn','pauseBtn'].forEach(id => document.getElementById(id).style.display = live ? '' : 'none');
   document.getElementById('clearBtn').style.display = '';   // Clear empties the session on screen; on File it brings the dropzone back
-  document.getElementById('autoScrollBtn').classList.toggle('active', next.follow);
   if (live) {
     refreshLiveView();
     // Populate device dropdowns from native /devices/* endpoints.
@@ -834,7 +813,7 @@ document.getElementById('logTable').addEventListener('click', e => {
   // Stop auto-scroll so the view stays put around the selection.
   if (s.follow) {
     s.follow = false;
-    document.getElementById('autoScrollBtn').classList.toggle('active', false);
+    shellSync();
     updateNewerPill();
   }
 });
@@ -844,14 +823,16 @@ document.getElementById('logTable').addEventListener('click', e => {
 shell = ALV.createShell({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, keys: ALV.keys, prefs: ALV.prefs, state: shellState,
   actions: { selectSession, openFile: openLogFile, togglePlatform, toggleStream: p => (p === 'android' ? toggleAndroid() : toggleIos()),
     repair: () => iosRepairFromHeader(), setup: p => showSetup(p) } });
+liveUi = ALV.createLive({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, keys: ALV.keys, prefs: ALV.prefs, shell, state: shellState,
+  actions: { togglePause, toggleAutoScroll, clear: clearLogs, zoom: setLogZoom, openFile: openLogFile, setGlass } });
 function shellState() {
   return {
     cur, sessions: [liveSession, fileSession],
     live: { android: androidLive, ios: iosLive }, status: liveStatus, devices: deviceInfo, driverMissing: iosDriverMissing,
-    lines: wsLines, dropped: liveSession.dropped, enabled: enabledPlatforms,
+    lines: wsLines, dropped: liveSession.dropped, enabled: enabledPlatforms, paused: livePaused, buffered: pendingBatch.length,
   };
 }
-function shellSync() { if (shell) shell.sync(); }
+function shellSync() { if (shell) shell.sync(); if (liveUi) liveUi.sync(); }
 // "Open log file…" (the SESSIONS row and ⌘O): the file session, then the picker. The picker is the
 // dropzone's file input, so a picked file loads exactly like a dropped one (handleFile).
 function openLogFile() {
@@ -1319,6 +1300,7 @@ function showStallModal(text) {
   // modal and keep focus. Close it without moving focus into the page behind the modal.
   exportMenuCtl.close({ restoreFocus: false });
   if (shell) shell.closeMenus();   // the sidebar's device menus live in the same overlay root
+  if (liveUi) liveUi.closeMenus();   // so do the toolbar's More menu and the status bar's drops popover
   const el = document.getElementById('stallModalText');
   if (el && text) el.textContent = text;
   const res = document.getElementById('stallRepairResult');
@@ -1544,7 +1526,7 @@ function resetConnectBtn(platform) {
 
 function toggleAutoScroll() {
   const s = cur;
-  s.follow = !s.follow; document.getElementById('autoScrollBtn').classList.toggle('active', s.follow);
+  s.follow = !s.follow; shellSync();
   // Re-pinning leaves the reading window behind: rebuild the followed tail now (also mid-drain or paused).
   // renderFrom = -1 so an in-progress drain renders only lines it adds after this. Only when the table
   // holds live lines: file lines carry no seq, and a file-only table must keep its head and lazy append.
@@ -1553,8 +1535,8 @@ function toggleAutoScroll() {
 }
 function togglePause() {
   livePaused = !livePaused;
-  const s = liveSession, btn = document.getElementById('pauseBtn');
-  btn.textContent = livePaused ? '▶ Resume' : '⏸ Pause'; btn.classList.toggle('paused', livePaused);
+  const s = liveSession;
+  shellSync();   // the toolbar's Pause button and stream badge
   if (livePaused && s.renderFrom >= 0) { renderLiveTail(s, s.renderFrom); s.renderFrom = -1; }   // a pause mid-drain would otherwise leave already-filtered lines unrendered and lazy-load gated off
   // On resume, drain whatever queued during the pause.
   if (!livePaused) {
@@ -1651,7 +1633,7 @@ function trimPausedBacklog(s) {
 // Esc, an outside press or choosing a format, with focus back on the button. ⌘E / Ctrl+E toggles it from
 // anywhere, text fields included. refreshExportMenu fills the counts and the loss note on each open.
 // #overlayRoot (z 200) paints above the legacy .modal-overlay (z 100), so showStallModal and showSetup close the
-// menu (and the sidebar's device menus, shell.closeMenus) when they open (an iOS stall can arrive while it is open); the ⌘E guard alone only blocks opening it.
+// menu (and the shell's menus: shell.closeMenus, liveUi.closeMenus) when they open (an iOS stall can arrive while it is open); the ⌘E guard alone only blocks opening it.
 function refreshExportMenu() {
   const s = cur;
   document.getElementById('exportFilteredCount').textContent = s.filtered.length.toLocaleString() + ' lines';
@@ -2042,6 +2024,7 @@ document.getElementById('logTable').addEventListener('scroll', function() {
 function showSetup(platform) {
   exportMenuCtl.close({ restoreFocus: false });   // as showStallModal: the menu would paint above this modal
   if (shell) shell.closeMenus();
+  if (liveUi) liveUi.closeMenus();
   document.getElementById('setupModal').classList.add('visible'); switchSetupTab(platform);
 }
 function hideSetup()         { document.getElementById('setupModal').classList.remove('visible'); }

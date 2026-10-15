@@ -6,15 +6,14 @@
      out the whole table at its full height (300-row build +13 %, layout CPU +31 % in Chromium). */
   #app { flex: 1 1 0; min-height: 0; display: grid; grid-template-columns: var(--side-w) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
   #main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-  /* contain: layout keeps the sidebar's twice-a-second text updates from relaying out the log column. */
+  /* contain: layout makes the sidebar the layout root of its own content. It is not size containment: the fixed
+     grid column (--side-w, 52 px as the rail) is what keeps its twice-a-second text updates from resizing the
+     log column. */
   #sidebar { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--hairline); contain: layout; }
 
   /* Drag bands (DRAG_BANDS in shell.js): the sidebar header and the top bar are one 52 px band. */
-  #sidebarHeader, #topbar { -webkit-user-select: none; user-select: none; }
+  #sidebarHeader, #toolbar { -webkit-user-select: none; user-select: none; }
   #sidebarHeader { display: flex; align-items: center; gap: 8px; height: var(--titlebar-h); padding: 0 8px 0 16px; flex: none; }
-  /* align-items: center overrides legacy's stretch: at 52 px the zoom group and the glass switch would stretch to the
-     full band, and both are INTERACTIVE, so the empty band around the pill or the buttons would not drag. */
-  #topbar { min-height: var(--titlebar-h); align-items: center; }
   .side-title { font-size: 13px; font-weight: 600; white-space: nowrap; }
   /* macOS: the traffic lights sit over the left of the band (titleBarStyle Overlay), so no title there. */
   .app[data-platform="mac"] #sidebarHeader { padding-left: 78px; }
@@ -65,4 +64,20 @@
 
   /* Footer (spec: 44 px, top hairline): Settings, Keyboard shortcuts, Theme. */
   #sidebarFooter { display: flex; align-items: center; gap: 4px; height: 44px; padding: 0 8px; flex: none; border-top: 1px solid var(--hairline); }
+
+  /* Toolbar (spec "Toolbar": 52, .chrome, bottom hairline, padding 0 12 0 16, gap 8; a size container).
+     Its height is fixed, so size and layout containment keep the badge's text updates inside it (no paint
+     containment: it would clip focus rings). */
+  #toolbar { display: flex; align-items: center; gap: 8px; height: var(--titlebar-h); padding: 0 12px 0 16px; flex: none; border-bottom: 1px solid var(--hairline); container: toolbar / inline-size; contain: size layout style; }
+  .tb-left { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+  .tb-right { display: flex; align-items: center; gap: 6px; flex: none; }
+  .tb-title { min-width: 0; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 600; }
+  #streamBadge { flex: none; font-variant-numeric: tabular-nums; }
+  .tb-zoom { display: flex; align-items: center; gap: 2px; }
+  #zoomResetBtn { min-width: 52px; font-variant-numeric: tabular-nums; }
+  #exportWrap { display: flex; }
+  /* Collapse tiers (spec): border-box widths minus the toolbar's 28 px of padding. Kbd hints (1291px) arrive
+     with P5's Space / End; until then the toolbar shows none. */
+  @container toolbar (max-width: 1151px) { #exportBtn .tb-label, #exportBtn .tb-chev { display: none; } }
+  @container toolbar (max-width: 1011px) { #zoomGroup, .tb-zoom-div { display: none; } }
 }

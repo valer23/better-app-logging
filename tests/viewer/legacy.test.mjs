@@ -78,7 +78,7 @@ test('a sticky document hands out one stub per id, keeps what the legacy script 
 test('the page wires both window drag bands through the shell: one mousedown and one dblclick listener each', () => {
   const doc = stickyDocument();
   loadLegacy([], { document: doc });
-  for (const id of ['sidebarHeader', 'topbar']) {
+  for (const id of ['sidebarHeader', 'toolbar']) {
     for (const type of ['mousedown', 'dblclick']) assert.equal((doc.listeners.get(`${id}:${type}`) || []).length, 1, `${id}:${type}`);
   }
 });
@@ -213,13 +213,13 @@ test('handleWsMsg still shows the stall sheet for the stall frame unless the str
   assert.equal(run('__sheet'), 1, 'paused: no sheet');
 });
 
-test('showStallModal and showSetup close the sidebar row menus: #overlayRoot (z 200) would paint them above the modal (P4)', () => {
+test('showStallModal and showSetup close the sidebar row menus and the toolbar / status-bar menus: #overlayRoot (z 200) would paint them above the modal (P4)', () => {
   const { run } = loadLegacy([], { document: stickyDocument() });
-  run(`globalThis.__closed = 0; shell = { closeMenus: () => { __closed++; }, sync() {} };`);
+  run(`globalThis.__closed = []; shell = { closeMenus: () => { __closed.push('shell'); }, sync() {} }; liveUi = { closeMenus: () => { __closed.push('live'); }, sync() {} };`);
   run(`showStallModal('x')`);
-  assert.equal(run('__closed'), 1, 'the stall modal is opened by a frame, so no pointerdown light dismiss runs');
+  assert.equal(run('__closed.join()'), 'shell,live', 'the stall modal is opened by a frame, so no pointerdown light dismiss runs');
   run(`showSetup('ios')`);
-  assert.equal(run('__closed'), 2);
+  assert.equal(run('__closed.join()'), 'shell,live,shell,live');
 });
 
 // The legacy side of the shell adapter, against the real legacy code: the fields shellState() returns are what
@@ -229,7 +229,7 @@ const settle = () => new Promise(r => setImmediate(r));
 test('shellState has the shape the shell reads: live, status, devices, driverMissing, lines, dropped and enabled', () => {
   const { run } = loadLegacy([], { document: stickyDocument() });
   const st = run('shellState()');
-  assert.deepEqual(Object.keys(st).sort(), ['cur', 'devices', 'driverMissing', 'dropped', 'enabled', 'lines', 'live', 'sessions', 'status']);
+  assert.deepEqual(Object.keys(st).sort(), ['buffered', 'cur', 'devices', 'driverMissing', 'dropped', 'enabled', 'lines', 'live', 'paused', 'sessions', 'status']);
   assert.deepEqual([st.cur === run('liveSession'), st.sessions[0] === run('liveSession'), st.sessions[1] === run('fileSession')], [true, true, true]);
   assert.equal(st.dropped, run('liveSession.dropped'), 'the same object, so a drop shows without a copy');
   assert.equal(st.lines, run('wsLines'));

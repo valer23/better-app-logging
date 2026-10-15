@@ -21,7 +21,7 @@
   /* Primitives (assets/js/ui.js). The foundation's .menu, .tooltip, .toast, .kbd and .btn set display,
      which beats the UA [hidden] rule, so hidden ones need display: none back (a toast without an action
      keeps a hidden .btn). */
-  .menu[hidden], .tooltip[hidden], .toast[hidden], .kbd[hidden], .dialog-host[hidden], .btn[hidden] { display: none; }
+  .menu[hidden], .tooltip[hidden], .toast[hidden], .kbd[hidden], .dialog-host[hidden], .btn[hidden], .menu-item[hidden] { display: none; }
   /* Menu items take real focus (APG menu button) and aria-selected is not valid on a menuitem, so the
      foundation's 2 px active-item bar is keyed on :focus. Radio items show their check only when checked. */
   .menu-item:focus { background: var(--fill-hover); box-shadow: inset 2px 0 0 var(--accent); }
