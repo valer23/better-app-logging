@@ -115,14 +115,21 @@
       try { t.window.getCurrentWindow()[name](); } catch (err) { warn(`${name} failed`, err); }
     }
     let armed = null;   // { x, y } of the press while a drag is pending
+    // Whether the first press of the current click sequence was on a control. The OS counts a double-click by
+    // time and position, not by node, and a control can move the layout on its first click (the sidebar toggle
+    // swaps a 248 px column for the 52 px rail), so the second press may land on a background: that dblclick
+    // is the control's, not the window's. Shared by both bands (the second press may land in the other one).
+    let firstOnControl = false;
+    const onControl = e => !!e.target.closest(dom.INTERACTIVE);
     function initDragBand(el) {
       if (!el) return;
       el.addEventListener('mousedown', e => {
-        if (e.button !== 0 || e.target.closest(dom.INTERACTIVE) || e.detail >= 2) return;   // detail 2: a double-click's second press
+        if (e.detail === 1) firstOnControl = onControl(e);
+        if (e.button !== 0 || onControl(e) || e.detail >= 2) return;   // detail 2: a double-click's second press
         armed = { x: e.clientX, y: e.clientY };
       });
       el.addEventListener('dblclick', e => {
-        if (e.target.closest(dom.INTERACTIVE)) return;
+        if (firstOnControl || onControl(e)) return;
         armed = null;
         windowCall('toggleMaximize');
       });

@@ -440,7 +440,9 @@ test('INTERACTIVE is one literal, in dom.js, and the shell\'s drag bands read it
   const literals = allJs.filter(s => /const INTERACTIVE\s*=\s*'/.test(s.code)).map(s => s.filename);
   assert.deepEqual(literals, ['viewer/assets/js/dom.js']);
   assert.equal((jsText.match(/const INTERACTIVE\s*=\s*'/g) || []).length, 1);
-  assert.equal((read(path.join(ASSETS, 'js', 'shell.js')).match(/\.closest\(dom\.INTERACTIVE\)/g) || []).length, 2, 'mousedown and dblclick');
+  const shellJs = read(path.join(ASSETS, 'js', 'shell.js'));
+  assert.equal((shellJs.match(/\.closest\(dom\.INTERACTIVE\)/g) || []).length, 1, 'one onControl(e) test ...');
+  assert.ok(/mousedown'[^]*?onControl\(e\)[^]*?dblclick'[^]*?onControl\(e\)/.test(shellJs), '... used by mousedown and dblclick');
   assert.doesNotMatch(inlineScripts(html).at(-1).code, /INTERACTIVE|initTopbarDrag|startDragging/, 'the legacy script has no drag code left');
 });
 

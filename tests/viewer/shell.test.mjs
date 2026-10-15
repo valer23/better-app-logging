@@ -119,6 +119,28 @@ test('drag bands: a double-click on the background toggles maximise, on a contro
   });
 });
 
+// A double-click is counted by the OS by time and position, not by DOM node: pressing the sidebar toggle twice
+// changes the layout on the first click (248 px sidebar <-> 52 px rail), so the second press lands on whatever
+// is under the pointer now (the toolbar's background, or the sidebar header's title) and the dblclick goes there.
+test('drag bands: a double-click whose first press was on a control never maximises, even when the second press lands on a background (review F2)', () => {
+  const t = fakeTauri();
+  const { p, ctl } = bandPage(t);
+  ctl.fire('mousedown', { button: 0, detail: 1, clientX: 225, clientY: 26 });
+  p.byId.toolbar.fire('mousedown', { button: 0, detail: 2, clientX: 225, clientY: 26 });   // the layout moved: now over the toolbar background
+  p.byId.toolbar.fire('dblclick', {});
+  assert.deepEqual(t.calls, [], 'the first press was on a control: not a window double-click');
+  // The other direction: the toolbar control is pressed, the second press lands in the sidebar header band.
+  ctl.fire('mousedown', { button: 0, detail: 1, clientX: 26, clientY: 26 });
+  p.byId.sidebarHeader.fire('mousedown', { button: 0, detail: 2, clientX: 26, clientY: 26 });
+  p.byId.sidebarHeader.fire('dblclick', {});
+  assert.deepEqual(t.calls, [], 'the guard is shared by both bands');
+  // A new sequence on the background is a window double-click again.
+  p.byId.toolbar.fire('mousedown', { button: 0, detail: 1, clientX: 400, clientY: 26 });
+  p.byId.toolbar.fire('mousedown', { button: 0, detail: 2, clientX: 400, clientY: 26 });
+  p.byId.toolbar.fire('dblclick', {});
+  assert.deepEqual(t.calls, ['max']);
+});
+
 // ---- DOM side: the sidebar, built from the page's real markup (shellPage in _fake.mjs) ----
 
 test('SESSIONS: Live session first and current, its line count; the file row appears once a file has lines', () => {
