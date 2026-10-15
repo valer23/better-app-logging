@@ -82,7 +82,9 @@
     tip('moreBtn', { text: 'More' });
     tip('clearBtn', { text: 'Clear view' });
     function syncZoom(ps) {
+      // The name starts with the visible text (WCAG 2.5.3) and tells the size to a screen reader.
       setText($('zoomResetBtn'), `${ps.logFontSize} px`);
+      setAttr($('zoomResetBtn'), 'aria-label', `${ps.logFontSize} px, reset log text size to ${prefs.LOG_FS.def} px`);
       setAttr($('zoomOutBtn'), 'aria-disabled', ps.logFontSize <= prefs.LOG_FS.min ? 'true' : null);
       setAttr($('zoomInBtn'), 'aria-disabled', ps.logFontSize >= prefs.LOG_FS.max ? 'true' : null);
     }

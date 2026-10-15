@@ -108,6 +108,19 @@ test('toolbar: the log text size group shows the size, its ends are aria-disable
   assert.deepEqual([$('zoomInBtn').getAttribute('aria-disabled'), $('zoomOutBtn').getAttribute('aria-disabled')], [null, 'true']);
 });
 
+// WCAG 2.5.3 Label in Name: the Reset button's visible label is the current size ("15 px"), so its accessible
+// name must contain it (Voice Control: "click 15 px"), and the group is where a screen reader learns the size.
+test('toolbar: the Reset button\'s accessible name starts with its visible size and says what it does (review F8)', () => {
+  const { prefs, $ } = livePage();
+  const reset = $('zoomResetBtn');
+  const nameHas = () => reset.getAttribute('aria-label').toLowerCase().includes(reset.textContent.toLowerCase());
+  assert.deepEqual([reset.textContent, reset.getAttribute('aria-label')], ['13 px', '13 px, reset log text size to 13 px']);
+  prefs.set('logFontSize', 15);
+  assert.deepEqual([reset.textContent, reset.getAttribute('aria-label'), nameHas()], ['15 px', '15 px, reset log text size to 13 px', true]);
+  prefs.set('logFontSize', 10);
+  assert.ok(nameHas() && reset.getAttribute('aria-label').startsWith('10 px'));
+});
+
 test('toolbar: More holds "Open log file…" (⌘O) and, on macOS only, the Glass checkbox that sets the material', () => {
   const { p, prefs, calls, $ } = livePage();
   assert.deepEqual([$('moreGlass').hidden, $('moreOpenKbd').textContent, tipText(p, $('moreBtn'))], [false, '⌘O', 'More']);
