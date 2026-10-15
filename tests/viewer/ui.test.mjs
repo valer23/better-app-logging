@@ -1,7 +1,8 @@
 // The pure side of the UI primitives (viewer/assets/js/ui.js, ALV.uiPure): placement (parity with
 // the legacy positionExportMenu), the menu roving index and typeahead, the toast queue (timeouts,
-// pause/resume, max 3 + FIFO, replace by key, errors yield after 5 s when a toast waits, and a seeded
-// model test of the queue invariants), the live-region throttle and the focus-trap step.
+// pause/resume, max 3 + FIFO, replace by key, errors yield after 5 s only when a toast waits and no
+// unheld timed toast is on screen, a clock that steps backwards, and a seeded model test of the queue
+// invariants), the live-region throttle and the focus-trap step.
 // ui.js loads in an EMPTY vm context, so its DOM side must not run at load.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -193,6 +194,48 @@ test('toast queue: while a toast waits, the oldest error on screen for 5 s yield
   assert.deepEqual(ids(q.visible()), [e[2], e4], 'and the remaining errors stay');
 });
 
+test('toast queue: an error keeps its slot while an unheld timed toast will free one anyway (review round 5)', () => {
+  const q = U.createToastQueue({ max: 3 });
+  const e1 = q.add({ kind: 'error', title: 'Export failed', action: { label: 'Retry', run() {} } }, 0);
+  const [s1, s2, s3] = [10000, 10001, 10002].map((t, i) => q.add({ kind: 'success', title: 's' + (i + 1) }, t));
+  assert.deepEqual([ids(q.visible()), ids(q.pending())], [[e1, s1, s2], [s3]], 'e1 has been on screen for 10 s, but s1 and s2 are timed');
+  assert.equal(q.get(e1).title, 'Export failed');
+  assert.equal(q.nextDeadline(10002), 4998, 'the next change is s1 expiring, not e1 yielding');
+  assert.deepEqual(ids(q.tick(15000)), [s1]);
+  assert.deepEqual([ids(q.visible()), ids(q.pending())], [[e1, s2, s3], []], 'the expired slot goes to s3; the error is still there');
+  // the yield is for when no unheld timed toast can free a slot: hold the only timed toast and it applies
+  const q1 = U.createToastQueue({ max: 2 });
+  const h = q1.add({ kind: 'error', title: 'h' }, 0);
+  const t = q1.add({ kind: 'success', title: 't' }, 0);
+  q1.pause(t, 1000);
+  const w = q1.add({ kind: 'success', title: 'w' }, 6000);
+  assert.deepEqual([ids(q1.visible()), ids(q1.pending())], [[t, w], []], 'nothing timed is running, so h yields');
+  assert.equal(q1.get(h), null);
+  // an unheld error yields as soon as the last unheld timed toast is held
+  const q2 = U.createToastQueue({ max: 2 });
+  const e = q2.add({ kind: 'error', title: 'e' }, 0);
+  const u = q2.add({ kind: 'info', title: 'u' }, 1000);
+  const v = q2.add({ kind: 'info', title: 'v' }, 1000);
+  assert.deepEqual(ids(q2.visible()), [e, u]);
+  q2.pause(u, 7000);
+  assert.deepEqual([ids(q2.visible()), ids(q2.pending())], [[u, v], []], 'u is held now, so the waiting toast takes the error\'s slot');
+});
+
+test('toast queue: a clock that steps backwards never makes toasts outlive their time (review round 5)', () => {
+  const q = U.createToastQueue({ max: 3 });
+  const id = q.add({ kind: 'success', title: 'Copied' }, 1e6);
+  const back = 1e6 - 3.6e6;
+  assert.equal(q.nextDeadline(back), 5000, 'the deadline is measured from the latest time the queue has seen');
+  assert.deepEqual(ids(q.tick(back + 4000)), [], 'still earlier than the add');
+  assert.deepEqual(ids(q.visible()), [id]);
+  assert.deepEqual(ids(q.tick(1e6 + 4999)), []);
+  assert.deepEqual(ids(q.tick(1e6 + 5000)), [id], 'expires on time relative to the latest time seen');
+  const k = q.add({ kind: 'success', title: 'k' }, 2e6);
+  q.pause(k, back);
+  q.resume(k, back + 1);
+  assert.equal(q.nextDeadline(back + 2), 5000, 'pause and resume with a stale now behave as at the latest time');
+});
+
 test('toast queue: a held error never yields; a queue held everywhere waits for the release', () => {
   const q = U.createToastQueue({ max: 3 });
   const [a, b, c] = ['a', 'b', 'c'].map(title => q.add({ kind: 'error', title, action: { label: 'Retry', run() {} } }, 0));
@@ -295,6 +338,7 @@ function runToastModel(seed, steps) {
   const gone = new Set();
   const dismissedWaiting = new Set();
   const trace = [];
+  let seen = -1;   // the latest time the queue has been given
   const fail = msg => assert.fail(`seed ${seed} (max ${max}) t=${now}: ${msg}\n  last ops: ${trace.slice(-12).join(' | ')}`);
   const snap = () => {
     const vis = ids(q.visible());
@@ -333,6 +377,7 @@ function runToastModel(seed, steps) {
       if (isError(b, id)) yielded += 1;
     }
     if (yielded > promoted.length) fail(`I9: ${yielded} errors yielded for ${promoted.length} shown toasts`);
+    if (yielded && b.vis.some(id => a.spec.has(id) && !held.has(id) && !isError(a, id))) fail('I9: an error yielded while an unheld timed toast stayed on screen');
     for (const id of before) {
       if (a.spec.has(id)) continue;
       gone.add(id);
@@ -351,15 +396,19 @@ function runToastModel(seed, steps) {
   function apply(op) {
     trace.push(`${now}:${op.type}${op.id ? ' ' + op.id : ''}${op.spec ? ' ' + op.spec.kind + (op.spec.action ? '+a' : '') + (op.spec.key ? ' ' + op.spec.key : '') : ''}`);
     const b = snap();
+    // One call in ten carries a clock that stepped backwards, once the queue has seen `now` (the checks
+    // below query it at `now`): it must act as at the latest time seen, so every invariant still holds.
+    const at = seen === now && rnd() < 0.1 ? now - 1 - Math.floor(rnd() * 3.6e6) : now;
     let ret;
-    if (op.type === 'add') ret = q.add(op.spec, now);
+    if (op.type === 'add') ret = q.add(op.spec, at);
     else if (op.type === 'dismiss') {
-      ret = q.dismiss(op.id, now);
+      ret = q.dismiss(op.id, at);
       if (ret !== b.spec.has(op.id)) fail(`dismiss(${op.id}) returned ${ret}`);
-    } else if (op.type === 'pause') { q.pause(op.id, now); if (b.vis.includes(op.id)) held.add(op.id); }
-    else if (op.type === 'resume') { q.resume(op.id, now); held.delete(op.id); }
-    else ret = q.tick(now);
+    } else if (op.type === 'pause') { q.pause(op.id, at); if (b.vis.includes(op.id)) held.add(op.id); }
+    else if (op.type === 'resume') { q.resume(op.id, at); held.delete(op.id); }
+    else ret = q.tick(at);
     check(b, snap(), op, ret);
+    seen = now;   // check() asked for nextDeadline(now)
   }
 
   const kinds = ['success', 'info', 'error'];

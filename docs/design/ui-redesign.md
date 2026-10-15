@@ -695,7 +695,7 @@ _Captured with AppLogsViewer 1.4.0_
 
 ### Toasts
 
-Bottom right, 16 px above the status bar (shifted left of an open drawer), 356 wide, inside one persistent polite live region. Auto-hide after 5 s, or 10 s when they carry an action; hover or focus pauses the timer; errors use `role="alert"` and stay. Each has a dismiss button "Dismiss notification".
+Bottom right, 16 px above the status bar (shifted left of an open drawer), 356 wide, inside one persistent polite live region. Auto-hide after 5 s, or 10 s when they carry an action; hover or focus pauses the timer; errors use `role="alert"` and stay; only when another toast is waiting and every toast on screen that is not under the pointer or keyboard focus is an error does the oldest error that has been visible for 5 s give up its slot (never one under the pointer or keyboard focus). Each has a dismiss button "Dismiss notification".
 
 | Event | Icon | Title | Description | Action |
 |---|---|---|---|---|
