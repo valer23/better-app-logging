@@ -260,3 +260,121 @@ test('IME composition, keyCode 229, handled events and unwanted repeats are igno
   assert.equal(k.dispatch(key('e', { meta: true }), BODY), 'export.menu');
   assert.equal(n, 1);
 });
+
+test('Esc: the newest modal layer is a barrier, also when it is the last one on the stack', () => {
+  const k = ALV.createKeys({ platform: 'mac' });
+  const hit = [];
+  const run = (name, pushes) => {
+    const pops = pushes.map(([level, tag]) => k.pushEsc(() => hit.push(tag), level));
+    k.dispatch(key('Escape'), BODY);
+    pops.forEach(p => p());
+  };
+  run('stall over sheet', [['sheet', 'sheet'], ['stall', 'stall']]);
+  run('stall over palette', [['palette', 'palette'], ['stall', 'stall']]);
+  run('sheet opened from the palette', [['palette', 'palette'], ['sheet', 'sheet']]);
+  run('sheet over a tooltip', [['tooltip', 'tooltip'], ['sheet', 'sheet']]);
+  run('dialog over a hovered tooltip and a menu', [['tooltip', 'tooltip'], ['menu', 'menu'], ['sheet', 'sheet']]);
+  run('a menu inside the sheet still goes first', [['tooltip', 'tooltip'], ['sheet', 'sheet'], ['menu', 'menu']]);
+  assert.deepEqual(hit, ['stall', 'stall', 'sheet', 'sheet', 'sheet', 'menu']);
+  assert.equal(k.escDepth(), 0);
+});
+
+test('Shift stays when the written key is not itself a shifted symbol: ⇧⌘= and ⌘= are two combos', () => {
+  assert.equal(P.parse('Shift+Mod+=', 'mac'), 'Meta+Shift+=');
+  assert.equal(P.parse('Mod+=', 'mac'), 'Meta+=');
+  assert.notEqual(P.parse('Shift+Mod+=', 'mac'), P.parse('Mod+=', 'mac'));
+  assert.equal(P.parse('Shift+Mod+-', 'other'), 'Ctrl+Shift+-');
+  assert.equal(P.parse('Shift+?', 'mac'), '?', 'a shifted symbol still carries its own Shift');
+  assert.equal(P.parse('Shift+Mod++', 'mac'), 'Meta++');
+  assert.deepEqual([...P.eventCombos(key('+', { meta: true, shift: true, code: 'Equal' }), 'mac')], ['Meta++', 'Meta+Shift+=']);
+  assert.deepEqual([...P.eventCombos(key('=', { meta: true, code: 'Equal' }), 'mac')], ['Meta+=']);
+  const k = ALV.createKeys({ platform: 'mac' });
+  const hits = [];
+  assert.doesNotThrow(() => k.register({ id: 'ui.bigger', keys: 'Shift+Mod+=', run: () => hits.push('bigger') }), '⇧⌘= is not the reserved ⌘=');
+  k.register({ id: 'ui.smaller', keys: 'Shift+Mod+-', run: () => hits.push('smaller') });
+  assert.throws(() => k.register({ id: 'ui.zoom', keys: 'Mod+=', run() {} }), /reserved/);
+  assert.equal(k.dispatch(key('+', { meta: true, shift: true, code: 'Equal' }), BODY), 'ui.bigger', 'US layout: ⇧⌘= types +');
+  assert.equal(k.dispatch(key('_', { meta: true, shift: true, code: 'Minus' }), BODY), 'ui.smaller');
+  assert.equal(k.dispatch(key('=', { meta: true, code: 'Equal' }), BODY), null, 'plain ⌘= is the legacy zoom, not ours');
+  assert.deepEqual(hits, ['bigger', 'smaller']);
+});
+
+test('with Meta or Ctrl held, a digit matches on e.code when the layout types a symbol there (AZERTY ⌘1)', () => {
+  assert.deepEqual([...P.eventCombos(key('&', { meta: true, code: 'Digit1' }), 'mac')], ['Meta+&', 'Meta+1']);
+  assert.deepEqual([...P.eventCombos(key('1', { meta: true, code: 'Digit1' }), 'mac')], ['Meta+1']);
+  assert.equal(P.eventCombo(key('&', { meta: true, code: 'Digit1' }), 'mac'), 'Meta+&');
+  const k = ALV.createKeys({ platform: 'mac' });
+  k.register({ id: 'view.logs', keys: 'Mod+1', run() {} });
+  k.register({ id: 'view.devices', keys: 'Mod+2', run() {} });
+  assert.equal(k.dispatch(key('&', { meta: true, code: 'Digit1' }), BODY), 'view.logs');
+  assert.equal(k.dispatch(key('é', { meta: true, code: 'Digit2' }), BODY), 'view.devices');
+  assert.equal(k.dispatch(key('2', { meta: true, code: 'Digit2' }), BODY), 'view.devices', 'QWERTY unchanged');
+});
+
+test('a text field keeps Option (macOS) and AltGr (Ctrl+Alt) typing, whatever inText says', () => {
+  const mac = ALV.createKeys({ platform: 'mac' });
+  mac.register({ id: 'level.error', keys: 'Alt+E', inText: true, run() {} });
+  mac.register({ id: 'export.menu', keys: 'Mod+E', inText: true, run() {} });
+  const dead = key('Dead', { alt: true, code: 'KeyE' });
+  assert.equal(mac.dispatch(dead, SEARCH), null, 'Option+E is the acute dead key');
+  assert.equal(dead.prevented, false);
+  assert.equal(mac.dispatch(key('Dead', { alt: true, code: 'KeyE' }), BODY), 'level.error', 'outside a field it is a shortcut');
+  assert.equal(mac.dispatch(key('e', { meta: true, alt: true, code: 'KeyE' }), SEARCH), null, 'no ⌘⌥E binding');
+  assert.equal(mac.dispatch(key('e', { meta: true }), SEARCH), 'export.menu', 'Cmd combos still reach a field');
+  const pc = ALV.createKeys({ platform: 'win' });
+  pc.register({ id: 'level.error', keys: 'Ctrl+Alt+A', inText: true, run() {} });
+  pc.register({ id: 'level.warn', keys: 'Alt+W', inText: true, run() {} });
+  const altgr = key('ą', { ctrl: true, alt: true, code: 'KeyA' });
+  assert.equal(pc.dispatch(altgr, SEARCH), null, 'AltGr+A types ą on a Polish layout');
+  assert.equal(altgr.prevented, false);
+  assert.equal(pc.dispatch(key('a', { ctrl: true, alt: true, code: 'KeyA' }), BODY), 'level.error');
+  assert.equal(pc.dispatch(key('w', { alt: true, code: 'KeyW' }), SEARCH), 'level.warn', 'plain Alt types nothing on Windows');
+});
+
+test('match stops at the first candidate that has a binding, so one keystroke is one command wherever focus is', () => {
+  const k = ALV.createKeys({ platform: 'mac' });
+  const hits = [];
+  k.register({ id: 'marker.next', keys: ']', scope: 'grid', run: () => hits.push(']') });
+  k.register({ id: 'filter.saved6', keys: 'Alt+6', run: () => hits.push('⌥6') });
+  k.setGridRoot(GRID);
+  const german = () => key(']', { alt: true, code: 'Digit6' });
+  assert.equal(k.dispatch(german(), GRID_ROW), 'marker.next');
+  const outside = german();
+  assert.equal(k.dispatch(outside, BODY), null, 'German ⌥6 outside the grid is the ] key, which is bound but not eligible here');
+  assert.equal(outside.prevented, false);
+  assert.equal(k.dispatch(key('¶', { alt: true, code: 'Digit6' }), BODY), 'filter.saved6', 'US ⌥6 is still ⌥6');
+  assert.deepEqual(hits, [']', '⌥6']);
+});
+
+test('Windows Alt letters follow the layout (AZERTY Alt+A), macOS Option keeps the physical key', () => {
+  assert.deepEqual([...P.eventCombos(key('a', { alt: true, code: 'KeyQ' }), 'other')], ['Alt+A'], 'AZERTY Windows: the A key is KeyQ');
+  assert.deepEqual([...P.eventCombos(key('1', { alt: true, code: 'Digit1' }), 'other')], ['Alt+1']);
+  assert.deepEqual([...P.eventCombos(key('&', { alt: true, code: 'Digit1' }), 'other')], ['Alt+1'], 'a symbol under Alt falls back to the physical digit');
+  assert.deepEqual([...P.eventCombos(key('A', { alt: true, shift: true, code: 'KeyQ' }), 'other')], ['Alt+Shift+A']);
+  assert.deepEqual([...P.eventCombos(key('å', { alt: true, code: 'KeyA' }), 'mac')], ['Alt+A'], 'macOS Option+A types å');
+  assert.deepEqual([...P.eventCombos(key('ą', { alt: true, ctrl: true, code: 'KeyA' }), 'other')], ['Ctrl+Alt+A'], 'AltGr keeps the physical key');
+  const k = ALV.createKeys({ platform: 'win' });
+  k.register({ id: 'level.warn', keys: 'Alt+W', run() {} });
+  k.register({ id: 'level.alt', keys: 'Alt+Z', run() {} });
+  assert.equal(k.dispatch(key('w', { alt: true, code: 'KeyZ' }), BODY), 'level.warn', 'AZERTY: ⌥W is the key labelled W');
+  assert.equal(k.dispatch(key('z', { alt: true, code: 'KeyW' }), BODY), 'level.alt');
+});
+
+test('a grid binding does not take Enter or Space from a button, link or checkbox inside the grid', () => {
+  const k = ALV.createKeys({ platform: 'mac' });
+  const ROW_BUTTON = elem('BUTTON');
+  const ROW_LINK = elem('A');
+  const ROW_CHECK = elem('INPUT', { type: 'checkbox' });
+  const root = { ...GRID, contains: el => [GRID_ROW, ROW_BUTTON, ROW_LINK, ROW_CHECK].includes(el) };
+  k.register({ id: 'row.open', keys: 'Enter', scope: 'grid', run() {} });
+  k.register({ id: 'stream.pause', keys: 'Space', scope: 'grid', run() {} });
+  k.register({ id: 'stream.follow', keys: 'F', scope: 'grid', run() {} });
+  k.setGridRoot(root);
+  assert.equal(k.dispatch(key('Enter'), GRID_ROW), 'row.open', 'a row has no owning role');
+  assert.equal(k.dispatch(key(' '), GRID_ROW), 'stream.pause');
+  assert.equal(k.dispatch(key('Enter'), ROW_BUTTON), null, 'Enter activates the button');
+  assert.equal(k.dispatch(key(' '), ROW_BUTTON), null);
+  assert.equal(k.dispatch(key('Enter'), ROW_LINK), null);
+  assert.equal(k.dispatch(key(' '), ROW_CHECK), null);
+  assert.equal(k.dispatch(key('f'), ROW_BUTTON), 'stream.follow', 'a letter is not the button\'s');
+});

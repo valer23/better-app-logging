@@ -6,15 +6,19 @@
    Combos are written 'Mod+E', 'Shift+Mod+E', 'Alt+C', 'End', '?'. Mod is Meta (Cmd) on macOS and Ctrl
    elsewhere (data-platform). A combo is stored in one canonical form, 'Meta+Ctrl+Alt+Shift+Key':
      - letters are upper case and match on e.key, so they follow the keyboard layout (with Meta or Ctrl,
-       a non-Latin letter falls back to e.code);
-     - with Alt held, letters, digits and punctuation match on e.code (macOS Option+C types 'ç'), and a
-       symbol typed with Option / AltGr (German ']' is ⌥6) matches as that symbol first;
-     - a punctuation key carries its own Shift ('?' is Shift+/ on US layouts), so Shift is dropped.
+       a non-Latin letter falls back to e.code, and so does a digit whose key types a symbol: AZERTY ⌘1);
+     - with Alt held, macOS Option and AltGr match letters, digits and punctuation on e.code (Option+C types
+       'ç'); plain Alt on Windows leaves a Latin letter or digit as the layout types it; a symbol typed with
+       Option / AltGr (German ']' is ⌥6) matches as that symbol first;
+     - a typed shifted symbol carries its own Shift ('?' is Shift+/ on US layouts), so the event drops it;
+       a written combo keeps an explicit Shift on an unshifted punctuation key ('Shift+Mod+=' is ⇧⌘=, which
+       is not ⌘=), and Shift+Meta/Ctrl on a punctuation key also offers the physical key (US ⇧⌘= types '+').
    Scopes: 'global' (anywhere), 'grid' (focus inside the grid root, P5 sets it), 'dialog' (only while a
    dialog is open; while one is, nothing else fires). A single printable key (or Space) must be
    grid-scoped (WCAG 2.1.4) and can be switched off with setSingleKeys(false). No combo without
    Meta/Ctrl/Alt fires in a text field or takes a key the focused control owns (a slider's End, a
-   button's Enter); a Mod combo fires in a field only when its binding says inText.
+   button's Enter), in the grid too; a Mod combo fires in a field only when its binding says inText.
+   Option (macOS) and AltGr (Ctrl+Alt) type characters, so in a text field they never fire, inText or not.
    Escape backs out one layer in the spec's level order (pushEsc(fn, level); tooltips, menus and dialogs
    push one). */
 (function (g) {
@@ -40,6 +44,7 @@
   const CODE_KEY = { BracketLeft: '[', BracketRight: ']', Backslash: '\\', Slash: '/', Comma: ',', Period: '.',
     Semicolon: ';', Quote: "'", Backquote: '`', Minus: '-', Equal: '=' };
   const ASCII_PUNCT = /^[!-\/:-@\[-`{-~]$/;
+  const UNSHIFTED = new Set(Object.values(CODE_KEY));
   // Roles whose element handles unmodified keys itself (arrows, Home, End, Space, Enter).
   const OWNING_ROLES = new Set(['slider', 'spinbutton', 'scrollbar', 'radio', 'tab', 'menuitem', 'menuitemradio',
     'menuitemcheckbox', 'option', 'treeitem', 'separator', 'listbox', 'tree', 'tablist']);
@@ -67,8 +72,10 @@
     return k;
   }
   const isPunct = key => key.length === 1 && !/[A-Z0-9]/.test(key);
-  function canon(mods, key) {
-    if (isPunct(key)) mods.delete('Shift');
+  // An event's punctuation is the character typed, Shift included. A written combo keeps an explicit Shift
+  // on an unshifted punctuation key: 'Shift+Mod+=' is ⇧⌘=, not ⌘=.
+  function canon(mods, key, written) {
+    if (isPunct(key) && !(written && UNSHIFTED.has(key))) mods.delete('Shift');
     return MOD_ORDER.filter(m => mods.has(m)).concat(key).join('+');
   }
 
@@ -87,7 +94,7 @@
       else if (m === 'shift') mods.add('Shift');
       else throw new TypeError(`bad modifier "${p}" in shortcut ${combo}`);
     }
-    return canon(mods, normKey(raw));
+    return canon(mods, normKey(raw), true);
   }
 
   const physicalKey = code => (/^Key[A-Z]$/.test(code) ? code.slice(3) : /^Digit\d$/.test(code) ? code.slice(5) : CODE_KEY[code] || null);
@@ -99,8 +106,12 @@
   // The combos an event can mean, most specific first; match() runs the first one that is bound.
   //   1. The symbol Option / AltGr typed, without modifiers, so ']' fires on every layout.
   //   2. With Alt held, the physical key plus the held modifiers: US ⌥] types '‘', Option+C types 'ç'.
+  //      Plain Alt on Windows leaves a Latin letter or digit as the layout types it (AZERTY Alt+A), so
+  //      those use e.key; AltGr and macOS Option change e.key, so they keep the physical key.
   //   3. Otherwise e.key, so letters follow the layout. With Meta or Ctrl, a non-Latin letter (Cyrillic
-  //      'у' on the E key) falls back to the physical letter, so ⌘E still works.
+  //      'у' on the E key) falls back to the physical letter, so ⌘E still works, and a digit whose key
+  //      types a symbol (AZERTY '&' on ⌘1) to the physical digit. Shift with Meta or Ctrl on a punctuation
+  //      key adds Shift + the physical key (US ⇧⌘= types '+').
   function eventCombos(ev, platform) {
     const code = ev.code || '';
     const k = ev.key || '';
@@ -115,12 +126,22 @@
     const out = [];
     if (typesSymbol(ev, platform)) out.push(canon(new Set(), k));
     const phys = physicalKey(code);
-    if (ev.altKey && phys) out.push(canon(mods(), phys));
-    else if ((ev.metaKey || ev.ctrlKey) && /^Key[A-Z]$/.test(code) && k.length === 1 && /\p{L}/u.test(k) && !/[A-Za-z]/.test(k)) out.push(canon(mods(), code.slice(3)));
-    else out.push(canon(mods(), normKey(k)));
+    if (ev.altKey && phys) {
+      const layoutKey = platform !== 'mac' && !ev.ctrlKey && /^[A-Za-z0-9]$/.test(k);
+      out.push(canon(mods(), layoutKey ? normKey(k) : phys));
+    } else if ((ev.metaKey || ev.ctrlKey) && /^Key[A-Z]$/.test(code) && k.length === 1 && /\p{L}/u.test(k) && !/[A-Za-z]/.test(k)) {
+      out.push(canon(mods(), code.slice(3)));
+    } else {
+      out.push(canon(mods(), normKey(k)));
+      if ((ev.metaKey || ev.ctrlKey) && /^Digit\d$/.test(code) && k !== code.slice(5)) out.push(canon(mods(), code.slice(5)));
+      else if (ev.shiftKey && (ev.metaKey || ev.ctrlKey) && phys && UNSHIFTED.has(phys)) out.push(canon(mods(), phys, true));
+    }
     return out;
   }
   const eventCombo = (ev, platform) => eventCombos(ev, platform)[0];
+  // Option (macOS) or AltGr (Ctrl+Alt elsewhere) may be typing a character: ⌥E is the acute dead key, AltGr+A
+  // types ą. In a text field nothing fires for it, whatever the binding says.
+  const altTypes = (ev, platform) => !!ev.altKey && !ev.metaKey && (platform === 'mac' ? !ev.ctrlKey : !!ev.ctrlKey);
 
   // One printable character or Space, with at most Shift: WCAG 2.1.4 "character key shortcut".
   function isSingleKey(c) {
@@ -237,11 +258,12 @@
       return () => { const i = escStack.indexOf(entry); if (i >= 0) escStack.splice(i, 1); };
     }
     // What Escape backs out of: the layers opened after the newest modal one (a menu inside a sheet) if any,
-    // else every layer; among those the spec's level order first, then the newest within a level.
+    // else that modal layer itself (what is under it is inert); with no modal layer, every layer. Among
+    // those the spec's level order first, then the newest within a level.
     function escTarget() {
       let from = 0;
       for (let i = escStack.length - 1; i >= 0; i--) {
-        if (escStack[i].modal) { if (i + 1 < escStack.length) from = i + 1; break; }
+        if (escStack[i].modal) { from = i + 1 < escStack.length ? i + 1 : i; break; }   // the newest modal layer is a barrier
       }
       let best = null;
       for (const e of escStack.slice(from)) if (!best || e.rank < best.rank || (e.rank === best.rank && e.seq > best.seq)) best = e;
@@ -251,18 +273,18 @@
     // The binding this event would run, or null. `active` is document.activeElement.
     function match(ev, active) {
       const inField = isTextEntry(active);
-      if (inField && typesSymbol(ev, plat)) return null;   // Option / AltGr typed a character into the field
+      if (inField && altTypes(ev, plat)) return null;   // Option / AltGr may type a character into the field
       for (const combo of eventCombos(ev, plat)) {
-        for (const b of bindings.values()) {
-          if (!b.keys.includes(combo)) continue;
-          if (modal ? b.scope !== 'dialog' : b.scope === 'dialog') continue;
-          if (ev.repeat && !b.repeat) continue;
-          if (inField && (!hasCommandMod(combo) || !b.inText)) continue;
-          if (!hasCommandMod(combo) && b.scope !== 'grid' && ownsKey(active, combo)) continue;
-          if (b.scope === 'grid' && (!within(gridRoot, active) || (isSingleKey(combo) && !singleKeys))) continue;
-          if (b.when && !b.when()) continue;
-          return b;
-        }
+        // The first candidate with a binding decides, eligible or not, so one keystroke is one command
+        // wherever focus is (German ⌥6 is ] in the grid and nothing outside it, never ⌥6).
+        const b = [...bindings.values()].find(x => x.keys.includes(combo) && (modal ? x.scope === 'dialog' : x.scope !== 'dialog'));
+        if (!b) continue;
+        if (ev.repeat && !b.repeat) return null;
+        if (inField && (!hasCommandMod(combo) || !b.inText)) return null;
+        if (!hasCommandMod(combo) && ownsKey(active, combo)) return null;
+        if (b.scope === 'grid' && (!within(gridRoot, active) || (isSingleKey(combo) && !singleKeys))) return null;
+        if (b.when && !b.when()) return null;
+        return b;
       }
       return null;
     }
