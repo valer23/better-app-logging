@@ -1,0 +1,19 @@
+/* App shell (roadmap P4; spec "Window frame and sidebar", "Window chrome (Tauri)"): the app grid, the
+   sidebar and the window drag bands. @layer app, foundation tokens only (no hex). */
+@layer app {
+  /* <body> is the legacy flex column; #app fills it: the sidebar beside the main column. */
+  #app { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: var(--side-w) minmax(0, 1fr); }
+  #main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  /* contain: layout keeps the sidebar's twice-a-second text updates from relaying out the log column. */
+  #sidebar { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--hairline); contain: layout; }
+
+  /* Drag bands (DRAG_BANDS in shell.js): the sidebar header and the top bar are one 52 px band. */
+  #sidebarHeader, #topbar { -webkit-user-select: none; user-select: none; }
+  #sidebarHeader { display: flex; align-items: center; gap: 8px; height: var(--titlebar-h); padding: 0 8px 0 16px; flex: none; }
+  #topbar { min-height: var(--titlebar-h); }
+  .side-title { font-size: 13px; font-weight: 600; white-space: nowrap; }
+  /* macOS: the traffic lights sit over the left of the band (titleBarStyle Overlay), so no title there. */
+  .app[data-platform="mac"] #sidebarHeader { padding-left: 78px; }
+  .app[data-platform="mac"] .side-title { display: none; }
+  #sidebarBody { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 0 8px 8px; }
+}

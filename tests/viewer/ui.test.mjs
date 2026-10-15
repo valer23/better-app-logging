@@ -6,7 +6,8 @@
 // ui.js loads in an EMPTY vm context, so its DOM side must not run at load.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadPureModule, loadPureModules } from './_load.mjs';
+import { loadPureModule } from './_load.mjs';
+import { fakePage, texts } from './_fake.mjs';
 
 const ALV = loadPureModule('ui.js');
 const U = ALV.uiPure;
@@ -475,89 +476,7 @@ test('focus trap: Tab wraps last → first, Shift+Tab wraps first → last, the 
 });
 
 // ---- DOM side, against a small fake document and a manual clock ----
-
-// Elements with attributes, children, listeners and the few layout reads the primitives make.
-function fakePage() {
-  const byId = {};
-  let focused = null;
-  let focusVisible = false;   // what ':focus-visible' answers; tests flip it with setFocusVisible
-  const node = tag => {
-    const n = {
-      tagName: tag.toUpperCase(), attrs: {}, children: [], parent: null, listeners: {}, dataset: {}, style: {},
-      hidden: false, inert: false, className: '', textContent: '', id: '', offsetWidth: 120, offsetHeight: 40,
-      setAttribute(k, v) { this.attrs[k] = String(v); if (k === 'id') { this.id = String(v); byId[v] = this; } },
-      getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; },
-      removeAttribute(k) { delete this.attrs[k]; },
-      appendChild(c) { if (c.parent) c.remove(); c.parent = this; this.children.push(c); return c; },
-      remove() { if (this.parent) { this.parent.children.splice(this.parent.children.indexOf(this), 1); this.parent = null; } },
-      addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); },
-      removeEventListener(type, fn) { this.listeners[type] = (this.listeners[type] || []).filter(f => f !== fn); },
-      // Bubbles like a real event, so delegated listeners (the menu's click on its list) see it.
-      fire(type, ev = {}) {
-        for (let n = this; n; n = n.parent) for (const fn of n.listeners[type] || []) fn({ target: this, currentTarget: n, preventDefault() {}, ...ev });
-      },
-      contains(x) { for (let p = x; p; p = p.parent) if (p === this) return true; return false; },
-      querySelector(sel) { return all(this).find(c => matches(c, sel)) || null; },
-      querySelectorAll(sel) { return all(this).filter(c => matches(c, sel)); },
-      closest(sel) { for (let p = this; p; p = p.parent) if (matches(p, sel)) return p; return null; },
-      matches(sel) { return sel === ':focus-visible' ? focusVisible : false; },
-      getClientRects() { return this.hidden ? [] : [1]; },
-      getBoundingClientRect: () => ({ left: 500, top: 40, right: 580, bottom: 68, width: 80, height: 28 }),
-      focus() { focused = this; },
-      click() { this.fire('click'); },
-      get isConnected() { return true; },
-    };
-    return n;
-  };
-  const all = n => n.children.flatMap(c => [c, ...all(c)]);
-  // Only the selectors the primitives use: [role="x"], [role="x"], ... and [data-primary].
-  const matches = (el, sel) => sel.split(',').map(s => s.trim()).some(s => {
-    const m = /^\[([\w-]+)(?:="([^"]*)")?\]$/.exec(s);
-    return !!m && m[1] in el.attrs && (m[2] === undefined || el.attrs[m[1]] === m[2]);
-  });
-  const doc = {
-    listeners: {},
-    addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); },
-    createElement: tag => node(tag),
-    createElementNS: (ns, tag) => node(tag),
-    createTextNode: data => ({ nodeType: 3, textContent: data, attrs: {}, children: [], parent: null }),
-    getElementById: id => byId[id] || null,
-    documentElement: { clientWidth: 1400, clientHeight: 900 },
-    body: node('body'),
-    get activeElement() { return focused; },
-  };
-  for (const id of ['overlayRoot', 'ovDialogs', 'ovPopovers', 'toastAlerts', 'toastLive', 'ovTips', 'announcer', 'filterbar']) {
-    doc.createElement('div').setAttribute('id', id);
-  }
-  doc.body.appendChild(byId.filterbar);
-  doc.body.appendChild(byId.overlayRoot);
-  let clock = 0;
-  let timers = [];
-  const win = {
-    addEventListener() {},
-    setTimeout(fn, ms) { timers.push({ fn, at: clock + ms }); return timers.length; },
-    clearTimeout() {},
-  };
-  // Advance the clock, running due timers in time order (a cleared timer may still run: the
-  // primitives re-check their state, as they must with real timers).
-  const advance = ms => {
-    const end = clock + ms;
-    for (;;) {
-      const due = timers.filter(t => t.at <= end).sort((a, b) => a.at - b.at)[0];
-      if (!due) break;
-      timers = timers.filter(t => t !== due);
-      clock = Math.max(clock, due.at);
-      due.fn();
-    }
-    clock = end;
-  };
-  const ALV = loadPureModules('dom.js', 'keys.js', 'ui.js');
-  const dom = ALV.createDom(doc);
-  const keys = ALV.createKeys({ platform: 'mac' });
-  const ui = ALV.createUi({ doc, win, dom, keys, now: () => clock });
-  return { doc, byId, dom, keys, ui, advance, node, focus: n => { focused = n; }, setFocusVisible: v => { focusVisible = v; } };
-}
-const texts = n => (n.textContent || '') + n.children.map(texts).join('');
+// fakePage() and texts() live in _fake.mjs (shell.test.mjs uses them too).
 
 test('menu wires the trigger (aria-haspopup, -expanded, -controls) and opens, moves and closes through its keys', () => {
   const p = fakePage();

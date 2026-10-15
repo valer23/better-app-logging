@@ -15,6 +15,7 @@
 <link rel="stylesheet" href="assets/css/foundation.css">
 <link rel="stylesheet" href="assets/css/legacy.css">
 <link rel="stylesheet" href="assets/css/base.css">
+<link rel="stylesheet" href="assets/css/shell.css">
 </head>
 <body>
 <!-- Lucide icon sprite (lucide-static 1.49.0, ISC: assets/icons/SOURCES.md, assets/icons/LICENSE-lucide.txt).
@@ -35,20 +36,16 @@
 </svg>
 <!-- lucide-sprite:end -->
 
+<!-- App shell (roadmap P4): the sidebar beside the main column. #sidebarHeader and #topbar form the window's
+     drag band (DRAG_BANDS in assets/js/shell.js); every control in them is static markup matching
+     ALV.dom.INTERACTIVE, which tests/viewer/static.test.mjs checks. The legacy regions keep their markup. -->
+<div id="app">
+<aside id="sidebar" class="chrome-side" aria-label="Sidebar">
+  <div id="sidebarHeader"><span class="side-title">AppLogsViewer</span></div>
+  <nav id="sidebarBody" aria-label="Devices and sessions"></nav>
+</aside>
+<div id="main">
 <div class="lg-scope" id="topbar">
-  <div class="logo">
-    <svg class="logo-mark" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <rect width="16" height="16" rx="3.5" fill="#18181b"/>
-      <rect x="3" y="4" width="1" height="1" fill="#71717a"/>
-      <rect x="5" y="4" width="8" height="1" rx=".5" fill="#52525b"/>
-      <rect x="2" y="6" width="12" height="4" rx="1" fill="#7c3aed"/>
-      <circle cx="4" cy="8" r="1" fill="#f5f3ff"/>
-      <rect x="6" y="7" width="6" height="2" rx="1" fill="#f5f3ff"/>
-      <rect x="3" y="11" width="1" height="1" fill="#71717a"/>
-      <rect x="5" y="11" width="5" height="1" rx=".5" fill="#52525b"/>
-    </svg>
-    AppLogs<span>Viewer</span>
-  </div>
   <button class="mode-tab"        id="tabFile" onclick="selectSession(fileSession)">📂 File Import</button>
   <button class="mode-tab active" id="tabLive" onclick="selectSession(liveSession)">📱 Live Devices</button>
   <div class="topbar-spacer"></div>
@@ -235,6 +232,8 @@
   <button type="button" class="newer-pill" id="newerPill" onclick="jumpToLatest(event)" aria-label="" title="Jump to the newest line and turn auto-scroll back on"><span class="newer-count" id="newerPillCount"></span><span class="newer-sep" aria-hidden="true">·</span><span class="newer-action">Jump to latest ↓</span></button>
   <span id="readingWindowHint" class="reading-window-hint" title="The scrollbar covers only the loaded window of the history, not every line. Scroll near the top or bottom of the table to load more."></span>
 </div>
+</div><!-- #main -->
+</div><!-- #app -->
 
 <!-- Setup modal -->
 <div class="modal-overlay lg-scope" id="setupModal">
@@ -357,56 +356,6 @@ pkill -f idevicesyslog</pre>
 <!-- App shell (roadmap P4): sidebar, drag bands, theme. ALV.createShell runs from the legacy script. -->
 <script src="assets/js/shell.js"></script>
 <script>
-// ─── Topbar drag-region (Tauri IPC) ──────────────────────────────────────
-// The macOS window uses titleBarStyle:Overlay + hiddenTitle, so the native
-// title bar that normally handles drag is gone. Tauri's CSS app-region needs
-// the `unstable` feature flag we don't enable; data-tauri-drag-region needs
-// the page to be served from tauri://localhost which we don't use (axum on
-// :8780). So drag is wired by hand: mousedown on the topbar background calls
-// the public window plugin via the global Tauri API.
-(function initTopbarDrag() {
-  const topbar = document.getElementById('topbar');
-  if (!topbar) return;
-  const INTERACTIVE = ALV.dom.INTERACTIVE;   // assets/js/dom.js: semantic roles, [data-no-drag], legacy topbar classes
-  // Drag is gesture-based: arm on mousedown, fire startDragging only when
-  // the cursor actually moves. This keeps dblclick clean — without the
-  // movement gate, calling startDragging() on the first mousedown enters
-  // OS drag tracking and the second click of a dblclick is swallowed.
-  let armed = null; // { x, y } when a potential drag is pending, else null
-  const DRAG_THRESHOLD_PX = 4;
-  topbar.addEventListener('mousedown', (e) => {
-    if (e.button !== 0) return;
-    if (e.target.closest(INTERACTIVE)) return;
-    if (e.detail >= 2) return; // second click of a dblclick — ignore
-    armed = { x: e.clientX, y: e.clientY };
-  });
-  window.addEventListener('mousemove', (e) => {
-    if (!armed) return;
-    if (Math.abs(e.clientX - armed.x) < DRAG_THRESHOLD_PX &&
-        Math.abs(e.clientY - armed.y) < DRAG_THRESHOLD_PX) return;
-    const tauri = window.__TAURI__;
-    armed = null;
-    if (!tauri || !tauri.window) return;
-    try {
-      tauri.window.getCurrentWindow().startDragging();
-    } catch (err) {
-      console.warn('startDragging failed', err);
-    }
-  });
-  window.addEventListener('mouseup', () => { armed = null; });
-  topbar.addEventListener('dblclick', (e) => {
-    if (e.target.closest(INTERACTIVE)) return;
-    armed = null;
-    const tauri = window.__TAURI__;
-    if (!tauri || !tauri.window) return;
-    try {
-      tauri.window.getCurrentWindow().toggleMaximize();
-    } catch (err) {
-      console.warn('toggleMaximize failed', err);
-    }
-  });
-})();
-
 // ─── Liquid Glass toggle (macOS only) ────────────────────────────────────
 // The material is stored by ALV.prefs (assets/js/prefs.js): set('material') writes data-material
 // and data-glass on <html> and mirrors the legacy glassMode key. This switch goes away in P4.
@@ -474,6 +423,7 @@ let filterGen = 0;   // bumped by queryChanged(); a session whose `query` differ
 // A session's DOM work is skipped while it is off screen: hidden window, or another session shown.
 function offscreen(s) { return s !== cur || document.hidden; }
 let wsAndroid = null, wsIos = null;
+let shell = null;   // the app shell (ALV.createShell, assets/js/shell.js), created before the first selectSession
 let androidLive = false, iosLive = false;
 let livePaused = false;
 let pendingBatch = [], batchTimer = null;   // the live ingest queue: one drain, into the live session
@@ -863,6 +813,9 @@ document.getElementById('logTable').addEventListener('click', e => {
     updateNewerPill();
   }
 });
+
+// ── App shell (assets/js/shell.js): the sidebar and the window drag bands ──
+shell = ALV.createShell({ doc: document, win: window, dom: ALV.dom });
 
 // Open on the Live Devices tab — most common starting point for new sessions.
 selectSession(liveSession);

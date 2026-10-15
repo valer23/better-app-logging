@@ -29,6 +29,7 @@ pub static FILES: &[(&str, &[u8])] = embed![
     "css/base.css",
     "css/foundation.css",
     "css/legacy.css",
+    "css/shell.css",
     "fonts/OFL-atkinson-hyperlegible-mono.txt",
     "fonts/OFL-atkinson-hyperlegible-next.txt",
     "fonts/OFL-geist.txt",

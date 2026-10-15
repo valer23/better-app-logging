@@ -69,6 +69,52 @@
     };
   }
 
+  // ---- DOM ----
+
+  // The window drag bands (spec "Window chrome (Tauri)"). The page is served by axum on :8780, where
+  // data-tauri-drag-region does not work, and CSS app-region needs a Tauri feature flag we do not enable,
+  // so drag is wired by hand: a press on a band's background arms, 4 px of movement calls startDragging(),
+  // and a double-click on the background toggles maximise. Arming on movement keeps double-clicks working:
+  // starting the OS drag on the first press would swallow the second click. A press on anything matching
+  // ALV.dom.INTERACTIVE never drags. Every control in a band is static markup, so the drag lint in
+  // tests/viewer/static.test.mjs (which reads this literal) covers it.
+  const DRAG_BANDS = ['sidebarHeader', 'topbar'];
+  const DRAG_THRESHOLD_PX = 4;
+
+  // createShell({ doc, win, dom }) → the shell's controller. Called once, by the legacy script.
+  function createShell({ doc, win, dom }) {
+    const warn = (msg, err) => { if (g.console) g.console.warn(msg, err); };
+    // window.__TAURI__ exists only in the app (withGlobalTauri); a browser tab has nothing to drag.
+    function windowCall(name) {
+      const t = win.__TAURI__;
+      if (!t || !t.window) return;
+      try { t.window.getCurrentWindow()[name](); } catch (err) { warn(`${name} failed`, err); }
+    }
+    let armed = null;   // { x, y } of the press while a drag is pending
+    function initDragBand(el) {
+      if (!el) return;
+      el.addEventListener('mousedown', e => {
+        if (e.button !== 0 || e.target.closest(dom.INTERACTIVE) || e.detail >= 2) return;   // detail 2: a double-click's second press
+        armed = { x: e.clientX, y: e.clientY };
+      });
+      el.addEventListener('dblclick', e => {
+        if (e.target.closest(dom.INTERACTIVE)) return;
+        armed = null;
+        windowCall('toggleMaximize');
+      });
+    }
+    win.addEventListener('mousemove', e => {
+      if (!armed) return;
+      if (Math.abs(e.clientX - armed.x) < DRAG_THRESHOLD_PX && Math.abs(e.clientY - armed.y) < DRAG_THRESHOLD_PX) return;
+      armed = null;
+      windowCall('startDragging');
+    });
+    win.addEventListener('mouseup', () => { armed = null; });
+    for (const id of DRAG_BANDS) initDragBand(doc.getElementById(id));
+    return {};
+  }
+
   const ALV = g.ALV || (g.ALV = {});
-  ALV.shellPure = Object.freeze({ num, fmtRate, createRateMeter, deviceStatus, themeView });
+  ALV.shellPure = Object.freeze({ num, fmtRate, createRateMeter, deviceStatus, themeView, DRAG_BANDS });
+  ALV.createShell = createShell;
 })(typeof window !== 'undefined' ? window : globalThis);

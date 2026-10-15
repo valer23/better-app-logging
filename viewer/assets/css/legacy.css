@@ -167,11 +167,6 @@
 
   /* ── Top bar ── */
   #topbar { background: var(--lg-surface); border-bottom: 1px solid var(--lg-border); display: flex; align-items: stretch; padding: 0 16px; flex-shrink: 0; }
-  html[data-platform="mac"] #topbar { padding-left: 78px; }
-  .logo { font-family: var(--font-log); font-size: 13px; font-weight: 700; color: var(--lg-accent); letter-spacing: 0.05em; display: flex; align-items: center; gap: 8px; padding-right: 16px; border-right: 1px solid var(--lg-border); margin-right: 4px; }
-  .logo span { color: var(--lg-muted); }
-  .logo svg { display: block; flex-shrink: 0; }
-  .logo-mark { width: 22px; height: 22px; }
   .mode-tab { font-family: var(--font-ui); font-size: 12px; font-weight: 600; padding: 0 14px; border: none; background: transparent; color: var(--lg-muted); cursor: pointer; border-bottom: 2px solid transparent; transition: color .15s, border-color .15s; display: flex; align-items: center; gap: 6px; }
   .mode-tab:hover { color: var(--lg-text); }
   .mode-tab.active { color: var(--lg-accent); border-bottom-color: var(--lg-accent); }

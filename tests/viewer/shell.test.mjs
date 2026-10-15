@@ -3,6 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadPureModule } from './_load.mjs';
+import { fakePage } from './_fake.mjs';
 
 const ALV = loadPureModule('shell.js');
 const S = ALV.shellPure;
@@ -53,4 +54,67 @@ test('themeView: icon, aria-label and tooltip for each theme, System naming what
   assert.deepEqual({ ...S.themeView('light', 'light', 'system') }, { icon: 'sun', label: 'Theme: Light. Switch to System', tip: 'Theme: Light' });
   assert.deepEqual({ ...S.themeView('system', 'dark', 'dark') }, { icon: 'monitor', label: 'Theme: System. Switch to Dark', tip: 'Theme: System (Dark)' });
   assert.equal(S.themeView('system', 'light', 'dark').tip, 'Theme: System (Light)');
+});
+
+// ---- DOM side: the window drag bands (initDragBand) on the fake page ----
+
+const SHELL_FILES = ['dom.js', 'keys.js', 'ui.js', 'shell.js'];
+// A fake Tauri window that counts the IPC calls the bands make.
+function fakeTauri() {
+  const calls = [];
+  const w = { startDragging() { calls.push('drag'); }, toggleMaximize() { calls.push('max'); } };
+  return { calls, api: { window: { getCurrentWindow: () => w } } };
+}
+function bandPage(tauri) {
+  const p = fakePage({ files: SHELL_FILES, tauri: tauri && tauri.api });
+  for (const id of ALV.shellPure.DRAG_BANDS) p.doc.body.appendChild(p.dom.el('div', { id }));
+  const ctl = p.dom.el('button', { text: 'A+' });
+  p.byId.topbar.appendChild(ctl);
+  p.ALV.createShell({ doc: p.doc, win: p.win, dom: p.dom });
+  const move = (x, y) => p.win.listeners.mousemove.forEach(fn => fn({ clientX: x, clientY: y }));
+  const up = () => p.win.listeners.mouseup.forEach(fn => fn({}));
+  return { p, ctl, move, up };
+}
+
+test('drag bands: the sidebar header and the top bar; one window listener pair for both', () => {
+  assert.deepEqual([...ALV.shellPure.DRAG_BANDS], ['sidebarHeader', 'topbar']);
+  const { p } = bandPage(fakeTauri());
+  assert.deepEqual([p.win.listeners.mousemove.length, p.win.listeners.mouseup.length], [1, 1]);
+  for (const id of ALV.shellPure.DRAG_BANDS) assert.deepEqual([p.byId[id].listeners.mousedown.length, p.byId[id].listeners.dblclick.length], [1, 1], id);
+});
+
+test('drag bands: a press on the background arms, 4 px of movement drags once; controls, other buttons and the 2nd click of a double-click never do', () => {
+  const t = fakeTauri();
+  const { p, ctl, move, up } = bandPage(t);
+  p.byId.sidebarHeader.fire('mousedown', { button: 0, detail: 1, clientX: 100, clientY: 20 });
+  move(103, 23);
+  assert.deepEqual(t.calls, [], '3 px is not a drag');
+  move(104, 20);
+  move(140, 20);
+  assert.deepEqual(t.calls, ['drag'], 'startDragging once');
+  p.byId.topbar.fire('mousedown', { button: 0, detail: 1, clientX: 100, clientY: 20 });
+  up();
+  move(200, 20);
+  assert.deepEqual(t.calls, ['drag'], 'mouseup disarms');
+  ctl.fire('mousedown', { button: 0, detail: 1, clientX: 100, clientY: 20 });
+  move(200, 20);
+  p.byId.topbar.fire('mousedown', { button: 2, detail: 1, clientX: 100, clientY: 20 });
+  move(200, 20);
+  p.byId.topbar.fire('mousedown', { button: 0, detail: 2, clientX: 100, clientY: 20 });
+  move(200, 20);
+  assert.deepEqual(t.calls, ['drag'], 'not from a control, a right button or a double-click');
+});
+
+test('drag bands: a double-click on the background toggles maximise, on a control it does not; no Tauri, no throw', () => {
+  const t = fakeTauri();
+  const { p, ctl } = bandPage(t);
+  ctl.fire('dblclick', {});
+  p.byId.sidebarHeader.fire('dblclick', {});
+  assert.deepEqual(t.calls, ['max']);
+  const bare = bandPage(null);
+  assert.doesNotThrow(() => {
+    bare.p.byId.topbar.fire('mousedown', { button: 0, detail: 1, clientX: 0, clientY: 0 });
+    bare.move(50, 50);
+    bare.p.byId.topbar.fire('dblclick', {});
+  });
 });

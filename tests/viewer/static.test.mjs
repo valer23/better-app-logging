@@ -65,8 +65,38 @@ test('XSS: innerHTML is only ever cleared; no outerHTML, insertAdjacentHTML or d
   assert.deepEqual(allJs.flatMap(s => C.xssErrors(s.code, s.filename, s.line)), []);
 });
 
-test('drag band: every control inside #topbar matches INTERACTIVE', () => {
-  assert.deepEqual(C.dragErrors(root, jsText, ['topbar']), []);
+// The drag bands, as shell.js lists them (initDragBand runs over this literal).
+const DRAG_BANDS = (() => {
+  const m = /const DRAG_BANDS = \[([^\]]*)\];/.exec(read(path.join(ASSETS, 'js', 'shell.js')));
+  return m ? [...m[1].matchAll(/'([\w-]+)'/g)].map(x => x[1]) : [];
+})();
+
+test('drag bands: every control inside each band in shell.js DRAG_BANDS matches INTERACTIVE', () => {
+  assert.ok(DRAG_BANDS.includes('sidebarHeader') && DRAG_BANDS.length >= 2, `DRAG_BANDS = ${DRAG_BANDS}`);
+  assert.deepEqual(C.dragErrors(root, jsText, DRAG_BANDS), []);
+});
+
+test('app grid: #app holds aside#sidebar (labelled, with the #sidebarHeader band) and #main, which holds every legacy region', () => {
+  const body = root.children.find(el => el.tag === 'html').children.find(el => el.tag === 'body');
+  const app = findById(root, 'app');
+  assert.equal(app.parent, body);
+  assert.deepEqual(app.children.map(el => el.attrs.id), ['sidebar', 'main']);
+  const side = findById(root, 'sidebar');
+  assert.deepEqual([side.tag, side.attrs['aria-label']], ['aside', 'Sidebar']);
+  assert.equal(findById(root, 'sidebarHeader').parent, side);
+  for (const id of ['topbar', 'filterbar', 'dropzone', 'livePanel', 'liveBar', 'loading', 'logWrapper']) {
+    assert.equal(findById(root, id).parent.attrs.id, 'main', `#${id} is a child of #main`);
+  }
+  for (const id of ['setupModal', 'stallModal', 'overlayRoot']) assert.equal(findById(root, id).parent, body, `#${id} stays on <body>`);
+});
+
+test('window chrome: the macOS traffic-light inset is on #sidebarHeader, no longer on #topbar', () => {
+  const shellRules = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')));
+  const inset = shellRules.filter(r => r.selectors.includes('.app[data-platform="mac"] #sidebarHeader')).flatMap(r => C.declarations(r.body));
+  assert.ok(inset.some(d => d.prop === 'padding-left' && d.value === '78px'), 'the lights sit over the sidebar header (spec: about 78 px)');
+  const legacyRules = C.cssRules(read(path.join(ASSETS, 'css', 'legacy.css')));
+  assert.equal(legacyRules.filter(r => r.selectors.some(s => /data-platform="mac"\] #topbar/.test(s))).length, 0);
+  assert.match(read(path.join(ASSETS, 'css', 'shell.css')), /^@layer app \{$/m);
 });
 
 test('#overlayRoot is a direct child of <body>, the last element before the scripts, with its layers in paint order', () => {
@@ -154,11 +184,11 @@ test('every sprite symbol is used by the page or the JS', () => {
   assert.deepEqual(C.unusedSymbols(root, jsText), []);
 });
 
-test('no emoji in the primitives, the app-layer CSS, the overlay root or the Export button', () => {
+test('no emoji in the primitives, the shell, the app-layer CSS, the overlay root, the sidebar or the Export button', () => {
   const EMOJI = /\p{Extended_Pictographic}/u;
-  for (const p of ['js/dom.js', 'js/keys.js', 'js/ui.js', 'css/base.css']) assert.doesNotMatch(read(path.join(ASSETS, p)), EMOJI, p);
+  for (const p of ['js/dom.js', 'js/keys.js', 'js/ui.js', 'js/shell.js', 'css/base.css', 'css/shell.css']) assert.doesNotMatch(read(path.join(ASSETS, p)), EMOJI, p);
   const lines = html.split('\n');
-  for (const id of ['overlayRoot', 'exportWrap']) {
+  for (const id of ['overlayRoot', 'exportWrap', 'sidebar']) {
     const el = findById(root, id);
     const last = elements(el).at(-1);
     const text = lines.slice(el.line - 1, (last ? last.line : el.line)).join('\n');
@@ -174,11 +204,12 @@ test('app-layer CSS takes its colours from tokens: no hex literal outside founda
   assert.deepEqual(hex, []);
 });
 
-test('INTERACTIVE is one literal, in dom.js, and the legacy drag code reads it from ALV.dom', () => {
+test('INTERACTIVE is one literal, in dom.js, and the shell\'s drag bands read it from the dom builders', () => {
   const literals = allJs.filter(s => /const INTERACTIVE\s*=\s*'/.test(s.code)).map(s => s.filename);
   assert.deepEqual(literals, ['viewer/assets/js/dom.js']);
   assert.equal((jsText.match(/const INTERACTIVE\s*=\s*'/g) || []).length, 1);
-  assert.match(inlineScripts(html).at(-1).code, /const INTERACTIVE = ALV\.dom\.INTERACTIVE;/);
+  assert.equal((read(path.join(ASSETS, 'js', 'shell.js')).match(/\.closest\(dom\.INTERACTIVE\)/g) || []).length, 2, 'mousedown and dblclick');
+  assert.doesNotMatch(inlineScripts(html).at(-1).code, /INTERACTIVE|initTopbarDrag|startDragging/, 'the legacy script has no drag code left');
 });
 
 test('the Lucide sprite is the first element of <body>: aria-hidden, zero-size, exactly the generator\'s icons', () => {
