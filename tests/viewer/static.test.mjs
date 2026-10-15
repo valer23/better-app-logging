@@ -90,6 +90,18 @@ test('app grid: #app holds aside#sidebar (labelled, with the #sidebarHeader band
   for (const id of ['setupModal', 'stallModal', 'overlayRoot']) assert.equal(findById(root, id).parent, body, `#${id} stays on <body>`);
 });
 
+test('sidebar: DEVICES comes before SESSIONS; its rows are built into #deviceList', () => {
+  const sections = elements(findById(root, 'sidebarBody')).filter(el => el.tag === 'section').map(el => el.attrs['aria-labelledby']);
+  assert.deepEqual(sections, ['devHead', 'sessHead']);
+  const head = findById(root, 'devHead');
+  assert.deepEqual([head.attrs['aria-expanded'], head.attrs['aria-controls']], ['true', 'deviceList']);
+  assert.equal(findById(root, 'deviceList').children.length, 0, 'the shell builds the rows');
+  assert.deepEqual([...C.referencedIds("$('a'); onClick('b', f); tip('c', {}); usable('d'); showTip('e'); x$('f')")].sort(), ['a', 'b', 'c', 'd'],
+    'the id contract sees the shell\'s lookup helpers');
+  const off = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css'))).flatMap(r => r.selectors).filter(s => s.startsWith('.dev-main[aria-pressed="false"]'));
+  assert.deepEqual(off.sort(), ['.dev-main[aria-pressed="false"] .dev-name', '.dev-main[aria-pressed="false"] .plat'], 'a row toggled out of the filter looks it');
+});
+
 test('sidebar: "Search actions…" is an aria-disabled stub, SESSIONS rows are buttons, and the mode tabs are gone', () => {
   const cmd = findById(root, 'cmdTrigger');
   assert.deepEqual([cmd.tag, cmd.attrs.type, cmd.attrs['aria-disabled'], 'disabled' in cmd.attrs], ['button', 'button', 'true', false],

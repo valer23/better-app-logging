@@ -34,6 +34,9 @@ export function referencedIds(js) {
   for (const m of js.matchAll(byId)) { ids.add(m[2]); if (m[4]) ids.add(m[4]); }
   const bySel = /(?:querySelector(?:All)?|closest)\(\s*(['"])([^'"]*)\1/g;
   for (const m of js.matchAll(bySel)) for (const h of m[2].matchAll(/#([\w-]+)/g)) ids.add(h[1]);
+  // The shell's lookup helpers (shell.js, live.js): $('id'), onClick('id', …), tip('id', …), usable('id').
+  const byHelper = /(?:(?<![\w$])\$|\b(?:onClick|tip|usable))\(\s*(['"])([\w-]+)\1/g;
+  for (const m of js.matchAll(byHelper)) ids.add(m[2]);
   return ids;
 }
 

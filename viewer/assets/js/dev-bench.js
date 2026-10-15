@@ -91,6 +91,7 @@
     const t0 = performance.now();
     for (let i = 0; i < n; i++) handleWsMsg({ data: pool[(sent + i) & 63] }, 'ios');
     feeds.push([t0, performance.now() - t0]);
+    if (typeof wsFrames !== 'undefined') wsFrames.ios += n;   // P4: the sidebar and status-bar rate meter, as onmessage would
     sent += n;
     if (elapsed > WARMUP_MS) {
       maxPending = Math.max(maxPending, pendingBatch.length);

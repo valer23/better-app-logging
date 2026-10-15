@@ -159,3 +159,21 @@ test('known gap, fixed in P11: a TXT export of Android lines does not re-import'
   const { parsed } = await roundTrip('txt', ANDROID);
   assert.deepEqual(parsed, []);   // EXPORTED_TXT_RE only accepts the iOS timestamp shape
 });
+
+test('togglePlatform hides and shows one platform\'s lines and keeps the filter bar button in step (P4 sidebar rows)', () => {
+  const doc = stickyDocument();
+  const { run } = loadLegacy([], { document: doc });
+  run('togglePlatform("ios")');
+  assert.deepEqual([run('enabledPlatforms.has("ios")'), run('enabledPlatforms.has("android")'), run('filterGen')], [false, true, 1]);
+  run('togglePlatform("ios")');
+  assert.deepEqual([run('enabledPlatforms.has("ios")'), run('filterGen')], [true, 2]);
+});
+
+test('the WebSocket handlers count frames for the rate meter and pass every frame on to handleWsMsg unchanged (P4)', () => {
+  const doc = stickyDocument();
+  const { run } = loadLegacy([], { document: doc });
+  run(`document.getElementById('androidDeviceSelect').value = 'a1'; document.getElementById('iosDeviceSelect').value = 'u1';
+       globalThis.__seen = []; handleWsMsg = (e, p) => __seen.push(p); connectAndroid(); connectIos();
+       wsAndroid.onmessage({ data: '{}' }); wsIos.onmessage({ data: '{}' }); wsIos.onmessage({ data: '{}' });`);
+  assert.deepEqual([run('wsFrames.android'), run('wsFrames.ios'), JSON.stringify(run('__seen'))], [1, 2, '["android","ios","ios"]']);
+});

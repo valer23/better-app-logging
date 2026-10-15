@@ -129,9 +129,16 @@ export function shellPage({ platform = 'mac', st = {}, actions = {}, files = ['d
   const live = { kind: 'live', name: 'Live session', all: [], follow: true };
   const file = { kind: 'file', name: 'File', all: [], follow: false };
   const calls = [];
-  const state = { cur: live, sessions: [live, file], ...st };
+  const state = {
+    cur: live, sessions: [live, file],
+    live: { android: false, ios: false },
+    status: { android: { state: 'disconnected', text: 'Disconnected' }, ios: { state: 'disconnected', text: 'Disconnected' } },
+    devices: { android: { id: '', name: '' }, ios: { id: '', name: '' } },
+    driverMissing: false, frames: { android: 0, ios: 0 }, dropped: { android: 0, ios: 0 }, enabled: new Set(['android', 'ios']),
+    ...st,
+  };
   const act = new Proxy(actions, { get: (o, k) => o[k] || ((...a) => calls.push([k, ...a])) });
-  const shell = p.ALV.createShell({ doc: p.doc, win: p.win, dom: p.dom, ui: p.ui, keys: p.keys, state: () => state, actions: act });
+  const shell = p.ALV.createShell({ doc: p.doc, win: p.win, dom: p.dom, ui: p.ui, keys: p.keys, now: p.now, state: () => state, actions: act });
   shell.sync();
   return { p, shell, state, live, file, calls, $: id => p.byId[id] };
 }

@@ -174,3 +174,117 @@ test('sections: the header button folds its list (aria-expanded) and unfolds it'
   head.click();
   assert.deepEqual([head.getAttribute('aria-expanded'), $('sessionList').hidden], ['true', false]);
 });
+
+// ---- DEVICES: one row per platform's device ----
+
+const row = (p, plat) => p.byId.deviceList.children.find(li => li.dataset.platform === plat);
+const parts = li => {
+  const [main, actions] = li.children;
+  const [, text] = main.children;
+  const [name, status, drops] = text.children;
+  const [start, more] = actions.children;
+  return { main, name, status: status.children[1], drops, dropsText: drops.children[1], start, startUse: start.children[0].children[0], more };
+};
+
+test('DEVICES: a row per platform (Android, then iOS) with badge, name, spec status line and the shape state', () => {
+  const { p, shell, state, $ } = shellPage();
+  assert.deepEqual(p.byId.deviceList.children.map(li => li.dataset.platform), ['android', 'ios']);
+  let a = parts(row(p, 'android'));
+  assert.deepEqual([texts(a.main.children[0]), a.name.textContent, a.status.textContent, row(p, 'android').getAttribute('data-state')],
+    ['A', 'Android device', 'Disconnected', 'disconnected']);
+  assert.equal(texts(parts(row(p, 'ios')).main.children[0]), 'i');
+  state.devices.android = { id: '3A091FDJH00ABC', name: 'Pixel 8 Pro' };
+  shell.sync();
+  a = parts(row(p, 'android'));
+  assert.deepEqual([a.name.textContent, a.status.textContent, row(p, 'android').getAttribute('data-state'), $('devCount').textContent],
+    ['Pixel 8 Pro', 'Ready · stopped', 'ready', '1']);
+  state.status.android = { state: 'connecting', text: 'Connecting…' };
+  shell.sync();
+  assert.deepEqual([a.status.textContent, row(p, 'android').getAttribute('data-tone'), a.start.getAttribute('aria-disabled')], ['Connecting…', 'info', 'true'],
+    'Start is aria-disabled while connecting, so it cannot open a second socket');
+  state.status.android = { state: 'connected', text: 'Connected' };
+  state.live.android = true;
+  shell.sync();
+  assert.deepEqual([a.status.textContent, row(p, 'android').getAttribute('data-state'), a.start.getAttribute('aria-disabled')], ['Streaming · 0/s', 'streaming', null]);
+  state.driverMissing = true;
+  shell.sync();
+  assert.equal(parts(row(p, 'ios')).status.textContent, 'Driver missing');
+});
+
+test('DEVICES: the rate comes from the frame counters on the tick, and a stall reads "Stalled N s" until frames move again', () => {
+  const { p, shell, state } = shellPage({ st: { live: { android: false, ios: true }, devices: { android: { id: '', name: '' }, ios: { id: 'u1', name: 'iPhone 15' } } } });
+  const i = parts(row(p, 'ios'));
+  p.advance(500);
+  state.frames.ios = 421;
+  p.advance(500);
+  assert.equal(i.status.textContent, 'Streaming · 842/s', '421 frames in 0.5 s');
+  state.frames.ios = 2121;
+  p.advance(500);
+  assert.equal(i.status.textContent, 'Streaming · 2.1k/s', 'measured from the newest sample 1 s old (t=500, 0 frames)');
+  state.frames.ios += 1;   // the stall error frame is counted by onmessage before showStallModal runs
+  shell.markStalled('ios');
+  p.advance(15000);
+  assert.equal(i.status.textContent, 'Stalled 15 s', 'seconds since the last frame');
+  assert.equal(row(p, 'ios').getAttribute('data-state'), 'stalled');
+  state.frames.ios = 2200;
+  p.advance(500);
+  assert.match(i.status.textContent, /^Streaming · /, 'frames moved: the stall is over');
+});
+
+test('DEVICES: drops line, filter toggle (aria-pressed, aria-current when the only one shown), Start/Stop and the More menu', () => {
+  const { p, shell, state, calls } = shellPage({ st: { devices: { android: { id: 'a1', name: 'Pixel 8 Pro' }, ios: { id: 'u1', name: 'iPhone 15' } } } });
+  const a = parts(row(p, 'android'));
+  const i = parts(row(p, 'ios'));
+  assert.equal(a.drops.hidden, true);
+  state.dropped.android = 312;
+  shell.sync();
+  assert.deepEqual([a.drops.hidden, a.dropsText.textContent], [false, '312 dropped']);
+  assert.deepEqual([a.main.getAttribute('aria-pressed'), a.main.getAttribute('aria-current')], ['true', null]);
+  a.main.click();
+  assert.deepEqual(calls.at(-1), ['togglePlatform', 'android']);
+  state.enabled = new Set(['android']);
+  shell.sync();
+  assert.deepEqual([a.main.getAttribute('aria-current'), i.main.getAttribute('aria-pressed')], ['true', 'false']);
+  assert.deepEqual([a.start.getAttribute('aria-label'), a.startUse.getAttribute('href')], ['Start streaming Pixel 8 Pro', '#i-play']);
+  a.start.click();
+  assert.deepEqual(calls.at(-1), ['toggleStream', 'android']);
+  state.live.android = true;
+  shell.sync();
+  assert.deepEqual([a.start.getAttribute('aria-label'), a.startUse.getAttribute('href')], ['Stop streaming Pixel 8 Pro', '#i-square']);
+  assert.equal(a.more.getAttribute('aria-label'), 'More for Pixel 8 Pro');
+  a.more.click();
+  const items = p.byId[a.more.getAttribute('aria-controls')].children;
+  assert.deepEqual(items.map(texts), ['Stop streaming', 'Setup guide'], 'Android: no Re-pair');
+  items[1].click();
+  assert.deepEqual(calls.at(-1), ['setup', 'android']);
+  i.more.click();
+  const iosItems = p.byId[i.more.getAttribute('aria-controls')].children;
+  assert.deepEqual(iosItems.map(texts), ['Start streaming', 'Re-pair iPhone', 'Setup guide']);
+  iosItems[1].click();
+  assert.deepEqual(calls.at(-1), ['repair', 'ios']);
+  state.status.ios = { state: 'connecting', text: 'Connecting…' };
+  shell.sync();
+  i.start.click();
+  i.more.click();
+  iosItems[0].click();
+  assert.notDeepEqual(calls.at(-1), ['toggleStream', 'ios'], 'neither Start nor the menu item acts while connecting');
+});
+
+test('DEVICES: a new device rebuilds its row and destroys the old menu and tooltips; focus moves to the same control (P3 follow-up a)', () => {
+  const { p, shell, state } = shellPage({ st: { devices: { android: { id: 'a1', name: 'Pixel 8 Pro' }, ios: { id: '', name: '' } } } });
+  const old = parts(row(p, 'android'));
+  const popovers = p.byId.ovPopovers.children.length;
+  const tips = p.byId.ovTips.children.length;
+  old.more.click();
+  assert.equal(p.keys.escDepth(), 1, 'the old menu is open');
+  state.devices.android = { id: 'b2', name: 'Galaxy S24' };
+  shell.sync();
+  const fresh = parts(row(p, 'android'));
+  assert.notEqual(fresh.main, old.main);
+  assert.deepEqual([p.byId.deviceList.children.map(li => li.dataset.platform), fresh.name.textContent], [['android', 'ios'], 'Galaxy S24']);
+  assert.deepEqual([p.byId.ovPopovers.children.length, p.byId.ovTips.children.length, p.keys.escDepth()], [popovers, tips, 0],
+    'one menu and its tooltips per row: the old ones are gone, nothing left on the Esc stack');
+  assert.equal(p.doc.activeElement, fresh.more, 'focus was in the old menu: it lands on the new More button');
+  shell.sync();
+  assert.equal(parts(row(p, 'android')).main, fresh.main, 'an unchanged device keeps its row');
+});
