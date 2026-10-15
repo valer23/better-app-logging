@@ -17,4 +17,23 @@
      stroke 1.75, currentColor). Size is the foundation's .icon (var(--icon)). */
   .icon { fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
   .icon-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+  /* Primitives (assets/js/ui.js). The foundation's .menu, .tooltip, .toast, .kbd and .btn set display,
+     which beats the UA [hidden] rule, so hidden ones need display: none back (a toast without an action
+     keeps a hidden .btn). */
+  .menu[hidden], .tooltip[hidden], .toast[hidden], .kbd[hidden], .dialog-host[hidden], .btn[hidden] { display: none; }
+  /* Menu items take real focus (APG menu button) and aria-selected is not valid on a menuitem, so the
+     foundation's 2 px active-item bar is keyed on :focus. Radio items show their check only when checked. */
+  .menu-item:focus { background: var(--fill-hover); box-shadow: inset 2px 0 0 var(--accent); }
+  .menu-item[aria-checked="false"] .menu-check { visibility: hidden; }
+  .menu-item[aria-disabled="true"] { color: var(--text-2); cursor: not-allowed; }
+  .toast-body { flex: 1; min-width: 0; }
+  .toast-title { font-weight: 600; }
+  .toast-desc { margin-top: 2px; color: var(--text-2); font-size: var(--ui-fs-sm); }
+  .toast-success > .icon { color: var(--ok); }
+  .toast-info > .icon { color: var(--info); }
+  .toast-error > .icon { color: var(--err); }
+  .dialog-host { position: fixed; inset: 0; display: grid; justify-items: center; align-content: start; padding-top: 96px; pointer-events: auto; }
+  .dialog-host > .scrim { position: fixed; }
+  .dialog-host > [role="dialog"] { position: relative; max-width: calc(100vw - 32px); }
 }

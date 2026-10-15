@@ -6,7 +6,7 @@
 // ui.js loads in an EMPTY vm context, so its DOM side must not run at load.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadPureModule } from './_load.mjs';
+import { loadPureModule, loadPureModules } from './_load.mjs';
 
 const ALV = loadPureModule('ui.js');
 const U = ALV.uiPure;
@@ -472,4 +472,347 @@ test('focus trap: Tab wraps last → first, Shift+Tab wraps first → last, the 
   assert.equal(U.trapTarget(3, -1, false), 0, 'focus on the panel itself: Tab goes to the first control');
   assert.equal(U.trapTarget(3, -1, true), 2);
   assert.equal(U.trapTarget(0, -1, false), -2, 'nothing focusable: keep focus on the panel');
+});
+
+// ---- DOM side, against a small fake document and a manual clock ----
+
+// Elements with attributes, children, listeners and the few layout reads the primitives make.
+function fakePage() {
+  const byId = {};
+  let focused = null;
+  const node = tag => {
+    const n = {
+      tagName: tag.toUpperCase(), attrs: {}, children: [], parent: null, listeners: {}, dataset: {}, style: {},
+      hidden: false, inert: false, className: '', textContent: '', id: '', offsetWidth: 120, offsetHeight: 40,
+      setAttribute(k, v) { this.attrs[k] = String(v); if (k === 'id') { this.id = String(v); byId[v] = this; } },
+      getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; },
+      removeAttribute(k) { delete this.attrs[k]; },
+      appendChild(c) { if (c.parent) c.remove(); c.parent = this; this.children.push(c); return c; },
+      remove() { if (this.parent) { this.parent.children.splice(this.parent.children.indexOf(this), 1); this.parent = null; } },
+      addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); },
+      removeEventListener(type, fn) { this.listeners[type] = (this.listeners[type] || []).filter(f => f !== fn); },
+      // Bubbles like a real event, so delegated listeners (the menu's click on its list) see it.
+      fire(type, ev = {}) {
+        for (let n = this; n; n = n.parent) for (const fn of n.listeners[type] || []) fn({ target: this, currentTarget: n, preventDefault() {}, ...ev });
+      },
+      contains(x) { for (let p = x; p; p = p.parent) if (p === this) return true; return false; },
+      querySelector(sel) { return all(this).find(c => matches(c, sel)) || null; },
+      querySelectorAll(sel) { return all(this).filter(c => matches(c, sel)); },
+      closest(sel) { for (let p = this; p; p = p.parent) if (matches(p, sel)) return p; return null; },
+      matches() { return false; },
+      getClientRects() { return this.hidden ? [] : [1]; },
+      getBoundingClientRect: () => ({ left: 500, top: 40, right: 580, bottom: 68, width: 80, height: 28 }),
+      focus() { focused = this; },
+      click() { this.fire('click'); },
+      get isConnected() { return true; },
+    };
+    return n;
+  };
+  const all = n => n.children.flatMap(c => [c, ...all(c)]);
+  // Only the selectors the primitives use: [role="x"], [role="x"], ... and [data-primary].
+  const matches = (el, sel) => sel.split(',').map(s => s.trim()).some(s => {
+    const m = /^\[([\w-]+)(?:="([^"]*)")?\]$/.exec(s);
+    return !!m && m[1] in el.attrs && (m[2] === undefined || el.attrs[m[1]] === m[2]);
+  });
+  const doc = {
+    listeners: {},
+    addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); },
+    createElement: tag => node(tag),
+    createElementNS: (ns, tag) => node(tag),
+    createTextNode: data => ({ nodeType: 3, textContent: data, attrs: {}, children: [], parent: null }),
+    getElementById: id => byId[id] || null,
+    documentElement: { clientWidth: 1400, clientHeight: 900 },
+    body: node('body'),
+    get activeElement() { return focused; },
+  };
+  for (const id of ['overlayRoot', 'ovDialogs', 'ovPopovers', 'toastAlerts', 'toastLive', 'ovTips', 'announcer', 'filterbar']) {
+    doc.createElement('div').setAttribute('id', id);
+  }
+  doc.body.appendChild(byId.filterbar);
+  doc.body.appendChild(byId.overlayRoot);
+  let clock = 0;
+  let timers = [];
+  const win = {
+    addEventListener() {},
+    setTimeout(fn, ms) { timers.push({ fn, at: clock + ms }); return timers.length; },
+    clearTimeout() {},
+  };
+  // Advance the clock, running due timers in time order (a cleared timer may still run: the
+  // primitives re-check their state, as they must with real timers).
+  const advance = ms => {
+    const end = clock + ms;
+    for (;;) {
+      const due = timers.filter(t => t.at <= end).sort((a, b) => a.at - b.at)[0];
+      if (!due) break;
+      timers = timers.filter(t => t !== due);
+      clock = Math.max(clock, due.at);
+      due.fn();
+    }
+    clock = end;
+  };
+  const ALV = loadPureModules('dom.js', 'keys.js', 'ui.js');
+  const dom = ALV.createDom(doc);
+  const keys = ALV.createKeys({ platform: 'mac' });
+  const ui = ALV.createUi({ doc, win, dom, keys, now: () => clock });
+  return { doc, byId, dom, keys, ui, advance, node, focus: n => { focused = n; } };
+}
+const texts = n => (n.textContent || '') + n.children.map(texts).join('');
+
+test('menu wires the trigger (aria-haspopup, -expanded, -controls) and opens, moves and closes through its keys', () => {
+  const p = fakePage();
+  const trigger = p.dom.el('button', { id: 'btn' });
+  const list = p.dom.el('div', { role: 'menu', id: 'm' },
+    p.dom.el('button', { role: 'menuitem', tabindex: '-1' }, 'Plain Text'),
+    p.dom.el('button', { role: 'menuitemradio', 'aria-checked': 'true', tabindex: '-1' }, 'Filtered'),
+    p.dom.el('button', { role: 'menuitemradio', 'aria-checked': 'false', tabindex: '-1' }, 'All logs'));
+  const surface = p.dom.portal(p.dom.el('div', { hidden: true }, list), 'popover');
+  let opened = 0;
+  const ctl = p.ui.menu(trigger, surface, { onOpen: () => { opened++; } });
+  assert.deepEqual([trigger.attrs['aria-haspopup'], trigger.attrs['aria-expanded'], trigger.attrs['aria-controls']], ['menu', 'false', 'm']);
+  ctl.close();
+  assert.equal(opened, 0, 'closing a closed menu is a no-op');
+  trigger.fire('keydown', { key: 'ArrowDown' });
+  assert.equal(ctl.isOpen(), true);
+  assert.equal(opened, 1, 'onOpen refreshes the content before it is shown');
+  assert.equal(trigger.attrs['aria-expanded'], 'true');
+  assert.deepEqual([surface.style.left, surface.style.top], ['460px', '74px'], 'right-aligned 6 px under the trigger');
+  assert.equal(p.doc.activeElement, list.children[0]);
+  list.fire('keydown', { key: 'ArrowUp' });
+  assert.equal(p.doc.activeElement, list.children[2], 'ArrowUp wraps to the last item');
+  list.children[2].click();
+  assert.deepEqual(list.children.slice(1).map(r => r.attrs['aria-checked']), ['false', 'true']);
+  assert.equal(ctl.isOpen(), true, 'a radio item keeps the menu open');
+  assert.equal(p.keys.dispatch({ key: 'Escape', preventDefault() {} }, p.doc.activeElement), 'esc');
+  assert.equal(ctl.isOpen(), false);
+  assert.equal(p.doc.activeElement, trigger, 'Esc returns focus to the trigger');
+  assert.equal(p.keys.escDepth(), 0);
+  ctl.open({ focus: 'first' });
+  list.children[0].click();
+  assert.equal(ctl.isOpen(), false, 'a menuitem closes the menu');
+  ctl.open({ focus: 'first' });
+  p.doc.listeners.pointerdown[0]({ target: p.byId.filterbar });
+  assert.equal(ctl.isOpen(), false, 'a press outside closes it');
+  ctl.open({ focus: 'first' });
+  p.doc.listeners.pointerdown[0]({ target: list.children[1] });
+  assert.equal(ctl.isOpen(), true, 'a press inside does not');
+  list.fire('keydown', { key: 'Tab' });
+  assert.equal(ctl.isOpen(), false);
+  assert.equal(p.doc.activeElement, trigger, 'Tab leaves from the trigger');
+});
+
+test('menu opened by a shortcut gives focus back to where it was (returnFocus); opened from its button, to the button', () => {
+  const p = fakePage();
+  const search = p.dom.el('input', { id: 'search' });
+  const trigger = p.dom.el('button', { id: 'btn' });
+  p.byId.filterbar.appendChild(search);
+  p.byId.filterbar.appendChild(trigger);
+  const list = p.dom.el('div', { role: 'menu' }, p.dom.el('button', { role: 'menuitem', tabindex: '-1' }, 'Plain Text'));
+  const surface = p.dom.portal(p.dom.el('div', { hidden: true }, list), 'popover');
+  const ctl = p.ui.menu(trigger, surface);
+  p.focus(search);
+  ctl.open({ focus: 'first', returnFocus: p.doc.activeElement });
+  assert.equal(p.doc.activeElement, list.children[0]);
+  assert.equal(p.keys.dispatch({ key: 'Escape', preventDefault() {} }, p.doc.activeElement), 'esc');
+  assert.equal(p.doc.activeElement, search, 'Esc returns to the search field');
+  ctl.open({ focus: 'first', returnFocus: search });
+  list.children[0].click();
+  assert.equal(p.doc.activeElement, search, 'choosing an item returns there too');
+  ctl.open({ focus: 'first' });
+  p.keys.dispatch({ key: 'Escape', preventDefault() {} }, p.doc.activeElement);
+  assert.equal(p.doc.activeElement, trigger, 'without returnFocus, focus goes back to the button');
+});
+
+test('popover: role=dialog wiring, initial focus, Tab/Shift+Tab leave via the trigger, Esc and outside press close', () => {
+  const p = fakePage();
+  const trigger = p.dom.el('button');
+  p.byId.filterbar.appendChild(trigger);
+  const a = p.dom.el('button', null, 'Android');
+  const b = p.dom.el('button', null, 'iOS');
+  const panel = p.dom.portal(p.dom.el('div', { hidden: true }, a, b), 'popover');
+  panel.querySelectorAll = () => [a, b];   // focusables(panel)
+  const ctl = p.ui.popover(trigger, panel);
+  assert.deepEqual([trigger.attrs['aria-haspopup'], trigger.attrs['aria-expanded'], trigger.attrs['aria-controls'], panel.attrs.role],
+    ['dialog', 'false', panel.id, 'dialog']);
+  trigger.click();
+  assert.equal(ctl.isOpen(), true);
+  assert.equal(p.doc.activeElement, a, 'focus moves to the first control');
+  let prevented = false;
+  p.focus(b);
+  panel.fire('keydown', { key: 'Tab', shiftKey: false, preventDefault() { prevented = true; } });
+  assert.deepEqual([prevented, ctl.isOpen(), p.doc.activeElement === trigger], [false, false, true],
+    'Tab from the last control: focus on the trigger, not prevented, so the browser moves on from there');
+  trigger.click();
+  panel.fire('keydown', { key: 'Tab', shiftKey: true, preventDefault() { prevented = true; } });
+  assert.deepEqual([prevented, ctl.isOpen(), p.doc.activeElement === trigger], [true, false, true], 'Shift+Tab from the first lands on the trigger');
+  trigger.click();
+  assert.equal(p.keys.dispatch({ key: 'Escape', preventDefault() {} }, a), 'esc');
+  assert.deepEqual([ctl.isOpen(), p.doc.activeElement === trigger], [false, true], 'Esc closes and returns focus to the trigger');
+  trigger.click();
+  p.doc.listeners.pointerdown[0]({ target: p.byId.filterbar });
+  assert.equal(ctl.isOpen(), false, 'a press outside closes it');
+});
+
+test('toasts: polite region for success/info, role=alert region for errors, max 3, timers, hover pause, dismiss', () => {
+  const p = fakePage();
+  const live = p.byId.toastLive;
+  const alerts = p.byId.toastAlerts;
+  const title = t => texts(t.children[1].children[0]);
+  p.ui.toast({ kind: 'success', title: 'Copied 10 lines' });
+  const err = p.ui.toast({ kind: 'error', title: 'Export failed', desc: 'Disk is full. Free some space and try again.' });
+  assert.deepEqual(live.children.map(title), ['Copied 10 lines']);
+  assert.deepEqual(alerts.children.map(title), ['Export failed']);
+  assert.equal(alerts.children[0].attrs.role, 'alert');
+  assert.equal(live.children[0].attrs.role, undefined);
+  assert.equal(alerts.children[0].className, 'toast toast-error');
+  const dismiss = alerts.children[0].children.at(-1);
+  assert.equal(dismiss.attrs['aria-label'], 'Dismiss notification');
+  assert.equal(dismiss.children[0].children[0].attrs.href, '#i-x');
+  p.advance(4999);
+  assert.equal(live.children.length, 1);
+  p.advance(1);
+  assert.equal(live.children.length, 0, 'gone after 5 s');
+  p.advance(60000);
+  assert.equal(alerts.children.length, 1, 'errors stay');
+  err.dismiss();
+  assert.equal(alerts.children.length, 0);
+  for (const n of ['1', '2', '3', '4']) p.ui.toast({ kind: 'info', title: n });
+  assert.deepEqual(live.children.map(title), ['1', '2', '3'], 'at most 3 at once');
+  live.children[0].fire('pointerenter');
+  p.advance(5000);
+  assert.deepEqual(live.children.map(title), ['1', '4'], 'the hovered toast stays; the queued one shows');
+  live.children[0].fire('pointerleave');
+  p.advance(5000);
+  assert.deepEqual(live.children.map(title), [], 'hover kept its remaining time');
+  let ran = 0;
+  p.ui.toast({ kind: 'info', title: 'View cleared · 3 lines', desc: 'Undo within 10 s', action: { label: 'Undo', run: () => { ran++; } } });
+  p.advance(9999);
+  assert.equal(live.children.length, 1, '10 s with an action');
+  live.children[0].children[2].click();
+  assert.equal(ran, 1);
+  assert.equal(live.children.length, 0, 'the action dismisses the toast');
+});
+
+test('toasts: a keyed replace refills the same node, keeps its hold, and moves it to the alert region as an error', () => {
+  const p = fakePage();
+  const live = p.byId.toastLive;
+  const alerts = p.byId.toastAlerts;
+  const t1 = p.ui.toast({ kind: 'info', title: 'Exporting…', key: 'export' });
+  const node = live.children[0];
+  node.fire('pointerenter');
+  p.advance(60000);
+  assert.equal(live.children[0], node, 'held: still there');
+  const t2 = p.ui.toast({ kind: 'info', title: 'Exporting… 50%', key: 'export' });
+  assert.equal(t2.id, t1.id);
+  assert.equal(live.children[0], node, 'the same node, refilled');
+  assert.equal(texts(node.children[1].children[0]), 'Exporting… 50%');
+  p.advance(60000);
+  assert.equal(live.children.length, 1, 'still held after the replace');
+  const dismissBtn = node.children.at(-1);
+  p.focus(dismissBtn);
+  node.fire('focusin');
+  p.ui.toast({ kind: 'error', title: 'Export failed', desc: 'Disk is full.', key: 'export', action: { label: 'Retry', run() {} } });
+  assert.deepEqual([live.children.length, alerts.children[0] === node], [0, true], 'moved to the alert region');
+  assert.deepEqual([node.attrs.role, node.className], ['alert', 'toast toast-error']);
+  assert.equal(node.children[0].children[0].attrs.href, '#i-circle-alert');
+  assert.equal(p.doc.activeElement, dismissBtn, 'focus stays on the same button');
+  assert.deepEqual([node.children[2].hidden, texts(node.children[2])], [false, 'Retry']);
+  node.fire('pointerleave');
+  p.advance(600000);
+  assert.equal(alerts.children.length, 1, 'an error with nothing waiting stays');
+});
+
+test('toasts: an error that yields its slot leaves the DOM; a focused error keeps its slot', () => {
+  const p = fakePage();
+  const live = p.byId.toastLive;
+  const alerts = p.byId.toastAlerts;
+  const title = t => texts(t.children[1].children[0]);
+  for (const n of ['e1', 'e2', 'e3']) p.ui.toast({ kind: 'error', title: n });
+  alerts.children[0].fire('focusin');
+  p.advance(1000);
+  p.ui.toast({ kind: 'success', title: 'Copied' });
+  assert.deepEqual([alerts.children.map(title), live.children.length], [['e1', 'e2', 'e3'], 0], 'every error stays 5 s');
+  p.advance(4000);
+  assert.deepEqual(alerts.children.map(title), ['e1', 'e3'], 'e2 yields at 5 s; the focused e1 stays');
+  assert.deepEqual(live.children.map(title), ['Copied']);
+  p.advance(5000);
+  assert.equal(live.children.length, 0);
+});
+
+test('announce: the first text at once, then one per 5 s with the newest waiting text', () => {
+  const p = fakePage();
+  const a = p.byId.announcer;
+  p.ui.announce('12 lines match');
+  assert.equal(a.textContent, '12 lines match');
+  p.advance(1000); p.ui.announce('11 lines match');
+  p.advance(1000); p.ui.announce('10 lines match');
+  assert.equal(a.textContent, '12 lines match');
+  p.advance(3000);
+  assert.equal(a.textContent, '10 lines match');
+});
+
+test('dialog: inert behind, focus inside, Tab wraps, Mod+Enter clicks the primary, Esc closes and restores focus', () => {
+  const p = fakePage();
+  const opener = p.dom.el('button');
+  p.byId.filterbar.appendChild(opener);
+  const a = p.dom.el('button', null, 'Cancel');
+  const b = p.dom.el('button', { 'data-primary': true }, 'Copy');
+  let clicked = 0;
+  b.addEventListener('click', () => { clicked++; });
+  const panel = p.dom.el('div', null, a, b);
+  panel.querySelectorAll = () => [a, b];   // focusables(panel)
+  let closed = null;
+  const d = p.ui.dialog(panel, { label: 'Bug report', onClose: r => { closed = r; } });
+  assert.deepEqual([panel.attrs.role, panel.attrs['aria-modal'], panel.attrs['aria-label']], ['dialog', 'true', 'Bug report']);
+  assert.equal(d.isOpen(), false);
+  p.focus(opener);
+  d.open();
+  assert.equal(p.byId.filterbar.inert, true, 'the page behind is inert');
+  assert.equal(p.byId.overlayRoot.inert, false);
+  assert.equal(p.doc.activeElement, a);
+  let prevented = false;
+  p.focus(b);
+  panel.fire('keydown', { key: 'Tab', shiftKey: false, preventDefault() { prevented = true; } });
+  assert.equal(p.doc.activeElement, a, 'Tab from the last control wraps to the first');
+  assert.equal(prevented, true);
+  panel.fire('keydown', { key: 'Tab', shiftKey: true });
+  assert.equal(p.doc.activeElement, b, 'Shift+Tab from the first wraps to the last');
+  assert.equal(p.keys.dispatch({ key: 'e', metaKey: true, preventDefault() {} }, a), null);
+  assert.equal(p.keys.dispatch({ key: 'Enter', metaKey: true, preventDefault() {} }, a), 'dialog.primary');
+  assert.equal(clicked, 1);
+  assert.equal(p.keys.dispatch({ key: 'Escape', preventDefault() {} }, a), 'esc');
+  assert.equal(d.isOpen(), false);
+  assert.equal(closed, 'esc');
+  assert.equal(p.byId.filterbar.inert, false);
+  assert.equal(p.doc.activeElement, opener, 'focus returns to the opener');
+  assert.equal(p.keys.dispatch({ key: 'Enter', metaKey: true, preventDefault() {} }, a), null, 'no dialog, no dialog bindings');
+});
+
+test('tooltip: a role=tooltip element referenced by aria-describedby; 400 ms hover delay; Esc hides it', () => {
+  const p = fakePage();
+  p.keys.register({ id: 'export.menu', keys: 'Mod+E', inText: true, run() {} });
+  const btn = p.dom.el('button', { 'aria-describedby': 'other' });
+  p.byId.filterbar.appendChild(btn);
+  const tipApi = p.ui.tooltip(btn, { text: 'Export', shortcut: 'export.menu' });
+  const [, tipId] = btn.attrs['aria-describedby'].split(' ');
+  const tip = p.byId[tipId];
+  assert.equal(tip.attrs.role, 'tooltip');
+  assert.equal(tip.parent, p.byId.ovTips);
+  assert.equal(texts(tip), 'Export⌘E');
+  btn.fire('pointerenter', { pointerType: 'mouse' });
+  p.advance(399);
+  assert.equal(tip.hidden, true);
+  p.advance(1);
+  assert.equal(tip.hidden, false);
+  assert.equal(p.keys.dispatch({ key: 'Escape', preventDefault() {} }, btn), 'esc');
+  assert.equal(tip.hidden, true);
+  btn.fire('pointerenter', { pointerType: 'mouse' });
+  p.advance(500);
+  assert.equal(tip.hidden, true, 'suppressed until the pointer leaves');
+  btn.fire('pointerleave');
+  btn.fire('pointerenter', { pointerType: 'touch' });
+  p.advance(500);
+  assert.equal(tip.hidden, true, 'touch does not show tooltips');
+  tipApi.destroy();
+  assert.equal(btn.attrs['aria-describedby'], 'other');
+  assert.equal(tip.parent, null);
 });

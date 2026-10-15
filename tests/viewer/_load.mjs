@@ -103,6 +103,13 @@ export function loadPureModule(file) {
   return ctx.ALV;
 }
 
+// Runs several PURE files, in order, in ONE empty context, as the page loads them (dom.js, keys.js, ui.js).
+export function loadPureModules(...files) {
+  const ctx = vm.createContext({});
+  for (const file of files) vm.runInContext(read(path.join(ASSETS, 'js', file)), ctx, { filename: file });
+  return ctx.ALV;
+}
+
 // A Proxy that answers every property read, call and `new` with another stub, so the legacy
 // inline script's top-level DOM wiring runs without a browser. Deliberately NOT thenable.
 export function deepStub(name = 'stub') {

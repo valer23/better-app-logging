@@ -83,6 +83,14 @@ test('#overlayRoot is a direct child of <body>, the last element before the scri
   assert.ok(body.children.indexOf(ov) < body.children.indexOf(scripts[0]), '#overlayRoot comes before the scripts');
 });
 
+test('hidden overlay surfaces really hide: base.css gives [hidden] back to every foundation class that sets display', () => {
+  const rules = C.cssRules(read(path.join(ASSETS, 'css', 'base.css')));
+  const hiddenSelectors = rules.filter(r => C.declarations(r.body).some(d => d.prop === 'display' && d.value === 'none')).flatMap(r => r.selectors);
+  for (const cls of ['menu', 'tooltip', 'toast', 'kbd', 'dialog-host', 'btn']) {
+    assert.ok(hiddenSelectors.includes(`.${cls}[hidden]`), `.${cls}[hidden] { display: none } is missing`);
+  }
+});
+
 test('INTERACTIVE is one literal, in dom.js, and the legacy drag code reads it from ALV.dom', () => {
   const literals = allJs.filter(s => /const INTERACTIVE\s*=\s*'/.test(s.code)).map(s => s.filename);
   assert.deepEqual(literals, ['viewer/assets/js/dom.js']);
