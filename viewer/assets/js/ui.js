@@ -461,6 +461,25 @@
     const queue = createToastQueue({ max: 3 });
     const shown = new Map();   // id -> { node, spec, refs }
     const toastRegion = kind => doc.getElementById(kind === 'error' ? 'toastAlerts' : 'toastLive');
+    const inToasts = n => !!n && (toastRegion('error').contains(n) || toastRegion('info').contains(n));
+    let beforeToasts = null;   // the control that had focus before focus entered a toast (where Dismiss goes back to)
+    // A toast that holds focus is about to leave: put focus on the same control (action, else Dismiss) of
+    // the next toast, else the previous one, else back where it was before the toasts. Without this a
+    // removed node drops focus to <body>, and the next Tab starts from the top of the page.
+    function handOffFocus(id, leaving) {
+      const active = doc.activeElement;
+      if (!active || !leaving.node.contains(active)) return;
+      const ids = Array.from(shown.keys());
+      const stay = ids.filter(k => k !== id && queue.visible().includes(k));
+      const at = ids.indexOf(id);
+      const target = stay.find(k => ids.indexOf(k) > at) || stay.filter(k => ids.indexOf(k) < at).pop();
+      if (target !== undefined) {
+        const refs = shown.get(target).refs;
+        (active === leaving.refs.action && !refs.action.hidden ? refs.action : refs.dismiss).focus();
+      } else if (beforeToasts && !inToasts(beforeToasts) && isShown(beforeToasts)) {
+        beforeToasts.focus();
+      }
+    }
     let toastTimer = 0;
     let syncing = 0;   // 1 while syncing; 2 when an event fired during the sync asked for another pass
     function syncToasts() {
@@ -471,7 +490,7 @@
           const t = now();
           queue.tick(t);
           const vis = queue.visible();
-          for (const [id, s] of shown) if (!vis.includes(id)) { shown.delete(id); s.node.remove(); }
+          for (const [id, s] of Array.from(shown)) if (!vis.includes(id)) { handOffFocus(id, s); shown.delete(id); s.node.remove(); }
           for (const id of vis) {
             const spec = queue.get(id);
             const s = shown.get(id);
@@ -508,19 +527,20 @@
           dismissToast(id);
           if (spec && spec.action) spec.action.run();
         } } }),
+        dismiss: dom.el('button', { type: 'button', class: 'icon-btn sm', 'aria-label': 'Dismiss notification', on: { click: () => dismissToast(id) } }, dom.icon('x')),
       };
       const node = dom.el('div', {
         on: {
           pointerenter: () => { pointer = true; hold(); },
           pointerleave: () => { pointer = false; hold(); },
-          focusin: () => { focused = true; hold(); },
+          focusin: e => { if (e.relatedTarget && !inToasts(e.relatedTarget)) beforeToasts = e.relatedTarget; focused = true; hold(); },
           focusout: e => { if (!e.currentTarget.contains(e.relatedTarget)) { focused = false; hold(); } },
         },
       },
       refs.icon,
       dom.el('div', { class: 'toast-body' }, refs.title, refs.desc),
       refs.action,
-      dom.el('button', { type: 'button', class: 'icon-btn sm', 'aria-label': 'Dismiss notification', on: { click: () => dismissToast(id) } }, dom.icon('x')));
+      refs.dismiss);
       const made = { node, spec: null, refs };
       fillToast(made, spec);
       return made;

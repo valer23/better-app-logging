@@ -1034,3 +1034,53 @@ test('dialog: the toast regions and #announcer stay announceable while a dialog 
   }
   d.close();
 });
+
+// A fake toast's parts: [icon, body, action button, dismiss button].
+const toastParts = node => ({ action: node.children[2], dismiss: node.children[3] });
+
+test('toasts: dismissing the focused toast moves focus to the same control of the next one, else the previous, else back (review F2)', () => {
+  const p = fakePage();
+  const live = p.byId.toastLive;
+  const alerts = p.byId.toastAlerts;
+  const outside = p.dom.el('button', { text: 'Export' });
+  p.byId.filterbar.appendChild(outside);
+  let ran = 0;
+  p.ui.toast({ kind: 'info', title: 'one', action: { label: 'Undo', run: () => { ran++; } } });
+  p.ui.toast({ kind: 'info', title: 'two', action: { label: 'Undo', run() {} } });
+  p.ui.toast({ kind: 'error', title: 'three' });
+  const [n1, n2] = live.children;
+  const n3 = alerts.children[0];
+  const enter = (node, btn, from) => { p.focus(btn); node.fire('focusin', { relatedTarget: from }); };
+  // Action button: the next toast's action button.
+  enter(n1, toastParts(n1).action, outside);
+  toastParts(n1).action.click();
+  assert.equal(ran, 1, 'the action still runs');
+  assert.deepEqual([live.children.length, p.doc.activeElement], [1, toastParts(n2).action], 'same control, next toast');
+  // Dismiss button, last toast in order: the previous one (the error sits in the other region).
+  enter(n3, toastParts(n3).dismiss, toastParts(n2).action);
+  toastParts(n3).dismiss.click();
+  assert.deepEqual([alerts.children.length, p.doc.activeElement], [0, toastParts(n2).dismiss], 'no next toast: the previous, same control (the error has no action: dismiss)');
+  assert.notEqual(p.doc.activeElement, p.doc.body);
+  // The last toast: focus goes back to where it was before it entered the toasts.
+  enter(n2, toastParts(n2).dismiss, outside);
+  toastParts(n2).dismiss.click();
+  assert.deepEqual([live.children.length, p.doc.activeElement], [0, outside], 'back to the control focused before the toasts');
+});
+
+test('toasts: a dismissed focused toast with nowhere to return to leaves focus alone, and an unfocused one never moves it (review F2)', () => {
+  const p = fakePage();
+  const live = p.byId.toastLive;
+  const other = p.dom.el('button', { text: 'Elsewhere' });
+  p.byId.filterbar.appendChild(other);
+  const a = p.ui.toast({ kind: 'info', title: 'a' });
+  p.ui.toast({ kind: 'info', title: 'b' });
+  p.focus(other);
+  a.dismiss();
+  assert.equal(p.doc.activeElement, other, 'dismissing a toast that has no focus does not move focus');
+  const n = live.children[0];
+  p.focus(toastParts(n).dismiss);
+  n.fire('focusin', { relatedTarget: null });
+  toastParts(n).dismiss.click();
+  assert.equal(live.children.length, 0);
+  assert.equal(p.doc.activeElement, toastParts(n).dismiss, 'no known previous element: nothing to move to');
+});
