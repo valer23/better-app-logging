@@ -63,67 +63,108 @@
     };
   }
 
-  // Toasts: at most `max` visible, the rest wait in FIFO order and their timers start only once shown.
-  // 5 s, 10 s with an action, errors never expire. pause/resume keep the remaining time (hover, focus).
-  // A toast with a `key` replaces the one with the same key and restarts its timer (a paused one stays paused).
-  // When every visible slot holds a sticky toast (an error), a new toast evicts the oldest visible one.
+  // Toasts (spec "Toasts"). At most `max` are visible; the rest wait in FIFO order, and a toast's clock
+  // starts only when it is shown. Timed toasts expire after 5 s, or 10 s with an action. Errors are
+  // sticky: they stay while there is room, but while a toast waits for a slot, the oldest error that has
+  // been on screen for 5 s yields its slot. Hover or focus holds a toast (pause): a held toast never
+  // expires and never yields, and resume gives it back its remaining time (an error gets a fresh 5 s). A
+  // toast with a `key` updates the queued toast with that key in place (same id, same position) and
+  // restarts its clock unless it is held. Every mutation takes `now` and ends in settle(now), which
+  // restores the invariants below (checked after every step by the seeded model test in ui.test.mjs):
+  //   I1 visible.length <= max.
+  //   I2 if a toast waits, visible.length === max.
+  //   I3 ids are unique and never reused; keys are unique across visible and pending.
+  //   I4 visible ++ pending keeps its order, a new toast joins the end, and nothing returns to pending.
+  //   I5 a held toast leaves only through dismiss().
+  //   I6 nothing is overdue: every unheld timed toast expires after now and, while a toast waits, every
+  //      unheld error yields after now, so nextDeadline(now) > 0.
+  //   I7 no stuck queue: while a toast waits, nextDeadline(now) is finite unless every visible toast is held.
+  //   I8 a toast leaves visible only through dismiss() or after at least 5 s on screen: every promoted
+  //      toast is still visible when the call that promoted it returns (the DOM shows and announces it
+  //      exactly once), and a waiting toast leaves pending only by being shown or dismissed.
+  //   I9 an error yields only to a waiting toast, which takes the freed slot in the same call.
   const TOAST_MS = 5000;
   const TOAST_ACTION_MS = 10000;
+  const TOAST_YIELD_MS = TOAST_MS;
   function toastTimeout(spec) { return spec.kind === 'error' ? Infinity : spec.action ? TOAST_ACTION_MS : TOAST_MS; }
   function createToastQueue({ max = 3 } = {}) {
+    if (!Number.isInteger(max) || max < 1) throw new RangeError('createToastQueue: max must be an integer >= 1');
     let seq = 0;
-    const visible = [];
-    const pending = [];
-    const start = (t, now) => { t.startedAt = now; t.paused = false; };
-    const promote = now => { while (visible.length < max && pending.length) { const t = pending.shift(); start(t, now); visible.push(t); } };
-    // Policy: sticky toasts (errors) never expire, so when every visible slot is sticky a waiting toast
-    // would never be shown or announced. Evict the oldest visible one instead, until nothing waits.
-    // Runs after every add and dismiss: a dismissal can promote a sticky toast into the last free slot.
-    const settle = now => {
-      promote(now);
-      while (pending.length && visible.length >= max && visible.every(t => toastTimeout(t.spec) === Infinity)) {
-        visible.shift();
-        promote(now);
-      }
-    };
+    const visible = [];   // on screen, oldest first: { id, spec, remaining, startedAt, paused }
+    const pending = [];   // waiting, FIFO: never paused, clock not started
+    const sticky = t => toastTimeout(t.spec) === Infinity;
     const find = id => visible.find(t => t.id === id) || pending.find(t => t.id === id);
+
+    // The one place a toast leaves the queue other than dismiss(). Returns the removed ids, in order.
+    function settle(now) {
+      const removed = [];
+      for (let i = 0; i < visible.length;) {
+        const t = visible[i];
+        if (!t.paused && !sticky(t) && now - t.startedAt >= t.remaining) { visible.splice(i, 1); removed.push(t.id); }
+        else i += 1;
+      }
+      for (;;) {
+        while (visible.length < max && pending.length) {
+          const t = pending.shift();
+          t.startedAt = now;
+          visible.push(t);
+        }
+        if (!pending.length) return removed;
+        // Full and a toast waits: the oldest unheld error on screen for TOAST_YIELD_MS gives up its slot.
+        // A toast promoted just above has now - startedAt === 0, so it never yields in the same call.
+        const i = visible.findIndex(t => !t.paused && sticky(t) && now - t.startedAt >= TOAST_YIELD_MS);
+        if (i < 0) return removed;
+        removed.push(visible.splice(i, 1)[0].id);
+      }
+    }
+
     return {
       add(spec, now) {
-        const prev = spec.key == null ? null : visible.concat(pending).find(t => t.spec.key === spec.key);
-        if (prev) {
-          prev.spec = spec;
-          prev.remaining = toastTimeout(spec);
-          // A paused toast stays paused (the pointer or focus is still on it) and gets the full new time
-          // when it resumes; only a running visible toast restarts its clock.
-          if (visible.includes(prev) && !prev.paused) start(prev, now);
-          return prev.id;
+        let t = spec.key == null ? null : visible.find(x => x.spec.key === spec.key) || pending.find(x => x.spec.key === spec.key);
+        if (t) {
+          // Keyed replace: same id, same place. A held toast stays held with the full new time, which
+          // starts on resume; otherwise the clock restarts now (a waiting toast's when it is shown).
+          t.spec = spec;
+          t.remaining = toastTimeout(spec);
+          if (!t.paused) t.startedAt = now;
+        } else {
+          seq += 1;
+          t = { id: seq, spec, remaining: toastTimeout(spec), startedAt: now, paused: false };
+          pending.push(t);
         }
-        seq += 1;
-        pending.push({ id: seq, spec, remaining: toastTimeout(spec), startedAt: 0, paused: false });
         settle(now);
-        return seq;
+        return t.id;
       },
       dismiss(id, now) {
+        let hit = false;
         for (const list of [visible, pending]) {
           const i = list.findIndex(t => t.id === id);
-          if (i >= 0) { list.splice(i, 1); settle(now); return true; }
+          if (i >= 0) { list.splice(i, 1); hit = true; break; }
         }
-        return false;
+        settle(now);
+        return hit;
       },
       pause(id, now) {
         const t = visible.find(x => x.id === id);
-        if (!t || t.paused) return;
-        t.remaining -= now - t.startedAt;
-        t.paused = true;
+        if (t && !t.paused) { t.remaining -= now - t.startedAt; t.paused = true; }
+        settle(now);
       },
       resume(id, now) {
         const t = visible.find(x => x.id === id);
-        if (t && t.paused) start(t, now);
+        if (t && t.paused) { t.startedAt = now; t.paused = false; }
+        settle(now);
       },
-      due: now => visible.filter(t => !t.paused && now - t.startedAt >= t.remaining).map(t => t.id),
+      // Time passed: expire what ran out, show what waits, let overdue errors yield. The DOM calls it when
+      // its nextDeadline() timer fires. Returns the ids that left; the DOM reconciles from visible().
+      tick: now => settle(now),
+      // ms until a tick() would change something (<= 0: overdue); Infinity when no clock is running.
       nextDeadline(now) {
         let d = Infinity;
-        for (const t of visible) if (!t.paused) d = Math.min(d, t.startedAt + t.remaining - now);
+        for (const t of visible) {
+          if (t.paused) continue;
+          const span = sticky(t) ? (pending.length ? TOAST_YIELD_MS : Infinity) : t.remaining;
+          d = Math.min(d, t.startedAt + span - now);
+        }
         return d;
       },
       visible: () => visible.map(t => t.id),
