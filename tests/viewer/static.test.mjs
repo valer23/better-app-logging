@@ -142,6 +142,14 @@ test('window chrome: the macOS traffic-light inset is on #sidebarHeader, no long
   assert.match(read(path.join(ASSETS, 'css', 'shell.css')), /^@layer app \{$/m);
 });
 
+test('#app never sizes to its content: flex-basis 0 and a minmax(0, 1fr) row, so the log table is not laid out twice', () => {
+  const decls = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css'))).filter(r => r.selectors.includes('#app')).flatMap(r => C.declarations(r.body));
+  assert.ok(decls.some(d => d.prop === 'flex' && /^1 1 0(px|%)?$/.test(d.value)),
+    'flex: 1 1 auto makes <body>\'s column measure #app\'s content height, laying out the whole table first (300-row build +13 %, layout CPU +31 %)');
+  assert.ok(decls.some(d => d.prop === 'grid-template-rows' && d.value === 'minmax(0, 1fr)'),
+    'an implicit auto row sizes the grid to the log table\'s full height');
+});
+
 test('#topbar centres its children: the 52 px band must not stretch .zoom-group or .glass-switch into dead (non-dragging) boxes', () => {
   const rules = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')));
   const decls = rules.filter(r => r.selectors.includes('#topbar')).flatMap(r => C.declarations(r.body));
