@@ -417,47 +417,6 @@
   @keyframes fadeIn { from { opacity:0; background: #58a6ff08; } to { opacity:1; } }
   tr.new-row { animation: fadeIn .25s ease; }
 
-  /* ── Export dropdown ── */
-  /* Right-pinning is owned by the `.stats-export` wrapper around this
-     element, so `.export-wrap` only needs to anchor the menu in CSS.
-     (The menu itself is `position: fixed` and placed by JS.) */
-  .export-wrap { position: relative; }
-  /* Menu uses `position: fixed` and is positioned by JS (toggleExportMenu)
-     against the button's bounding rect, clamped to the viewport. This
-     prevents the menu from clipping off-screen when the button wraps to
-     the far left of the toolbar on small screens. */
-  .export-menu {
-    display: none;
-    position: fixed; top: 0; left: 0;
-    background: var(--lg-surface); border: 1px solid var(--lg-border);
-    border-radius: 10px; padding: 6px;
-    /* Prefer 240px, but shrink below that on very narrow viewports so the
-       menu never exceeds the viewport (16px = 2 × PAD from positionExportMenu).
-       No `min-width` — JS clamping reads `menu.offsetWidth` and needs the
-       laid-out width to be ≤ viewport for `Math.min(left, vw - mw - PAD)`
-       to keep the menu on-screen. */
-    width: min(240px, calc(100vw - 16px));
-    box-shadow: 0 8px 32px #00000060; z-index: 50;
-    flex-direction: column; gap: 2px;
-  }
-  .export-menu.open { display: flex; }
-  .export-menu-header { font-size: 10px; font-weight: 600; color: var(--lg-muted); text-transform: uppercase; letter-spacing: .06em; padding: 4px 8px 6px; }
-  .export-opt {
-    display: flex; align-items: center; gap: 10px;
-    background: transparent; border: none; border-radius: 6px;
-    padding: 8px 10px; cursor: pointer; text-align: left;
-    transition: background .1s; width: 100%;
-    font-family: var(--font-ui); color: var(--lg-text);
-  }
-  .export-opt:hover { background: var(--lg-surface2); }
-  .export-opt strong { font-size: 13px; display: block; margin-bottom: 1px; }
-  .export-icon { font-size: 18px; flex-shrink: 0; }
-  .export-desc { font-size: 11px; color: var(--lg-muted); }
-  .export-scope { border-top: 1px solid var(--lg-border); margin-top: 4px; padding: 8px 10px 4px; display: flex; flex-direction: column; gap: 5px; }
-  .export-scope label { font-size: 11px; color: var(--lg-muted); display: flex; align-items: center; gap: 6px; cursor: pointer; }
-  .export-scope input[type="radio"] { accent-color: var(--lg-accent); cursor: pointer; }
-  .export-note { border-top: 1px solid var(--lg-border); margin-top: 4px; padding: 6px 10px 4px; font-size: 11px; line-height: 1.35; color: var(--lg-yellow); }
-
   /* ── Loading ── */
   #loading { display: none; align-items: center; justify-content: center; gap: 12px; flex: 1; font-size: 14px; color: var(--lg-muted); }
   #loading.visible { display: flex; }
@@ -496,7 +455,6 @@
     :where(.app:not([data-motion="off"])) .col-resize-handle::after,
     :where(.app:not([data-motion="off"])) tbody tr,
     :where(.app:not([data-motion="off"])) tr.new-row,
-    :where(.app:not([data-motion="off"])) .export-opt,
     :where(.app:not([data-motion="off"])) .spinner { animation: none !important; transition: none !important; }
   }
   .app[data-motion="reduce"] .zoom-btn,
@@ -524,6 +482,5 @@
   .app[data-motion="reduce"] .col-resize-handle::after,
   .app[data-motion="reduce"] tbody tr,
   .app[data-motion="reduce"] tr.new-row,
-  .app[data-motion="reduce"] .export-opt,
   .app[data-motion="reduce"] .spinner { animation: none !important; transition: none !important; }
 }

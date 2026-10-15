@@ -5,10 +5,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { parseHtml, elements } from './_html.mjs';
+import { parseHtml, elements, findById, closestWithin } from './_html.mjs';
 import { ROOT, ASSETS, HTML_PATH, read, listAssets, inlineScripts } from './_load.mjs';
 import * as C from './_checks.mjs';
 import { build as buildFoundation, REGEN_CMD } from './gen-foundation.mjs';
+import * as SPRITE from './gen-sprite.mjs';
 
 const html = read(HTML_PATH);
 const { root, errors: parseErrors } = parseHtml(html);
@@ -82,11 +83,126 @@ test('#overlayRoot is a direct child of <body>, the last element before the scri
   assert.ok(body.children.indexOf(ov) < body.children.indexOf(scripts[0]), '#overlayRoot comes before the scripts');
 });
 
+test('hidden overlay surfaces really hide: base.css gives [hidden] back to every foundation class that sets display', () => {
+  const rules = C.cssRules(read(path.join(ASSETS, 'css', 'base.css')));
+  const hiddenSelectors = rules.filter(r => C.declarations(r.body).some(d => d.prop === 'display' && d.value === 'none')).flatMap(r => r.selectors);
+  for (const cls of ['menu', 'tooltip', 'toast', 'kbd', 'dialog-host', 'btn']) {
+    assert.ok(hiddenSelectors.includes(`.${cls}[hidden]`), `.${cls}[hidden] { display: none } is missing`);
+  }
+});
+
+test('Windows High Contrast: the active menu item gets an outline (the bar is a background and a box-shadow, both dropped) (review F12)', () => {
+  const rules = C.cssRules(read(path.join(ASSETS, 'css', 'base.css')));
+  const hit = rules.find(r => r.selectors.includes('.menu-item:focus') && r.atRules.some(a => /^@media \(forced-colors: active\)/.test(a))
+    && C.declarations(r.body).some(d => d.prop === 'outline' && /Highlight/.test(d.value)));
+  assert.ok(hit, '@media (forced-colors: active) { .menu-item:focus { outline: 2px solid Highlight } } is missing from base.css');
+});
+
+test('a tall dialog scrolls inside the viewport instead of being clipped by the fixed host (review F13)', () => {
+  const rules = C.cssRules(read(path.join(ASSETS, 'css', 'base.css')));
+  const panel = rules.filter(r => r.selectors.includes('.dialog-host > [role="dialog"]')).flatMap(r => C.declarations(r.body));
+  const maxH = panel.find(d => d.prop === 'max-height');
+  assert.ok(maxH && /100(?:d)?vh/.test(maxH.value) && /96px/.test(maxH.value), 'the panel is bounded by the viewport minus the 96 px top padding');
+  assert.ok(panel.some(d => d.prop === 'overflow' && d.value === 'auto'), 'and scrolls');
+});
+
+test('the Export menu lives in the popover layer: one menu button, three formats, two scope radios, the note outside the menu', () => {
+  const btn = findById(root, 'exportBtn');
+  assert.ok(closestWithin(btn, '[id=filterbar]', root), '#exportBtn stays in #filterbar (P4 re-parents it)');
+  assert.deepEqual([btn.attrs['aria-haspopup'], btn.attrs['aria-expanded'], btn.attrs['aria-controls'], btn.attrs.onclick], ['menu', 'false', 'exportMenu', undefined]);
+  const surface = findById(root, 'exportSurface');
+  assert.equal(surface.parent.attrs.id, 'ovPopovers');
+  assert.ok('hidden' in surface.attrs);
+  const menu = findById(root, 'exportMenu');
+  assert.equal(menu.attrs.role, 'menu');
+  const items = elements(menu).filter(el => /^menuitem/.test(el.attrs.role || ''));
+  assert.deepEqual(items.map(el => [el.tag, el.attrs.role, el.attrs.tabindex]), [
+    ['button', 'menuitem', '-1'], ['button', 'menuitem', '-1'], ['button', 'menuitem', '-1'],
+    ['button', 'menuitemradio', '-1'], ['button', 'menuitemradio', '-1']]);
+  assert.deepEqual(items.slice(0, 3).map(el => el.attrs.onclick), ["exportClicked('txt')", "exportClicked('csv')", "exportClicked('json')"]);
+  assert.deepEqual(items.slice(3).map(el => [el.attrs.value, el.attrs['aria-checked']]), [['filtered', 'true'], ['all', 'false']]);
+  assert.equal(elements(menu).filter(el => el.attrs.role && !/^(menuitem|menuitemradio|separator|group)$/.test(el.attrs.role)).length, 0, 'a menu holds menu roles only');
+  const note = findById(root, 'exportNote');
+  assert.ok(closestWithin(note, '[id=exportSurface]', root) && !closestWithin(note, '[id=exportMenu]', root), '#exportNote is in the surface, outside role=menu');
+  const legacy = inlineScripts(html).at(-1).code;
+  assert.doesNotMatch(legacy, /\bpositionExportMenu\b|name="exportScope"|getElementById\('exportMenu'\)\.classList/);
+  assert.match(legacy, /ALV\.keys\.register\(\{ id: 'export\.menu', keys: 'Mod\+E', inText: true/);
+  // getExportData reads the scope from the one checked radio, so exactly one element must carry aria-checked="true" and a value.
+  const checked = elements(menu).filter(el => el.attrs['aria-checked'] === 'true');
+  assert.equal(checked.length, 1, 'exactly one aria-checked="true" item in #exportMenu');
+  assert.ok(checked[0].attrs.value, 'the checked item carries a value attribute');
+  assert.match(legacy, /document\.querySelector\('#exportMenu \[aria-checked="true"\]'\)\.value/);
+  // Wiring that no node test exercises: counts/note fill on open, the menu goes with its hidden button, and a legacy modal closes it.
+  assert.match(legacy, /ALV\.ui\.menu\(document\.getElementById\('exportBtn'\), document\.getElementById\('exportSurface'\), \{ onOpen: refreshExportMenu \}\)/);
+  assert.match(legacy, /function updateExportVisibility\(\) \{[^}]*exportMenuCtl\.close\(\{ restoreFocus: false \}\)/);
+  for (const fn of ['showStallModal', 'showSetup']) {
+    assert.match(legacy, new RegExp(`function ${fn}\\([^)]*\\) \\{[^}]*exportMenuCtl\\.close\\(\\{ restoreFocus: false \\}\\)`), `${fn} closes the Export menu`);
+  }
+});
+
+test('every [aria-haspopup] control has aria-expanded and an aria-controls that resolves', () => {
+  const ids = new Set(elements(root).map(el => el.attrs.id).filter(Boolean));
+  const popups = elements(root).filter(el => 'aria-haspopup' in el.attrs);
+  assert.ok(popups.length >= 1);
+  for (const el of popups) {
+    assert.ok(['true', 'false'].includes(el.attrs['aria-expanded']), `line ${el.line}: aria-expanded`);
+    assert.ok(ids.has(el.attrs['aria-controls']), `line ${el.line}: aria-controls="${el.attrs['aria-controls']}"`);
+  }
+});
+
+test('every sprite symbol is used by the page or the JS', () => {
+  assert.deepEqual(C.unusedSymbols(root, jsText), []);
+});
+
+test('no emoji in the primitives, the app-layer CSS, the overlay root or the Export button', () => {
+  const EMOJI = /\p{Extended_Pictographic}/u;
+  for (const p of ['js/dom.js', 'js/keys.js', 'js/ui.js', 'css/base.css']) assert.doesNotMatch(read(path.join(ASSETS, p)), EMOJI, p);
+  const lines = html.split('\n');
+  for (const id of ['overlayRoot', 'exportWrap']) {
+    const el = findById(root, id);
+    const last = elements(el).at(-1);
+    const text = lines.slice(el.line - 1, (last ? last.line : el.line)).join('\n');
+    assert.doesNotMatch(text, EMOJI, `#${id}`);
+  }
+});
+
+test('app-layer CSS takes its colours from tokens: no hex literal outside foundation.css and legacy.css', () => {
+  const app = cssFiles.filter(f => !/(^|\/)(foundation|legacy)\.css$/.test(f.path) && !f.path.startsWith('fonts/'));
+  assert.ok(app.some(f => f.path === 'css/base.css'));
+  const hex = app.flatMap(f => C.cssRules(f.text).flatMap(r => C.declarations(r.body)
+    .filter(d => /#[0-9a-f]{3,8}\b/i.test(d.value)).map(d => `${f.path}:${r.line}: ${d.prop}: ${d.value}`)));
+  assert.deepEqual(hex, []);
+});
+
 test('INTERACTIVE is one literal, in dom.js, and the legacy drag code reads it from ALV.dom', () => {
   const literals = allJs.filter(s => /const INTERACTIVE\s*=\s*'/.test(s.code)).map(s => s.filename);
   assert.deepEqual(literals, ['viewer/assets/js/dom.js']);
   assert.equal((jsText.match(/const INTERACTIVE\s*=\s*'/g) || []).length, 1);
   assert.match(inlineScripts(html).at(-1).code, /const INTERACTIVE = ALV\.dom\.INTERACTIVE;/);
+});
+
+test('the Lucide sprite is the first element of <body>: aria-hidden, zero-size, exactly the generator\'s icons', () => {
+  const body = root.children.find(el => el.tag === 'html').children.find(el => el.tag === 'body');
+  const sprite = body.children[0];
+  assert.equal(sprite.attrs.id, 'iconSprite');
+  assert.deepEqual([sprite.attrs['aria-hidden'], sprite.attrs.width, sprite.attrs.height], ['true', '0', '0']);
+  assert.deepEqual(C.spriteSymbols(root), SPRITE.ICONS);
+  assert.deepEqual(elements(sprite).filter(el => el.tag === 'symbol').map(el => el.attrs.id), SPRITE.ICONS.map(n => `i-${n}`), 'every symbol sits in #iconSprite');
+  assert.equal(html.split(SPRITE.START).length, 2);
+  assert.equal(html.split(SPRITE.END).length, 2);
+});
+
+test('icons/SOURCES.md lists exactly the sprite\'s icons with their upstream hashes, and the licence ships', () => {
+  const sources = read(path.join(ASSETS, 'icons', 'SOURCES.md'));
+  const rows = [...sources.matchAll(/^\| `([\w-]+)` \| `lucide-static@1\.49\.0\/icons\/([\w-]+)\.svg` \| `[0-9a-f]{64}` \|$/gm)];
+  assert.deepEqual(rows.map(m => m[1]), C.spriteSymbols(root));
+  assert.ok(rows.every(m => m[1] === m[2]), 'each row names its own upstream file');
+  assert.ok(sources.includes(SPRITE.INTEGRITY) && sources.includes(SPRITE.TARBALL_SHA256), 'package integrity and tarball hash recorded');
+  assert.match(read(path.join(ASSETS, 'icons', 'LICENSE-lucide.txt')), /^ISC License\n/);
+});
+
+test('icons: every <svg> is aria-hidden, symbols are plain 24-unit shapes, every icon reference resolves', () => {
+  assert.deepEqual(C.iconErrors(root, jsText), []);
 });
 
 test('the checks reject deliberately broken input', () => {
@@ -230,6 +346,17 @@ test('the checks reject deliberately broken input', () => {
   assert.notDeepEqual(C.fontManifestErrors(['fonts/a.woff2', 'fonts/sub/x.woff2'], `${H}  a.woff2\n`), []);
   assert.notDeepEqual(C.fontManifestErrors(['fonts/a.woff2', 'fonts/sub/OFL-x.txt'], `${H}  a.woff2\n`), []);
   assert.notDeepEqual(C.fontManifestErrors(['fonts/a.woff2', 'fonts/ofl-x.TXT'], `${H}  a.woff2\n`), []);
+  const SPR = '<svg aria-hidden="true"><symbol id="i-a" viewBox="0 0 24 24"><path d="M0 0"/></symbol><symbol id="i-b" viewBox="0 0 24 24"><circle r="1"/></symbol></svg>';
+  assert.deepEqual(C.iconErrors(h(`${SPR}<svg aria-hidden="true"><use href="#i-a"/></svg>`), "icon('b')"), []);
+  assert.notDeepEqual(C.iconErrors(h(`${SPR}<svg aria-hidden="true"><use href="#i-nope"/></svg>`), ''), []);
+  assert.notDeepEqual(C.iconErrors(h(`${SPR}<svg><use href="#i-a"/></svg>`), ''), [], 'an <svg> without aria-hidden');
+  assert.notDeepEqual(C.iconErrors(h(SPR), "icon('nope')"), []);
+  assert.notDeepEqual(C.iconErrors(h('<svg aria-hidden="true"><symbol id="i-a" viewBox="0 0 16 16"><path d="M0 0"/></symbol></svg>'), ''), []);
+  assert.notDeepEqual(C.iconErrors(h('<svg aria-hidden="true"><symbol id="i-a" viewBox="0 0 24 24" fill="red"><path d="M0 0"/></symbol></svg>'), ''), []);
+  assert.notDeepEqual(C.iconErrors(h('<svg aria-hidden="true"><symbol id="i-a" viewBox="0 0 24 24"><path d="M0 0" onclick="x()"/></symbol></svg>'), ''), []);
+  assert.notDeepEqual(C.iconErrors(h('<svg aria-hidden="true"><symbol id="i-a" viewBox="0 0 24 24"><image href="x.png"/></symbol></svg>'), ''), []);
+  assert.deepEqual(C.unusedSymbols(h(`${SPR}<svg aria-hidden="true"><use href="#i-a"/></svg>`), "const K = { error: 'b' };"), []);
+  assert.deepEqual(C.unusedSymbols(h(`${SPR}<svg aria-hidden="true"><use href="#i-a"/></svg>`), ''), ['sprite symbol i-b is never used']);
 });
 
 test('every assets/ reference resolves to a file, and every asset file is referenced', () => {
@@ -241,7 +368,7 @@ test('every assets/ reference resolves to a file, and every asset file is refere
   ];
   assert.deepEqual(refs.filter(r => !files.has(r)), [], 'references to missing files');
   // Licence texts and font provenance ship in the repo without being referenced by the page.
-  const UNREFERENCED_OK = [/^fonts\/OFL-[\w-]+\.txt$/, /^fonts\/SOURCES\.md$/, /^fonts\/SHA256SUMS$/];
+  const UNREFERENCED_OK = [/^fonts\/OFL-[\w-]+\.txt$/, /^fonts\/SOURCES\.md$/, /^fonts\/SHA256SUMS$/, /^icons\/LICENSE-lucide\.txt$/, /^icons\/SOURCES\.md$/];
   const orphans = assetFiles.filter(f => !refs.includes(f) && !UNREFERENCED_OK.some(re => re.test(f)));
   assert.deepEqual(orphans, [], 'asset files nothing references');
 });
