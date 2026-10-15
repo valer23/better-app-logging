@@ -27,7 +27,7 @@ test('session.js loads in an empty context and names no page, storage or timer A
 
 test('the page loads session.js synchronously, after prefs.js and before the legacy script', () => {
   const html = read(HTML_PATH);
-  assert.deepEqual(pageScriptSrcs(html), ['assets/js/prefs.js', 'assets/js/session.js']);
+  assert.deepEqual(pageScriptSrcs(html), ['assets/js/prefs.js', 'assets/js/session.js', 'assets/js/dom.js']);
   const tag = html.indexOf('<script src="assets/js/session.js"></script>');
   assert.ok(tag > 0 && tag < html.lastIndexOf('<script>'), 'session.js comes before the legacy inline script');
 });

@@ -43,6 +43,7 @@ pub static FILES: &[(&str, &[u8])] = embed![
     "fonts/jetbrains-mono-5.3.0-latin-ext.woff2",
     "fonts/jetbrains-mono-5.3.0-latin.woff2",
     "js/dev-bench.js",
+    "js/dom.js",
     "js/prefs.js",
     "js/session.js",
 ];
