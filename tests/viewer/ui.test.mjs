@@ -1169,3 +1169,79 @@ test('dialogs: a stacked dialog makes the lower one inert and keeps page shortcu
   assert.equal(cmdE(), 'page.e', 'with no dialog left, the shortcut fires again');
   assert.deepEqual([hits, p.keys.escDepth()], [['e'], 0]);
 });
+
+// ---- P4: destroy() for owners that rebuild their triggers (sidebar device rows) ----
+
+test('menu destroy(): closes without moving focus, removes the surface, the trigger listeners and its popup ARIA; idempotent', () => {
+  const p = fakePage();
+  const trigger = p.dom.el('button', { text: 'More' });
+  p.byId.filterbar.appendChild(trigger);
+  const m = simpleMenu(p, trigger, ['Start streaming', 'Setup guide']);
+  m.ctl.open({ focus: 'first' });
+  assert.equal(p.keys.escDepth(), 1);
+  p.focus(p.byId.filterbar);
+  m.ctl.destroy();
+  assert.deepEqual([m.ctl.isOpen(), p.keys.escDepth(), m.surface.parent], [false, 0, null], 'closed, Esc entry popped, surface gone');
+  assert.equal(p.doc.activeElement, p.byId.filterbar, 'focus outside the surface stays where it is');
+  assert.deepEqual(['aria-haspopup', 'aria-expanded', 'aria-controls'].map(a => trigger.getAttribute(a)), [null, null, null]);
+  assert.deepEqual([(trigger.listeners.click || []).length, (trigger.listeners.keydown || []).length], [0, 0], 'no listener left on the trigger');
+  trigger.click();
+  m.ctl.open({ focus: 'first' });
+  assert.equal(m.ctl.isOpen(), false, 'a destroyed menu never opens again');
+  assert.doesNotThrow(() => m.ctl.destroy());
+});
+
+test('menu destroy() with focus inside the surface puts focus on the trigger; a new menu can take the same trigger', () => {
+  const p = fakePage();
+  const trigger = p.dom.el('button', { text: 'More' });
+  p.byId.filterbar.appendChild(trigger);
+  const first = simpleMenu(p, trigger, ['Old']);
+  first.ctl.open({ focus: 'first' });
+  assert.equal(p.doc.activeElement, first.list.children[0]);
+  first.ctl.destroy();
+  assert.equal(p.doc.activeElement, trigger);
+  const second = simpleMenu(p, trigger, ['New']);
+  trigger.click();
+  assert.deepEqual([second.ctl.isOpen(), trigger.getAttribute('aria-expanded'), p.keys.escDepth()], [true, 'true', 1], 'one click opens only the new menu');
+  second.ctl.destroy();
+});
+
+test('popover destroy(): same contract as a menu', () => {
+  const p = fakePage();
+  const trigger = p.dom.el('button', { text: 'Drops' });
+  p.byId.filterbar.appendChild(trigger);
+  const btn = p.dom.el('button', { text: 'Jump to gap' });
+  const panel = p.dom.portal(p.dom.el('div', { hidden: true }, btn), 'popover');
+  panel.querySelectorAll = () => [btn];
+  const ctl = p.ui.popover(trigger, panel);
+  trigger.click();
+  assert.equal(p.doc.activeElement, btn);
+  ctl.destroy();
+  assert.deepEqual([ctl.isOpen(), panel.parent, p.keys.escDepth(), p.doc.activeElement === trigger], [false, null, 0, true]);
+  assert.deepEqual([trigger.getAttribute('aria-haspopup'), (trigger.listeners.click || []).length], [null, 0]);
+});
+
+test('dialog destroy(): closes an open dialog (onClose "destroy", page live again, focus back) and removes its host', () => {
+  const p = fakePage();
+  const opener = p.dom.el('button', { text: 'Open' });
+  p.byId.filterbar.appendChild(opener);
+  const ok = p.dom.el('button', { text: 'OK' });
+  const panel = p.dom.el('div', null, ok);
+  panel.querySelectorAll = () => [ok];
+  const reasons = [];
+  const d = p.ui.dialog(panel, { label: 'Sheet', onClose: r => reasons.push(r) });
+  const host = panel.parent;
+  p.focus(opener);
+  d.open();
+  assert.equal(p.byId.filterbar.inert, true);
+  d.destroy();
+  assert.deepEqual([d.isOpen(), host.parent, p.byId.filterbar.inert, p.keys.escDepth(), reasons], [false, null, false, 0, ['destroy']]);
+  assert.equal(p.doc.activeElement, opener);
+  d.open();
+  assert.equal(d.isOpen(), false, 'a destroyed dialog never opens again');
+  d.destroy();
+  assert.deepEqual(reasons, ['destroy'], 'a second destroy does nothing');
+  const closed = p.ui.dialog(p.dom.el('div'), { label: 'Never opened', onClose: r => reasons.push(r) });
+  closed.destroy();
+  assert.deepEqual(reasons, ['destroy'], 'destroying a closed dialog calls no onClose');
+});

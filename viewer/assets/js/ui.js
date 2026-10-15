@@ -255,6 +255,8 @@
       const placement = { side: opts.side || 'bottom', align: opts.align || 'end', gap: 6, pad: 8 };
       let popEsc = null;
       let returnTo = null;   // open({ returnFocus }): where a shortcut opener had focus
+      let destroyed = false;
+      const offs = [];       // removers of the trigger listeners that menu() and popover() add through listen()
       const ctl = {
         trigger,
         isOpen: () => !surface.hidden,
@@ -262,6 +264,7 @@
         owns: node => surface.contains(node) || trigger.contains(node),
         reposition() { if (ctl.isOpen()) position(trigger, surface, placement); },
         open(o = {}) {
+          if (destroyed) return;
           if (!ctl.isOpen()) {
             if (openPopup) openPopup.close({ restoreFocus: false });
             hideTip();
@@ -290,6 +293,20 @@
           if (opts.onClose) opts.onClose();
         },
         toggle(o) { if (ctl.isOpen()) ctl.close(); else ctl.open(o); },
+        listen(target, type, fn) { target.addEventListener(type, fn); offs.push(() => target.removeEventListener(type, fn)); },
+        // For an owner that rebuilds its trigger (P4 device rows): closes without moving focus, removes the
+        // surface and the trigger's listeners, and strips the trigger's popup ARIA. Focus that was inside the
+        // surface goes to the trigger while it is shown. Idempotent; a destroyed controller never opens again.
+        destroy() {
+          if (destroyed) return;
+          const hadFocus = surface.contains(doc.activeElement);
+          ctl.close({ restoreFocus: false });
+          destroyed = true;
+          for (const off of offs.splice(0)) off();
+          for (const a of ['aria-haspopup', 'aria-expanded', 'aria-controls']) trigger.removeAttribute(a);
+          surface.remove();
+          if (hadFocus && isShown(trigger)) trigger.focus();
+        },
       };
       return ctl;
     }
@@ -310,8 +327,8 @@
         if (focus === 'none' || !all.length) return;
         all[focus === 'last' ? all.length - 1 : 0].focus();
       });
-      trigger.addEventListener('click', () => ctl.toggle({ focus: 'first' }));
-      trigger.addEventListener('keydown', e => {
+      ctl.listen(trigger, 'click', () => ctl.toggle({ focus: 'first' }));
+      ctl.listen(trigger, 'keydown', e => {
         if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
         // Cmd/Ctrl/Alt + arrow belong to the shortcut registry (jump to latest / oldest line): neither open
         // the menu nor swallow the event, or a global binding could never fire from a menu button.
@@ -371,7 +388,7 @@
       const ctl = popup(trigger, panel, opts, () => {
         ((opts.initialFocus && panel.querySelector(opts.initialFocus)) || dom.focusables(panel)[0] || panel).focus();
       });
-      trigger.addEventListener('click', () => ctl.toggle());
+      ctl.listen(trigger, 'click', () => ctl.toggle());
       panel.addEventListener('keydown', e => {
         if (e.key !== 'Tab') return;
         const f = dom.focusables(panel);
@@ -625,6 +642,7 @@
       let opener = null;
       let popEsc = null;
       let inerted = [];
+      let destroyed = false;
       panel.addEventListener('keydown', e => {
         if (e.key !== 'Tab') return;
         const f = dom.focusables(panel);
@@ -638,7 +656,7 @@
         el: panel,
         isOpen: () => !host.hidden,
         open(from) {
-          if (ctl.isOpen()) return;
+          if (destroyed || ctl.isOpen()) return;
           // A dialog opened from a menu item comes back to the menu button: the item is hidden by then.
           opener = from || doc.activeElement;
           if (openPopup && openPopup.inSurface(opener)) opener = openPopup.trigger;
@@ -670,6 +688,13 @@
           opener = null;
           if (back) back.focus();
           if (onClose) onClose(reason);
+        },
+        // Closes it if open (onClose gets 'destroy') and removes its host. Idempotent.
+        destroy() {
+          if (destroyed) return;
+          ctl.close('destroy');
+          destroyed = true;
+          host.remove();
         },
       };
       return ctl;
