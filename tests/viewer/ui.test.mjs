@@ -1265,9 +1265,9 @@ test('tooltip: several shortcuts (binding ids and written combos), text after th
   const t = p.ui.tooltip(btn, { text: 'Clear view', shortcut: ['stream.clear', { combo: 'Mod+-' }, 'not.bound'], after: '(undo for 10 s)', side: 'right' });
   const tip = p.byId[btn.attrs['aria-describedby']];
   assert.deepEqual(tip.children.map(c => [c.className, c.textContent, c.hidden]), [
-    ['', 'Clear view', false], ['kbd', '⌘⌫', false], ['kbd', '⌘-', false], ['kbd', '', true], ['', '(undo for 10 s)', false]],
+    ['', 'Clear view', false], ['kbd', '⌘⌫', false], ['kbd', '⌘−', false], ['kbd', '', true], ['', '(undo for 10 s)', false]],
     'one kbd per shortcut; an unbound id shows none');
-  assert.equal(texts(tip), 'Clear view⌘⌫⌘-(undo for 10 s)');
+  assert.equal(texts(tip), 'Clear view⌘⌫⌘−(undo for 10 s)');
   btn.fire('pointerenter', { pointerType: 'mouse' });
   p.advance(400);
   assert.deepEqual([tip.hidden, tip.style.left, tip.style.top], [false, '586px', '34px'], 'placed to the right of the trigger (580 + 6), centred on it');

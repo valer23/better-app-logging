@@ -404,7 +404,9 @@ test('Esc: a hover tooltip ranks after menus and text editing, a keyboard toolti
 test('comboLabel labels a written combo outside the registry, per platform (P4 zoom tooltips)', () => {
   const mac = ALV.createKeys({ platform: 'mac' });
   const pc = ALV.createKeys({ platform: 'other' });
-  assert.deepEqual([mac.comboLabel('Mod+-'), mac.comboLabel('Mod+='), mac.comboLabel('Mod+0'), mac.comboLabel('Mod+Backspace')], ['⌘-', '⌘=', '⌘0', '⌘⌫']);
-  assert.deepEqual([pc.comboLabel('Mod+-'), pc.comboLabel('Shift+Mod+L')], ['Ctrl+-', 'Ctrl+Shift+L']);
+  assert.deepEqual([mac.comboLabel('Mod+-'), mac.comboLabel('Mod+='), mac.comboLabel('Mod+0'), mac.comboLabel('Mod+Backspace')], ['⌘−', '⌘=', '⌘0', '⌘⌫']);
+  assert.deepEqual([pc.comboLabel('Mod+-'), pc.comboLabel('Shift+Mod+L')], ['Ctrl+−', 'Ctrl+Shift+L']);
   assert.throws(() => mac.comboLabel('Hyper+X'), /bad modifier/);
+  // display glyph only: parse/aria keep the real key name
+  assert.equal(ALV.createKeys({ platform: 'mac' }).comboLabel('Mod+-').includes('-'), false);
 });

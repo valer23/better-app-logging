@@ -59,8 +59,8 @@
   const TEXT_ROLES = new Set(['textbox', 'searchbox', 'combobox', 'spinbutton']);
   const MAC_MOD = { Ctrl: '⌃', Alt: '⌥', Shift: '⇧', Meta: '⌘' };
   const MAC_KEY = { ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Enter: '↵', Backspace: '⌫',
-    Delete: '⌦', Escape: 'esc', Tab: '⇥', Space: 'Space' };
-  const PC_KEY = { ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Escape: 'Esc' };
+    Delete: '⌦', Escape: 'esc', Tab: '⇥', Space: 'Space', '-': '−' };
+  const PC_KEY = { ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Escape: 'Esc', '-': '−' };
 
   // 'Mod++' is Mod and the '+' key; a lone '+' is the '+' key.
   function splitCombo(s) {
