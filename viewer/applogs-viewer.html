@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Device Log Viewer</title>
 <!-- Settings store and pre-paint boot: writes data-theme, data-material, data-ui, data-platform,
-     data-font/density/contrast/motion, data-glass and --log-fs on <html> before any stylesheet
-     loads. Keep it first and synchronous (no async/defer). -->
+     data-font/density/contrast/motion, data-glass, data-sidebar and --log-fs on <html> before any
+     stylesheet loads. Keep it first and synchronous (no async/defer). -->
 <script src="assets/js/prefs.js"></script>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3.5' fill='%2318181b'/><rect x='3' y='4' width='1' height='1' fill='%2371717a'/><rect x='5' y='4' width='8' height='1' rx='.5' fill='%2352525b'/><rect x='2' y='6' width='12' height='4' rx='1' fill='%237c3aed'/><circle cx='4' cy='8' r='1' fill='%23f5f3ff'/><rect x='6' y='7' width='6' height='2' rx='1' fill='%23f5f3ff'/><rect x='3' y='11' width='1' height='1' fill='%2371717a'/><rect x='5' y='11' width='5' height='1' rx='.5' fill='%2352525b'/></svg>">
 <link rel="preload" href="assets/fonts/geist-5.3.0-latin.woff2" as="font" type="font/woff2" crossorigin>
@@ -354,6 +354,8 @@ pkill -f idevicesyslog</pre>
 <script src="assets/js/dom.js"></script>
 <script src="assets/js/keys.js"></script>
 <script src="assets/js/ui.js"></script>
+<!-- App shell (roadmap P4): sidebar, drag bands, theme. ALV.createShell runs from the legacy script. -->
+<script src="assets/js/shell.js"></script>
 <script>
 // ─── Topbar drag-region (Tauri IPC) ──────────────────────────────────────
 // The macOS window uses titleBarStyle:Overlay + hiddenTitle, so the native

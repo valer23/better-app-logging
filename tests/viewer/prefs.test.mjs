@@ -32,7 +32,7 @@ test('fresh profile boots dark, 13 px, solid, m and writes every root attribute'
   assert.deepEqual({ ...root.attrs }, {
     'data-theme': 'dark', 'data-material': 'solid', 'data-ui': 'm', 'data-platform': 'mac',
     'data-font': 'default', 'data-density': 'comfortable', 'data-contrast': 'system',
-    'data-motion': 'system', 'data-glass': 'off',
+    'data-motion': 'system', 'data-glass': 'off', 'data-sidebar': 'expanded',
   });
   assert.equal(root.props['--log-fs'], '13px');
   assert.equal(st.map.get(K('material')), 'solid');   // migration writes material once
@@ -243,4 +243,17 @@ test('page boot: a localStorage getter that throws still boots with defaults', (
   assert.equal(root.props['--log-fs'], '13px');
   ALV.prefs.set('theme', 'light');   // changes live in memory for the session
   assert.equal(root.attrs['data-theme'], 'light');
+});
+
+test('sidebar: expanded by default, collapsed persists and writes data-sidebar, anything else reads expanded (P4)', () => {
+  for (const [raw, want] of [['collapsed', 'collapsed'], ['expanded', 'expanded'], ['rail', 'expanded'], [null, 'expanded']]) {
+    const { prefs, root } = boot({ stored: raw === null ? {} : { sidebar: raw } });
+    assert.equal(prefs.get('sidebar'), want, `sidebar=${raw}`);
+    assert.equal(root.attrs['data-sidebar'], want);
+  }
+  const { prefs, root, st } = boot();
+  assert.equal(prefs.set('sidebar', 'collapsed').sidebar, 'collapsed');
+  assert.deepEqual([root.attrs['data-sidebar'], st.map.get(K('sidebar'))], ['collapsed', 'collapsed']);
+  assert.throws(() => prefs.set('sidebar', 'rail'), /sidebar must be expanded or collapsed/);
+  assert.equal(ALV.prefsPure.parseSidebar('collapsed'), 'collapsed');
 });
