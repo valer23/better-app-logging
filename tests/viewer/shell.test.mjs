@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadPureModule } from './_load.mjs';
-import { fakePage, texts, shellPage } from './_fake.mjs';
+import { fakePage, texts, shellPage, DARK } from './_fake.mjs';
 
 const ALV = loadPureModule('shell.js');
 const S = ALV.shellPure;
@@ -316,4 +316,55 @@ test('DEVICES: a new device rebuilds its row and destroys the old menu and toolt
   assert.equal(p.doc.activeElement, fresh.more, 'focus was in the old menu: it lands on the new More button');
   shell.sync();
   assert.equal(parts(row(p, 'android')).main, fresh.main, 'an unchanged device keeps its row');
+});
+
+// ---- Footer: the theme cycle (⇧⌘L) and the Windows caption ----
+
+const tipOf = (p, btn) => p.byId[btn.getAttribute('aria-describedby')];
+
+test('theme button: icon, aria-label and tooltip per theme; a click and ⇧⌘L cycle Dark → Light → System', () => {
+  const { p, prefs, $ } = shellPage();
+  const view = () => [$('themeIcon').getAttribute('href'), $('themeBtn').getAttribute('aria-label'), texts(tipOf(p, $('themeBtn')))];
+  assert.deepEqual(view(), ['#i-moon', 'Theme: Dark. Switch to Light', 'Theme: Dark⇧⌘L']);
+  $('themeBtn').click();
+  assert.deepEqual([prefs.get('theme'), ...view()], ['light', '#i-sun', 'Theme: Light. Switch to System', 'Theme: Light⇧⌘L']);
+  assert.equal(p.keys.dispatch({ key: 'L', code: 'KeyL', metaKey: true, shiftKey: true, preventDefault() {} }, p.byId.filterbar), 'view.theme');
+  assert.deepEqual([prefs.get('theme'), ...view()], ['system', '#i-monitor', 'Theme: System. Switch to Dark', 'Theme: System (Dark)⇧⌘L']);
+  p.keys.dispatch({ key: 'L', code: 'KeyL', metaKey: true, shiftKey: true, preventDefault() {} }, p.byId.filterbar);
+  assert.equal(prefs.get('theme'), 'dark');
+});
+
+test('theme button: with System chosen, an OS appearance change updates the tooltip live (spec Open item 3)', () => {
+  const { p, prefs, mm, $ } = shellPage();
+  prefs.set('theme', 'system');
+  assert.equal(texts(tipOf(p, $('themeBtn'))), 'Theme: System (Dark)⇧⌘L');
+  mm.fire(DARK, false);
+  assert.equal(texts(tipOf(p, $('themeBtn'))), 'Theme: System (Light)⇧⌘L');
+});
+
+test('Windows caption: setTheme follows the app theme (null = the OS for System), sent only on change; macOS never calls it', () => {
+  const sent = [];
+  const w = { setTheme: t => { sent.push(t); return Promise.resolve(); } };
+  const tauri = { window: { getCurrentWindow: () => w } };
+  const win = shellPage({ platform: 'other', tauri });
+  assert.deepEqual(sent, ['dark'], 'sent once at start');
+  win.prefs.set('theme', 'light');
+  win.prefs.set('logFontSize', 15);
+  win.prefs.set('theme', 'system');
+  win.mm.fire(DARK, false);
+  assert.deepEqual(sent, ['dark', 'light', null], 'nothing on an unrelated pref or an OS change while System follows the OS');
+  assert.equal(win.$('themeBtn').getAttribute('aria-label'), 'Theme: System. Switch to Dark');
+  const macSent = [];
+  const mac = shellPage({ platform: 'mac', tauri: { window: { getCurrentWindow: () => ({ setTheme: t => macSent.push(t) }) } } });
+  mac.prefs.set('theme', 'light');
+  assert.deepEqual(macSent, [], 'the macOS material follows the OS, not the app (spec "Glass gating")');
+  const failing = { window: { getCurrentWindow: () => ({ setTheme: () => Promise.reject(new Error('not allowed')) }) } };
+  assert.doesNotThrow(() => shellPage({ platform: 'other', tauri: failing }).prefs.set('theme', 'light'), 'a refused permission only warns');
+});
+
+test('footer: Settings and Keyboard shortcuts are aria-disabled until P14 and P13, and still have their tooltips', () => {
+  const { p, $ } = shellPage();
+  for (const [id, name] of [['settingsBtn', 'Settings'], ['shortcutsBtn', 'Keyboard shortcuts']]) {
+    assert.deepEqual([$(id).getAttribute('aria-disabled'), $(id).getAttribute('aria-label'), texts(tipOf(p, $(id)))], ['true', name, name]);
+  }
 });

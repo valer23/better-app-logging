@@ -17,19 +17,21 @@ const BENCH_BINDINGS = [
 const BENCH_REASSIGNED = ['flushBatch', 'iosLive', 'MAX_RETAINED'];
 
 const { api, run } = loadLegacy([
-  'toggleTheme', 'setLogZoom',
+  'setLogZoom',
   'csvCell', 'formatTs', 'parseIosText', 'parseCsvRows', 'doExport', 'handleFile',
   ...BENCH_BINDINGS,
 ]);
 const prefs = run('ALV.prefs');
 
-test('toggleTheme cycles Dark, Light, System through ALV.prefs', () => {
+test('Ctrl+Shift+L (the shell\'s view.theme) cycles Dark, Light, System through ALV.prefs on the page', () => {
+  const keys = run('ALV.keys');
+  const press = () => keys.dispatch({ key: 'L', code: 'KeyL', ctrlKey: true, shiftKey: true, preventDefault() {} }, null);
   prefs.set('theme', 'dark');
-  api.toggleTheme();
+  assert.equal(press(), 'view.theme');
   assert.equal(prefs.get('theme'), 'light');
-  api.toggleTheme();
+  press();
   assert.equal(prefs.get('theme'), 'system');
-  api.toggleTheme();
+  press();
   assert.equal(prefs.get('theme'), 'dark');
 });
 

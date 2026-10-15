@@ -30,6 +30,7 @@ const INDIRECT_IDS = [
   'dropzone', 'livePanel', 'loading', 'logWrapper',
   'iosRepairBtn', 'setupRepairBtn', 'setupUnpairBtn', 'setupPairBtn', 'stallRepairBtn',
   'androidStatus', 'androidStatusText', 'iosStatus', 'iosStatusText',
+  'settingsBtn', 'shortcutsBtn',   // shell.js: tooltips over an [id, text] array
   'liveBarAndroidDropped', 'liveBarAndroidDroppedText', 'liveBarIosDropped', 'liveBarIosDroppedText',
 ];
 
@@ -88,6 +89,20 @@ test('app grid: #app holds aside#sidebar (labelled, with the #sidebarHeader band
     assert.equal(findById(root, id).parent.attrs.id, 'main', `#${id} is a child of #main`);
   }
   for (const id of ['setupModal', 'stallModal', 'overlayRoot']) assert.equal(findById(root, id).parent, body, `#${id} stays on <body>`);
+});
+
+test('sidebar footer: Settings and Keyboard shortcuts are aria-disabled stubs, the theme button replaced the legacy switch', () => {
+  const foot = findById(root, 'sidebarFooter');
+  assert.equal(foot.parent.attrs.id, 'sidebar');
+  assert.deepEqual(foot.children.map(el => el.attrs.id), ['settingsBtn', 'shortcutsBtn', 'themeBtn']);
+  for (const id of ['settingsBtn', 'shortcutsBtn']) assert.deepEqual([findById(root, id).attrs['aria-disabled'], 'disabled' in findById(root, id).attrs], ['true', false], id);
+  assert.equal(findById(root, 'themeIcon').tag, 'use');
+  assert.equal(findById(root, 'themeToggle'), null);
+  assert.doesNotMatch(read(path.join(ASSETS, 'css', 'legacy.css')), /\.theme-switch/);
+  assert.doesNotMatch(read(path.join(ASSETS, 'js', 'dom.js')), /\.theme-switch/, 'INTERACTIVE drops the deleted class');
+  assert.doesNotMatch(inlineScripts(html).at(-1).code, /_syncThemeButton|toggleTheme|THEME_LABEL/);
+  const caps = JSON.parse(read(path.join(ROOT, 'src-tauri', 'capabilities', 'default.json')));
+  assert.ok(caps.permissions.includes('core:window:allow-set-theme'), 'the Windows caption follows the app theme (spec "Window chrome")');
 });
 
 test('sidebar: DEVICES comes before SESSIONS; its rows are built into #deviceList', () => {

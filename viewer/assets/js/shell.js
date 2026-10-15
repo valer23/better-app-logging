@@ -101,11 +101,11 @@
     ios: { badge: 'i', cls: 'plat plat-i', fallback: 'iPhone' },
   };
 
-  // createShell({ doc, win, dom, ui, keys, state, actions, now }) → { sync(), markStalled(platform) }. Called
-  // once, by the legacy script, before its first selectSession. state() returns what the shell shows (the
-  // legacy shellState()); actions are the legacy functions it calls. Without `state` only the drag bands are
-  // wired (the drag tests).
-  function createShell({ doc, win, dom, ui, keys, state, actions, now = () => win.performance.now() }) {
+  // createShell({ doc, win, dom, ui, keys, prefs, state, actions, now }) → { sync(), markStalled(platform) }.
+  // Called once, by the legacy script, before its first selectSession. state() returns what the shell shows
+  // (the legacy shellState()); actions are the legacy functions it calls. Without `state` only the drag
+  // bands are wired (the drag tests).
+  function createShell({ doc, win, dom, ui, keys, prefs, state, actions, now = () => win.performance.now() }) {
     const warn = (msg, err) => { if (g.console) g.console.warn(msg, err); };
     const $ = id => doc.getElementById(id);
     // window.__TAURI__ exists only in the app (withGlobalTauri); a browser tab has nothing to drag.
@@ -269,6 +269,33 @@
       }
       setText($('devCount'), String(detected));
     }
+
+    // ---- Footer: Settings and Keyboard shortcuts wait for P14 and P13; the theme cycle (spec) ----
+    for (const [id, text] of [['settingsBtn', 'Settings'], ['shortcutsBtn', 'Keyboard shortcuts']]) if ($(id)) ui.tooltip($(id), { text });
+    const themeBtn = $('themeBtn');
+    const cycleTheme = () => prefs.set('theme', prefs.nextTheme(prefs.get('theme')));
+    keys.register({ id: 'view.theme', keys: 'Shift+Mod+L', inText: true, run: cycleTheme });
+    const themeTip = themeBtn ? ui.tooltip(themeBtn, { text: '', shortcut: 'view.theme' }) : null;
+    if (themeBtn) themeBtn.addEventListener('click', cycleTheme);
+    let captionSent;   // what the Windows caption was last set to; undefined until the first call
+    // prefs calls this on every change, including an OS appearance change while System is chosen.
+    function syncTheme(ps) {
+      const v = themeView(ps.theme, ps.themeResolved, prefs.nextTheme(ps.theme));
+      setAttr($('themeIcon'), 'href', `#i-${v.icon}`);
+      setAttr(themeBtn, 'aria-label', v.label);
+      if (themeTip) themeTip.setText(v.tip);
+      // Windows keeps its native caption bar (spec "Window chrome"); it follows the app theme, and null
+      // follows the OS. macOS never calls it: its native material follows the OS (spec "Glass gating").
+      if (ps.platform === 'mac') return;
+      const want = ps.theme === 'system' ? null : ps.themeResolved;
+      if (want === captionSent) return;
+      captionSent = want;
+      const tw = win.__TAURI__;
+      if (!tw || !tw.window) return;
+      try { Promise.resolve(tw.window.getCurrentWindow().setTheme(want)).catch(err => warn('setTheme failed', err)); } catch (err) { warn('setTheme failed', err); }
+    }
+    prefs.onChange(syncTheme);
+    syncTheme(prefs.state());
 
     function render(st) {
       if (deviceList) syncDevices(st);

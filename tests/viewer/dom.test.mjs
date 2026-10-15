@@ -110,7 +110,7 @@ test('INTERACTIVE carries every roadmap selector, the widget roles the shell bui
   const sel = ALV.createDom(fakeDocument()).INTERACTIVE.split(',').map(s => s.trim());
   for (const s of ['button', 'input', 'select', 'textarea', 'a', 'label', '[role=button]', '[role=switch]', '[role=radio]',
     '[role=tab]', '[role=slider]', '[role=combobox]', '[role=checkbox]', '[role=menuitem]', '[role=menuitemradio]',
-    '[role=menuitemcheckbox]', '[role=option]', '[role=link]', '[data-no-drag]', '.zoom-group', '.theme-switch', '.glass-switch']) {
+    '[role=menuitemcheckbox]', '[role=option]', '[role=link]', '[data-no-drag]', '.zoom-group', '.glass-switch']) {
     assert.ok(sel.includes(s), `INTERACTIVE lacks ${s}`);
   }
 });

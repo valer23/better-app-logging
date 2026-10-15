@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capabilities for the main AppLogsViewer window. The frontend talks to the Rust host exclusively over HTTP/WebSocket (axum on :8780, :8765, :8766) for data. The one exception is window-control IPC: `start_dragging` is invoked from the page so the topbar can drag the native window when the title bar is overlay-hidden (macOS Liquid Glass mode).",
+  "description": "Capabilities for the main AppLogsViewer window. The frontend talks to the Rust host exclusively over HTTP/WebSocket (axum on :8780, :8765, :8766) for data. The one exception is window-control IPC: `start_dragging` and `toggle_maximize` let the sidebar header and the top bar drag and maximise the native window when the title bar is overlay-hidden (macOS), and `set_theme` lets the Windows caption bar follow the app theme.",
   "windows": ["main"],
   "remote": {
     "urls": ["http://localhost:8780/*", "http://localhost:8780"]
@@ -11,6 +11,7 @@
     "core:window:default",
     "core:window:allow-start-dragging",
     "core:window:allow-toggle-maximize",
+    "core:window:allow-set-theme",
     "core:webview:default",
     "core:event:default"
   ]

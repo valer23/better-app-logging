@@ -14,7 +14,7 @@ export const ICON_DIR = path.join(ROOT, 'viewer', 'assets', 'icons');
 export const VERSION = '1.49.0';
 export const INTEGRITY = 'sha512-gSjtl7bR2v26oDInh2Wua1PrF2BRRXl9inhnLWcFfnRqRShmgZvlFRisPHqTfU7kxsuZU8ThNjAFotbInrzKow==';
 export const TARBALL_SHA256 = 'c8c9d5dcbc50f388afea623ce2bcbef5788eb0b2d084081aa52d6adaae4ebba3';
-export const ICONS = ['check', 'chevron-down', 'circle-alert', 'download', 'ellipsis', 'file-json', 'file-spreadsheet', 'file-text', 'folder-open', 'info', 'play', 'radio', 'search', 'square', 'triangle-alert', 'x'];
+export const ICONS = ['check', 'chevron-down', 'circle-alert', 'download', 'ellipsis', 'file-json', 'file-spreadsheet', 'file-text', 'folder-open', 'info', 'keyboard', 'monitor', 'moon', 'play', 'radio', 'search', 'settings', 'square', 'sun', 'triangle-alert', 'x'];
 export const START = '<!-- lucide-sprite:start -->';
 export const END = '<!-- lucide-sprite:end -->';
 const SHAPES = /^<(path|circle|rect|line|polyline|polygon|ellipse)\b[^<>]*\/>$/;

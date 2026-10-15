@@ -58,4 +58,7 @@
   .dev-row[data-state="stalled"] .dev-dot, .dev-row[data-state="driver"] .dev-dot, .dev-row[data-state="error"] .dev-dot { width: 8px; height: 8px; border-radius: 0; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
   .dev-actions { position: absolute; top: 50%; right: 6px; display: flex; gap: 2px; transform: translateY(-50%); opacity: 0; }
   .dev-row:hover .dev-actions, .dev-row:focus-within .dev-actions, .dev-row[data-menu="open"] .dev-actions { opacity: 1; }
+
+  /* Footer (spec: 44 px, top hairline): Settings, Keyboard shortcuts, Theme. */
+  #sidebarFooter { display: flex; align-items: center; gap: 4px; height: 44px; padding: 0 8px; flex: none; border-top: 1px solid var(--hairline); }
 }

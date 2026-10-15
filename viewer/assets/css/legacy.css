@@ -109,9 +109,6 @@
   }
 
   .topbar-spacer { flex: 1; }
-  /* Animated theme toggle — track + sliding thumb with sun/moon glyphs.
-     Thumb uses var(--lg-text) so it has high contrast in both palettes
-     (light thumb on dark track, dark thumb on light track). */
   /* Zoom controls — scale the log table content via --log-fs.
      Only affects the table; UI chrome (buttons, tabs) stays at native
      pixel size so the controls remain usable on small laptops. */
@@ -119,18 +116,6 @@
   .zoom-btn { background: transparent; border: 0; color: var(--lg-muted); font-family: var(--font-ui); font-size: 11px; font-weight: 600; padding: 4px 9px; cursor: pointer; transition: color .15s, background .15s; }
   .zoom-btn:hover { color: var(--lg-text); background: var(--lg-surface2); }
   .zoom-btn + .zoom-btn { border-left: 1px solid var(--lg-border); }
-
-  .theme-switch { position: relative; display: inline-flex; align-items: center; align-self: center; cursor: pointer; user-select: none; }
-  .theme-switch input { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
-  .theme-switch-track { position: relative; width: 60px; height: 28px; background: var(--lg-surface2); border: 1px solid var(--lg-muted); border-radius: 999px; display: inline-flex; align-items: center; justify-content: space-between; padding: 0 8px; box-sizing: border-box; transition: background .2s, border-color .2s; }
-  .theme-switch:hover .theme-switch-track { border-color: var(--lg-accent); }
-  .theme-switch-icon { font-size: 12px; line-height: 1; pointer-events: none; opacity: .9; }
-  .theme-switch-icon.sun  { color: var(--lg-yellow); }
-  .theme-switch-icon.moon { color: var(--lg-accent); }
-  .theme-switch-thumb { position: absolute; top: 2px; left: 2px; width: 22px; height: 22px; background: var(--lg-text); border: 1px solid var(--lg-muted); border-radius: 50%; transition: transform .25s cubic-bezier(.4, 0, .2, 1), background .2s, border-color .2s; box-shadow: 0 2px 4px rgba(0, 0, 0, .45); }
-  /* Dark = unchecked, thumb on the right (over moon). Light = checked, thumb on the left (over sun). */
-  .theme-switch-track .theme-switch-thumb { transform: translateX(30px); }
-  .theme-switch input:checked + .theme-switch-track .theme-switch-thumb { transform: translateX(0); }
 
   /* Liquid Glass mode pill — same affordance as the theme switch.
      Hidden on non-macOS platforms via .platform-mac class (set by JS). */
@@ -423,8 +408,6 @@
      missing here. !important because several selectors above out-rank a single class. */
   @media (prefers-reduced-motion: reduce) {
     :where(.app:not([data-motion="off"])) .zoom-btn,
-    :where(.app:not([data-motion="off"])) .theme-switch-track,
-    :where(.app:not([data-motion="off"])) .theme-switch-thumb,
     :where(.app:not([data-motion="off"])) .glass-switch-track,
     :where(.app:not([data-motion="off"])) .glass-switch-label,
     :where(.app:not([data-motion="off"])) .glass-switch-thumb,
@@ -449,8 +432,6 @@
     :where(.app:not([data-motion="off"])) .spinner { animation: none !important; transition: none !important; }
   }
   .app[data-motion="reduce"] .zoom-btn,
-  .app[data-motion="reduce"] .theme-switch-track,
-  .app[data-motion="reduce"] .theme-switch-thumb,
   .app[data-motion="reduce"] .glass-switch-track,
   .app[data-motion="reduce"] .glass-switch-label,
   .app[data-motion="reduce"] .glass-switch-thumb,

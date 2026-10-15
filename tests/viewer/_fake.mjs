@@ -1,7 +1,7 @@
 // A small fake page for the DOM side of the primitives (ui.test.mjs) and the shell (shell.test.mjs):
 // elements with attributes, children, listeners and the few layout reads they make, a fake window with a
 // manual clock, and the viewer's classic scripts loaded into one EMPTY vm context.
-import { loadPureModules, read, HTML_PATH } from './_load.mjs';
+import { loadPureModules, read, HTML_PATH, memoryStorage, fakeMatchMedia, fakeRoot } from './_load.mjs';
 import { parseHtml, findById } from './_html.mjs';
 
 // fakePage({ files, platform, tauri }): `files` are the viewer scripts to load (dom.js, keys.js and ui.js
@@ -123,9 +123,15 @@ export function mount(p, id) {
 
 // A shell (ALV.createShell) on a fake page with the page's sidebar mounted. `st` overrides what the legacy
 // script's shellState() returns; an action without a function in `actions` is recorded in `calls`.
-export function shellPage({ platform = 'mac', st = {}, actions = {}, files = ['dom.js', 'keys.js', 'ui.js', 'shell.js'] } = {}) {
-  const p = fakePage({ files, platform });
+export const DARK = '(prefers-color-scheme: dark)';
+const UA = { mac: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', other: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' };
+// prefs: a real ALV.createPrefs on memory storage, with the OS appearance `osDark` (mm.fire changes it).
+export function shellPage({ platform = 'mac', st = {}, actions = {}, tauri, osDark = true, files = ['prefs.js', 'dom.js', 'keys.js', 'ui.js', 'shell.js'] } = {}) {
+  const p = fakePage({ files, platform, tauri });
   mount(p, 'sidebar');
+  const mm = fakeMatchMedia({ [DARK]: osDark });
+  const prefs = p.ALV.createPrefs({ storage: memoryStorage(), matchMedia: mm, userAgent: UA[platform] });
+  prefs.boot(fakeRoot());
   const live = { kind: 'live', name: 'Live session', all: [], follow: true };
   const file = { kind: 'file', name: 'File', all: [], follow: false };
   const calls = [];
@@ -138,7 +144,7 @@ export function shellPage({ platform = 'mac', st = {}, actions = {}, files = ['d
     ...st,
   };
   const act = new Proxy(actions, { get: (o, k) => o[k] || ((...a) => calls.push([k, ...a])) });
-  const shell = p.ALV.createShell({ doc: p.doc, win: p.win, dom: p.dom, ui: p.ui, keys: p.keys, now: p.now, state: () => state, actions: act });
+  const shell = p.ALV.createShell({ doc: p.doc, win: p.win, dom: p.dom, ui: p.ui, keys: p.keys, prefs, now: p.now, state: () => state, actions: act });
   shell.sync();
-  return { p, shell, state, live, file, calls, $: id => p.byId[id] };
+  return { p, shell, state, live, file, calls, prefs, mm, $: id => p.byId[id] };
 }
