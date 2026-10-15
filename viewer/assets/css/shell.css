@@ -15,7 +15,7 @@
   /* macOS: the traffic lights sit over the left of the band (titleBarStyle Overlay), so no title there. */
   .app[data-platform="mac"] #sidebarHeader { padding-left: 78px; }
   .app[data-platform="mac"] .side-title { display: none; }
-  #sidebarBody { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 0 8px 8px; }
+  #sidebarBody { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 4px 8px 8px; }   /* 4 px top: the 2 px focus ring + 2 px offset on the first stop (#cmdTrigger) would be clipped by this scroll container */
 
   /* Sidebar content (spec: command trigger, then sections with a collapsible header, label and count). */
   .side-cmd { display: flex; align-items: center; gap: 8px; width: 100%; height: var(--ctl-h); margin: 0 0 8px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text-2); }

@@ -115,6 +115,17 @@ test('window chrome: the macOS traffic-light inset is on #sidebarHeader, no long
   assert.match(read(path.join(ASSETS, 'css', 'shell.css')), /^@layer app \{$/m);
 });
 
+test('#sidebarBody scrolls, so its top padding keeps the 4 px focus ring of the first stop (#cmdTrigger) unclipped', () => {
+  const decls = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')))
+    .filter(r => r.selectors.includes('#sidebarBody')).flatMap(r => C.declarations(r.body));
+  assert.ok(decls.some(d => d.prop === 'overflow' && d.value === 'auto'), 'still the scroll container');
+  const pad = decls.find(d => d.prop === 'padding');
+  assert.ok(pad, '#sidebarBody sets padding');
+  const [top, right = top, , left = right] = pad.value.split(/\s+/).map(parseFloat);
+  // The global ring (outline 2 px, offset 2 px) reaches 4 px outside a control; overflow clips beyond the padding box.
+  for (const [side, v] of Object.entries({ top, right, left })) assert.ok(v >= 4, `padding-${side} ${v}px clips the focus ring`);
+});
+
 test('#overlayRoot is a direct child of <body>, the last element before the scripts, with its layers in paint order', () => {
   const body = root.children.find(el => el.tag === 'html').children.find(el => el.tag === 'body');
   const nonScript = body.children.filter(el => el.tag !== 'script');
