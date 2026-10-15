@@ -12,4 +12,9 @@
   .ov { position: fixed; top: 0; left: 0; pointer-events: auto; }
   .toast-region { position: fixed; right: var(--toast-right); bottom: var(--toast-bottom); display: flex; flex-direction: column; gap: 8px; pointer-events: auto; }
   .toast-stack { display: flex; flex-direction: column; gap: 8px; }
+
+  /* Lucide icons (assets/icons/SOURCES.md). The sprite holds geometry only; stroke comes from here (spec:
+     stroke 1.75, currentColor). Size is the foundation's .icon (var(--icon)). */
+  .icon { fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+  .icon-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
 }

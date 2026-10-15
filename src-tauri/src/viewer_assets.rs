@@ -42,6 +42,7 @@ pub static FILES: &[(&str, &[u8])] = embed![
     "fonts/geist-5.3.0-latin.woff2",
     "fonts/jetbrains-mono-5.3.0-latin-ext.woff2",
     "fonts/jetbrains-mono-5.3.0-latin.woff2",
+    "icons/LICENSE-lucide.txt",
     "js/dev-bench.js",
     "js/dom.js",
     "js/keys.js",
@@ -52,7 +53,7 @@ pub static FILES: &[(&str, &[u8])] = embed![
 
 /// Files under `viewer/assets/` that are kept in the repo but never served.
 #[cfg(test)]
-const NOT_SERVED: &[&str] = &["fonts/SHA256SUMS", "fonts/SOURCES.md"];
+const NOT_SERVED: &[&str] = &["fonts/SHA256SUMS", "fonts/SOURCES.md", "icons/SOURCES.md"];
 
 /// Content type and cache policy by extension; `None` for anything we do not serve.
 pub fn mime_for(path: &str) -> Option<(&'static str, bool)> {
@@ -141,6 +142,7 @@ mod tests {
             "css%2Fbase.css",
             "CSS/BASE.CSS",
             "fonts/SOURCES.md",
+            "icons/SOURCES.md",
         ] {
             assert!(lookup(bad).is_none(), "{bad:?} must not resolve");
         }

@@ -142,6 +142,47 @@ export function dragErrors(root, js, bandIds) {
   return out;
 }
 
+// Icons (spec: Lucide geometry, 24 viewBox, aria-hidden). The inline sprite's <symbol id="i-NAME">
+// elements hold plain shapes only; every <svg> is aria-hidden; every <use href="#i-NAME"> and every
+// icon('NAME') literal in the JS names a symbol. Attribute names are lower case in the parsed tree.
+const SHAPE_TAGS = new Set(['path', 'circle', 'rect', 'line', 'polyline', 'polygon', 'ellipse']);
+export function spriteSymbols(root) {
+  return elements(root).filter(el => el.tag === 'symbol' && /^i-/.test(el.attrs.id || '')).map(el => el.attrs.id.slice(2));
+}
+export function iconErrors(root, js) {
+  const have = new Set(spriteSymbols(root));
+  const out = [];
+  for (const el of elements(root)) {
+    if (el.tag === 'svg' && el.attrs['aria-hidden'] !== 'true') out.push(`line ${el.line}: <svg> without aria-hidden="true"`);
+    if (el.tag === 'symbol') {
+      if (Object.keys(el.attrs).sort().join(',') !== 'id,viewbox' || el.attrs.viewbox !== '0 0 24 24' || !/^i-[a-z0-9-]+$/.test(el.attrs.id)) {
+        out.push(`line ${el.line}: <symbol> must be <symbol id="i-name" viewBox="0 0 24 24"> with no other attribute`);
+      }
+      for (const c of elements(el)) {
+        if (!SHAPE_TAGS.has(c.tag) || Object.keys(c.attrs).some(a => a.startsWith('on') || a === 'style' || a.endsWith('href'))) {
+          out.push(`line ${c.line}: <${c.tag}> in a sprite symbol is not a plain shape`);
+        }
+      }
+    }
+    if (el.tag === 'use') {
+      const m = /^#i-([\w-]+)$/.exec(el.attrs.href || '');
+      if (!m || !have.has(m[1])) out.push(`line ${el.line}: <use href="${el.attrs.href}"> does not name a sprite symbol`);
+    }
+  }
+  for (const m of js.matchAll(/\bicon\(\s*'([\w-]+)'/g)) if (!have.has(m[1])) out.push(`icon('${m[1]}') has no sprite symbol`);
+  return out;
+}
+// Symbols nothing uses: neither a <use href="#i-NAME"> in the page nor a 'NAME' string literal in the JS
+// (toast kinds map to icon names in ui.js). Keeps the sprite to the icons the UI shows.
+export function unusedSymbols(root, js) {
+  const used = new Set([...js.matchAll(/'([\w-]+)'/g)].map(m => m[1]));
+  for (const el of elements(root)) {
+    const m = el.tag === 'use' && /^#i-([\w-]+)$/.exec(el.attrs.href || '');
+    if (m) used.add(m[1]);
+  }
+  return spriteSymbols(root).filter(n => !used.has(n)).map(n => `sprite symbol i-${n} is never used`);
+}
+
 // CSS: comments and strings blanked before structural checks.
 export function stripCss(css) {
   return css.replace(/\/\*[\s\S]*?\*\//g, '').replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, '""');

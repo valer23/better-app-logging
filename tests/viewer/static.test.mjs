@@ -5,10 +5,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { parseHtml, elements } from './_html.mjs';
+import { parseHtml, elements, findById } from './_html.mjs';
 import { ROOT, ASSETS, HTML_PATH, read, listAssets, inlineScripts } from './_load.mjs';
 import * as C from './_checks.mjs';
 import { build as buildFoundation, REGEN_CMD } from './gen-foundation.mjs';
+import * as SPRITE from './gen-sprite.mjs';
 
 const html = read(HTML_PATH);
 const { root, errors: parseErrors } = parseHtml(html);
@@ -87,6 +88,30 @@ test('INTERACTIVE is one literal, in dom.js, and the legacy drag code reads it f
   assert.deepEqual(literals, ['viewer/assets/js/dom.js']);
   assert.equal((jsText.match(/const INTERACTIVE\s*=\s*'/g) || []).length, 1);
   assert.match(inlineScripts(html).at(-1).code, /const INTERACTIVE = ALV\.dom\.INTERACTIVE;/);
+});
+
+test('the Lucide sprite is the first element of <body>: aria-hidden, zero-size, exactly the generator\'s icons', () => {
+  const body = root.children.find(el => el.tag === 'html').children.find(el => el.tag === 'body');
+  const sprite = body.children[0];
+  assert.equal(sprite.attrs.id, 'iconSprite');
+  assert.deepEqual([sprite.attrs['aria-hidden'], sprite.attrs.width, sprite.attrs.height], ['true', '0', '0']);
+  assert.deepEqual(C.spriteSymbols(root), SPRITE.ICONS);
+  assert.deepEqual(elements(sprite).filter(el => el.tag === 'symbol').map(el => el.attrs.id), SPRITE.ICONS.map(n => `i-${n}`), 'every symbol sits in #iconSprite');
+  assert.equal(html.split(SPRITE.START).length, 2);
+  assert.equal(html.split(SPRITE.END).length, 2);
+});
+
+test('icons/SOURCES.md lists exactly the sprite\'s icons with their upstream hashes, and the licence ships', () => {
+  const sources = read(path.join(ASSETS, 'icons', 'SOURCES.md'));
+  const rows = [...sources.matchAll(/^\| `([\w-]+)` \| `lucide-static@1\.49\.0\/icons\/([\w-]+)\.svg` \| `[0-9a-f]{64}` \|$/gm)];
+  assert.deepEqual(rows.map(m => m[1]), C.spriteSymbols(root));
+  assert.ok(rows.every(m => m[1] === m[2]), 'each row names its own upstream file');
+  assert.ok(sources.includes(SPRITE.INTEGRITY) && sources.includes(SPRITE.TARBALL_SHA256), 'package integrity and tarball hash recorded');
+  assert.match(read(path.join(ASSETS, 'icons', 'LICENSE-lucide.txt')), /^ISC License\n/);
+});
+
+test('icons: every <svg> is aria-hidden, symbols are plain 24-unit shapes, every icon reference resolves', () => {
+  assert.deepEqual(C.iconErrors(root, jsText), []);
 });
 
 test('the checks reject deliberately broken input', () => {
@@ -230,6 +255,17 @@ test('the checks reject deliberately broken input', () => {
   assert.notDeepEqual(C.fontManifestErrors(['fonts/a.woff2', 'fonts/sub/x.woff2'], `${H}  a.woff2\n`), []);
   assert.notDeepEqual(C.fontManifestErrors(['fonts/a.woff2', 'fonts/sub/OFL-x.txt'], `${H}  a.woff2\n`), []);
   assert.notDeepEqual(C.fontManifestErrors(['fonts/a.woff2', 'fonts/ofl-x.TXT'], `${H}  a.woff2\n`), []);
+  const SPR = '<svg aria-hidden="true"><symbol id="i-a" viewBox="0 0 24 24"><path d="M0 0"/></symbol><symbol id="i-b" viewBox="0 0 24 24"><circle r="1"/></symbol></svg>';
+  assert.deepEqual(C.iconErrors(h(`${SPR}<svg aria-hidden="true"><use href="#i-a"/></svg>`), "icon('b')"), []);
+  assert.notDeepEqual(C.iconErrors(h(`${SPR}<svg aria-hidden="true"><use href="#i-nope"/></svg>`), ''), []);
+  assert.notDeepEqual(C.iconErrors(h(`${SPR}<svg><use href="#i-a"/></svg>`), ''), [], 'an <svg> without aria-hidden');
+  assert.notDeepEqual(C.iconErrors(h(SPR), "icon('nope')"), []);
+  assert.notDeepEqual(C.iconErrors(h('<svg aria-hidden="true"><symbol id="i-a" viewBox="0 0 16 16"><path d="M0 0"/></symbol></svg>'), ''), []);
+  assert.notDeepEqual(C.iconErrors(h('<svg aria-hidden="true"><symbol id="i-a" viewBox="0 0 24 24" fill="red"><path d="M0 0"/></symbol></svg>'), ''), []);
+  assert.notDeepEqual(C.iconErrors(h('<svg aria-hidden="true"><symbol id="i-a" viewBox="0 0 24 24"><path d="M0 0" onclick="x()"/></symbol></svg>'), ''), []);
+  assert.notDeepEqual(C.iconErrors(h('<svg aria-hidden="true"><symbol id="i-a" viewBox="0 0 24 24"><image href="x.png"/></symbol></svg>'), ''), []);
+  assert.deepEqual(C.unusedSymbols(h(`${SPR}<svg aria-hidden="true"><use href="#i-a"/></svg>`), "const K = { error: 'b' };"), []);
+  assert.deepEqual(C.unusedSymbols(h(`${SPR}<svg aria-hidden="true"><use href="#i-a"/></svg>`), ''), ['sprite symbol i-b is never used']);
 });
 
 test('every assets/ reference resolves to a file, and every asset file is referenced', () => {
@@ -241,7 +277,7 @@ test('every assets/ reference resolves to a file, and every asset file is refere
   ];
   assert.deepEqual(refs.filter(r => !files.has(r)), [], 'references to missing files');
   // Licence texts and font provenance ship in the repo without being referenced by the page.
-  const UNREFERENCED_OK = [/^fonts\/OFL-[\w-]+\.txt$/, /^fonts\/SOURCES\.md$/, /^fonts\/SHA256SUMS$/];
+  const UNREFERENCED_OK = [/^fonts\/OFL-[\w-]+\.txt$/, /^fonts\/SOURCES\.md$/, /^fonts\/SHA256SUMS$/, /^icons\/LICENSE-lucide\.txt$/, /^icons\/SOURCES\.md$/];
   const orphans = assetFiles.filter(f => !refs.includes(f) && !UNREFERENCED_OK.some(re => re.test(f)));
   assert.deepEqual(orphans, [], 'asset files nothing references');
 });
