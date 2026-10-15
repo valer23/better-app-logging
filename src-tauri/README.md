@@ -236,6 +236,29 @@ Currently skipped — see the **Status** section above. To enable:
 
 Refer to the [Tauri v2 signing guide](https://v2.tauri.app/distribute/sign/).
 
+## Regenerating the app icon
+
+The icon masters are four SVGs in `icons/source/`:
+
+- `app-icon-macos.svg`: the macOS master, on Apple's icon grid (an 824×824 body at 100,100 on a 1024 canvas, with the template drop shadow). It is used only for `icon.icns`.
+- `app-icon.svg`: the full-bleed variant (tile inset 32), used for everything else: `.ico`, the Windows Store logos, the Linux PNGs, iOS and Android.
+- `app-icon-16.svg` and `app-icon-macos-16.svg`: the same mark hand-drawn on a 16×16 pixel grid (full-bleed, and inset one pixel for macOS). They exist only for the 16 px entries.
+
+The rows of the 1024 masters sit on a 32-unit grid, so they land on whole pixels at 32 px. At 16 px every edge falls on a half pixel and the rows smear, so the 16 px entries are not rasterised from them. `app-icon-16.svg` is also the viewer favicon and the topbar mark in `viewer/applogs-viewer.html`, drawn inline.
+
+```bash
+cd src-tauri
+cargo tauri icon icons/source/app-icon.svg --ios-color '#18181b' --output icons
+tmp=$(mktemp -d)
+cargo tauri icon icons/source/app-icon-macos.svg --output "$tmp"
+cp "$tmp/icon.icns" icons/icon.icns
+rm -rf "$tmp"
+# swap the hinted 16 px rasters into icon.ico and icon.icns
+python3 icons/source/apply-hinted-16px.py
+```
+
+`cargo tauri icon` rasterises the SVG at each target size, which keeps the 16–32 px icons sharper than downsampling a 1024 PNG. The second run is only there for `icon.icns`; its other outputs are thrown away. The last step re-renders the two 16 px SVGs with `rsvg-convert` and patches them into the `.ico` 16 px entry and the `.icns` 16×16 slot (`is32` + `s8mk`). Run it every time `cargo tauri icon` has run, or those two entries go back to the smeared rasters. To preview a master, use `rsvg-convert -w 1024 -h 1024 icons/source/app-icon.svg -o app-icon.png` (Homebrew `librsvg`).
+
 ## Layout
 
 ```
@@ -246,7 +269,7 @@ src-tauri/
 ├── tauri.macos.conf.json       # macOS-specific overlay (bundle resources, etc.)
 ├── tauri.windows.conf.json     # Windows-specific overlay (NSIS hooks, vendor dir)
 ├── capabilities/default.json   # capability allowlist (shell:default, scoped subset)
-├── icons/                      # .icns + .ico + iOS PNGs
+├── icons/                      # generated .icns/.ico/PNGs; source/ holds the SVG masters
 ├── dist/index.html             # placeholder for Tauri bundler — never user-facing
 ├── scripts/                    # bundle-tooling-{macos.sh,windows.ps1}, installer-hooks.nsh
 ├── build-tauri.sh              # macOS wrapper (vendor tooling → cargo tauri build)
