@@ -147,6 +147,40 @@
       });
     }
 
+    // ---- The collapsed rail (⌘B). prefs keeps it (data-sidebar on <html>); a rail item's tooltip shows only
+    // while collapsed, on the right (spec). ----
+    const rail = () => prefs.get('sidebar') === 'collapsed';
+    const railTip = (el, text) => (el ? ui.tooltip(el, { text, side: 'right', when: rail }) : null);
+    const toggle = $('sidebarToggle');
+    const toggleSidebar = () => prefs.set('sidebar', rail() ? 'expanded' : 'collapsed');
+    // Not over the legacy setup or stall modal (the rule ⌘E and ⌘O follow): collapsing moves focus to the
+    // toggle behind the modal.
+    const modalOpen = () => !!doc.querySelector('.modal-overlay.visible');
+    keys.register({ id: 'view.sidebar', keys: 'Mod+B', inText: true, when: () => !modalOpen(), run: toggleSidebar });
+    const toggleTip = toggle ? ui.tooltip(toggle, { text: 'Hide sidebar', shortcut: 'view.sidebar' }) : null;
+    if (toggle) toggle.addEventListener('click', toggleSidebar);
+    railTip($('cmdTrigger'), 'Search actions');
+    railTip($('sessLive'), 'Live session');
+    // The DEVICES rows by platform (filled below). Declared here: syncSidebar runs now, at creation.
+    const rows = {};
+    function syncSidebar() {
+      const collapsed = rail();
+      const label = collapsed ? 'Show sidebar' : 'Hide sidebar';
+      setAttr(toggle, 'aria-label', label);
+      setAttr(toggle, 'aria-expanded', String(!collapsed));
+      if (toggleTip) toggleTip.setText(label);
+      if (!collapsed) return;
+      // Focus on something the rail hides (a row's Start/Stop or More, or its open menu) would be lost: it
+      // goes to the toggle (one element, never moved), and a row menu anchored to a hidden More closes.
+      const f = doc.activeElement;
+      const inRowMenu = PLATFORMS.some(p => rows[p] && f && rows[p].surface.contains(f));
+      for (const p of PLATFORMS) if (rows[p]) rows[p].menu.close({ restoreFocus: false });
+      const hidden = f && $('sidebar') && $('sidebar').contains(f) && f.closest('[data-rail-hide], .side-sec-h, .dev-actions');
+      if (toggle && (inRowMenu || hidden)) toggle.focus();
+    }
+    prefs.onChange(syncSidebar);
+    syncSidebar();
+
     // ---- SESSIONS: "Live session" first, the opened file, "Open log file…" (spec) ----
     keys.register({ id: 'session.open', keys: 'Mod+O', inText: true, run: () => actions.openFile() });
     setText($('openFileKbd'), keys.label('session.open'));
@@ -170,7 +204,6 @@
     // the row is the device the platform's picker holds; a new device gets a new row (key: platform, id and
     // name), and the old row's menu and tooltips are destroyed with it. ----
     const deviceList = $('deviceList');
-    const rows = {};
     const meter = createRateMeter(1000);
     let rates = { android: 0, ios: 0 };
     // The log-line counter as the last tick (or markStalled) saw it. A stall ends only when it moves: devices,
@@ -219,7 +252,7 @@
         onClose: () => r.li.removeAttribute('data-menu'),
       });
       r.startTip = ui.tooltip(r.start, { text: '' });
-      r.tips.push(r.startTip, ui.tooltip(r.more, { text: `More for ${name}` }));
+      r.tips.push(r.startTip, ui.tooltip(r.more, { text: `More for ${name}` }), railTip(r.main, name));
       return r;
     }
     // The old row goes: its menu and tooltips are destroyed, and focus that was in it (or in its open menu)
@@ -274,11 +307,11 @@
     }
 
     // ---- Footer: Settings and Keyboard shortcuts wait for P14 and P13; the theme cycle (spec) ----
-    for (const [id, text] of [['settingsBtn', 'Settings'], ['shortcutsBtn', 'Keyboard shortcuts']]) if ($(id)) ui.tooltip($(id), { text });
+    for (const [id, text] of [['settingsBtn', 'Settings'], ['shortcutsBtn', 'Keyboard shortcuts']]) if ($(id)) ui.tooltip($(id), { text, side: 'right' });
     const themeBtn = $('themeBtn');
     const cycleTheme = () => prefs.set('theme', prefs.nextTheme(prefs.get('theme')));
     keys.register({ id: 'view.theme', keys: 'Shift+Mod+L', inText: true, run: cycleTheme });
-    const themeTip = themeBtn ? ui.tooltip(themeBtn, { text: '', shortcut: 'view.theme' }) : null;
+    const themeTip = themeBtn ? ui.tooltip(themeBtn, { text: '', shortcut: 'view.theme', side: 'right' }) : null;
     if (themeBtn) themeBtn.addEventListener('click', cycleTheme);
     let captionSent;   // what the Windows caption was last set to; undefined until the first call
     // prefs calls this on every change, including an OS appearance change while System is chosen.

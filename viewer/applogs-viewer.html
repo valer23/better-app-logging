@@ -37,6 +37,7 @@
 <symbol id="i-keyboard" viewBox="0 0 24 24"><path d="M10 8h.01" /><path d="M12 12h.01" /><path d="M14 8h.01" /><path d="M16 12h.01" /><path d="M18 8h.01" /><path d="M6 8h.01" /><path d="M7 16h10" /><path d="M8 12h.01" /><rect width="20" height="16" x="2" y="4" rx="2" /></symbol>
 <symbol id="i-monitor" viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="3" rx="2" /><line x1="8" x2="16" y1="21" y2="21" /><line x1="12" x2="12" y1="17" y2="21" /></symbol>
 <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401" /></symbol>
+<symbol id="i-panel-left" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2" /><path d="M9 3v18" /></symbol>
 <symbol id="i-pause" viewBox="0 0 24 24"><rect x="14" y="3" width="5" height="18" rx="1" /><rect x="5" y="3" width="5" height="18" rx="1" /></symbol>
 <symbol id="i-play" viewBox="0 0 24 24"><path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z" /></symbol>
 <symbol id="i-radio" viewBox="0 0 24 24"><path d="M16.247 7.761a6 6 0 0 1 0 8.478" /><path d="M19.075 4.933a10 10 0 0 1 0 14.134" /><path d="M4.925 19.067a10 10 0 0 1 0-14.134" /><path d="M7.753 16.239a6 6 0 0 1 0-8.478" /><circle cx="12" cy="12" r="2" /></symbol>
@@ -55,9 +56,10 @@
      ALV.dom.INTERACTIVE, which tests/viewer/static.test.mjs checks. The legacy regions keep their markup. -->
 <div id="app">
 <aside id="sidebar" class="chrome-side" aria-label="Sidebar">
-  <div id="sidebarHeader"><span class="side-title">AppLogsViewer</span></div>
+  <div id="sidebarHeader"><span class="side-title">AppLogsViewer</span><button type="button" id="sidebarToggle" class="icon-btn" aria-label="Hide sidebar" aria-expanded="true" aria-controls="sidebarBody"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-panel-left"/></svg></button></div>
   <nav id="sidebarBody" aria-label="Devices and sessions">
-    <!-- The command palette's trigger: a stub until P13 (aria-disabled, so it keeps its tooltip in WebKit). -->
+    <!-- The command palette's trigger: a stub until P13. aria-disabled, not disabled: WebKit gives a disabled button
+         no pointer events, and its rail tooltip (shell.js) needs them. -->
     <button type="button" id="cmdTrigger" class="side-cmd" aria-disabled="true"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-search"/></svg><span class="side-label">Search actions…</span></button>
     <section class="side-sec" aria-labelledby="devHead">
       <h2 class="side-sec-h"><button type="button" id="devHead" class="nav-group-head" aria-expanded="true" aria-controls="deviceList"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-chevron-down"/></svg><span class="section-label">Devices</span><span class="meta" id="devCount"></span></button></h2>
@@ -67,7 +69,7 @@
       <h2 class="side-sec-h"><button type="button" id="sessHead" class="nav-group-head" aria-expanded="true" aria-controls="sessionList"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-chevron-down"/></svg><span class="section-label">Sessions</span><span class="meta" id="sessCount"></span></button></h2>
       <ul id="sessionList" class="side-list">
         <li><button type="button" id="sessLive" class="nav-item" aria-labelledby="sessLiveName"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-radio"/></svg><span class="side-label" id="sessLiveName">Live session</span><span class="meta" id="sessLiveCount" aria-hidden="true"></span></button></li>
-        <li id="sessFileItem" hidden><button type="button" id="sessFile" class="nav-item" aria-labelledby="sessFileName"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-file-text"/></svg><span class="side-label" id="sessFileName"></span><span class="meta" id="sessFileCount" aria-hidden="true"></span></button></li>
+        <li id="sessFileItem" hidden data-rail-hide><button type="button" id="sessFile" class="nav-item" aria-labelledby="sessFileName"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-file-text"/></svg><span class="side-label" id="sessFileName"></span><span class="meta" id="sessFileCount" aria-hidden="true"></span></button></li>
         <li data-rail-hide><button type="button" id="openFileBtn" class="nav-item"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-folder-open"/></svg><span class="side-label">Open log file…</span><span class="kbd" id="openFileKbd"></span></button></li>
       </ul>
     </section>

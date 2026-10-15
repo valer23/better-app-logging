@@ -216,6 +216,25 @@ test('status bar: devices, drops (with its popover in the popover layer), the mo
   }
 });
 
+test('rail: the header toggle, the 52 px rail column, and on macOS a full 52 px band above the rail (spec Open item 5)', () => {
+  const t = findById(root, 'sidebarToggle');
+  assert.deepEqual([t.tag, t.parent.attrs.id, t.attrs['aria-controls'], t.attrs['aria-expanded'], t.attrs['aria-label']],
+    ['button', 'sidebarHeader', 'sidebarBody', 'true', 'Hide sidebar']);
+  const rules = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')));
+  const decl = sel => rules.filter(r => r.selectors.includes(sel)).flatMap(r => C.declarations(r.body));
+  assert.ok(decl('.app[data-sidebar="collapsed"] #app').some(d => d.prop === 'grid-template-columns' && /^52px /.test(d.value)));
+  assert.deepEqual(decl('.app[data-sidebar="collapsed"] #app').map(d => d.prop), ['grid-template-columns'],
+    'the rail changes the columns only: #app keeps flex: 1 1 0 and its minmax(0, 1fr) row (P4a perf fix)');
+  assert.ok(decl('.app[data-platform="mac"][data-sidebar="collapsed"] #sidebarHeader').some(d => d.prop === 'padding-top' && d.value === 'var(--titlebar-h)'),
+    'the lights get the whole 52 px band; the toggle wraps below it');
+  assert.ok(decl('.app[data-platform="mac"][data-sidebar="collapsed"] #toolbar').some(d => d.prop === 'padding-left' && d.value === 'calc(78px - 52px + 16px)'),
+    'and the toolbar starts past the lights');
+  for (const id of ['openFileBtn', 'shortcutsBtn', 'sessFile']) assert.ok(closestWithin(findById(root, id), '[data-rail-hide]', root), `#${id} is not in the rail`);
+  const gone = rules.filter(r => C.declarations(r.body).some(d => d.prop === 'display' && d.value === 'none')).flatMap(r => r.selectors);
+  assert.ok(!gone.some(s => s.endsWith('.side-label')), 'a rail label is the item\'s accessible name: visually hidden, never display: none');
+  assert.ok(decl('.app[data-sidebar="collapsed"] .side-label').some(d => d.prop === 'clip-path' && d.value === 'inset(50%)'));
+});
+
 test('window chrome: the macOS traffic-light inset is on #sidebarHeader, no longer on #topbar', () => {
   const shellRules = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')));
   const inset = shellRules.filter(r => r.selectors.includes('.app[data-platform="mac"] #sidebarHeader')).flatMap(r => C.declarations(r.body));

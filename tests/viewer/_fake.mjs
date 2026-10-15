@@ -50,7 +50,7 @@ export function fakePage({ files = ['dom.js', 'keys.js', 'ui.js'], platform = 'm
   // as a comma-separated list (ALV.dom.INTERACTIVE).
   const matches = (el, sel) => !!el.attrs && sel.split(',').map(s => s.trim()).some(s => {
     if (/^[a-z][\w-]*$/.test(s)) return el.tagName === s.toUpperCase();
-    if (/^\.[\w-]+$/.test(s)) return String(el.className).split(/\s+/).includes(s.slice(1));
+    if (/^(\.[\w-]+)+$/.test(s)) { const cls = String(el.className).split(/\s+/); return s.slice(1).split('.').every(c => cls.includes(c)); }
     const m = /^\[([\w-]+)(?:="?([^"\]]*)"?)?\]$/.exec(s);
     return !!m && m[1] in el.attrs && (m[2] === undefined || el.attrs[m[1]] === m[2]);
   });
@@ -62,6 +62,7 @@ export function fakePage({ files = ['dom.js', 'keys.js', 'ui.js'], platform = 'm
     createElementNS: (ns, tag) => node(tag),
     createTextNode: data => ({ nodeType: 3, textContent: data, attrs: {}, children: [], parent: null }),
     getElementById: id => byId[id] || null,
+    querySelector(sel) { return this.body.querySelector(sel); },   // the shell's modal guard ('.modal-overlay.visible')
     documentElement: { clientWidth: 1400, clientHeight: 900 },
     body: node('body'),
     get activeElement() { return focused; },

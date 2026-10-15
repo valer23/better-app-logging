@@ -268,7 +268,7 @@ test('DEVICES: the toggle is named by the device alone; the status and drops lin
   const a = parts(row(p, 'android'));
   const labelledby = a.main.getAttribute('aria-labelledby');
   assert.equal(p.byId[labelledby].textContent, 'Pixel 8 Pro', 'the name span');
-  assert.deepEqual(a.main.getAttribute('aria-describedby').split(' '), [a.status.getAttribute('id'), a.drops.getAttribute('id')]);
+  assert.deepEqual(a.main.getAttribute('aria-describedby').split(' ').slice(0, 2), [a.status.getAttribute('id'), a.drops.getAttribute('id')], 'then the rail tooltip (P4b)');
   assert.equal(p.byId[a.status.getAttribute('id')], a.status);
   assert.equal(p.byId[a.drops.getAttribute('id')], a.drops);
   state.status.android = { state: 'connecting', text: 'Connecting…' };
@@ -350,7 +350,7 @@ test('DEVICES: closeMenus() closes an open row menu without moving focus (a moda
 
 // ---- Footer: the theme cycle (⇧⌘L) and the Windows caption ----
 
-const tipOf = (p, btn) => p.byId[btn.getAttribute('aria-describedby')];
+const tipOf = (p, btn) => p.byId[btn.getAttribute('aria-describedby').split(' ').at(-1)];   // the tooltip is the last token
 
 test('theme button: icon, aria-label and tooltip per theme; a click and ⇧⌘L cycle Dark → Light → System', () => {
   const { p, prefs, $ } = shellPage();
@@ -410,4 +410,78 @@ test('footer: Settings and Keyboard shortcuts are aria-disabled until P14 and P1
   for (const [id, name] of [['settingsBtn', 'Settings'], ['shortcutsBtn', 'Keyboard shortcuts']]) {
     assert.deepEqual([$(id).getAttribute('aria-disabled'), $(id).getAttribute('aria-label'), texts(tipOf(p, $(id)))], ['true', name, name]);
   }
+});
+
+// ---- The collapsed rail (⌘B; spec Open item 5 for macOS) ----
+
+test('rail: the header toggle and ⌘B collapse and expand the sidebar through prefs; label, aria-expanded and tooltip follow', () => {
+  const { p, prefs, $ } = shellPage();
+  const t = $('sidebarToggle');
+  assert.deepEqual([t.getAttribute('aria-label'), t.getAttribute('aria-expanded'), t.getAttribute('aria-controls'), texts(tipOf(p, t))],
+    ['Hide sidebar', 'true', 'sidebarBody', 'Hide sidebar⌘B']);
+  p.focus(t);
+  t.click();
+  assert.deepEqual([prefs.get('sidebar'), t.getAttribute('aria-label'), t.getAttribute('aria-expanded'), texts(tipOf(p, t))],
+    ['collapsed', 'Show sidebar', 'false', 'Show sidebar⌘B']);
+  assert.equal(p.doc.activeElement, t, 'one toggle element, so focus never jumps');
+  assert.equal(p.keys.dispatch({ key: 'b', code: 'KeyB', metaKey: true, preventDefault() {} }, p.byId.filterbar), 'view.sidebar');
+  assert.equal(prefs.get('sidebar'), 'expanded');
+});
+
+test('rail: focus on an item the rail hides (or in a row menu) moves to the toggle and the menu closes; focus on a rail item stays', () => {
+  const { p, prefs, $ } = shellPage();
+  p.focus($('openFileBtn'));
+  prefs.set('sidebar', 'collapsed');
+  assert.equal(p.doc.activeElement, $('sidebarToggle'));
+  prefs.set('sidebar', 'expanded');
+  p.focus($('sessHead'));
+  prefs.set('sidebar', 'collapsed');
+  assert.equal(p.doc.activeElement, $('sidebarToggle'), 'section heads are not in the rail either');
+  prefs.set('sidebar', 'expanded');
+  p.focus($('sessLive'));
+  prefs.set('sidebar', 'collapsed');
+  assert.equal(p.doc.activeElement, $('sessLive'));
+  prefs.set('sidebar', 'expanded');
+  const a = parts(row(p, 'android'));
+  p.focus(a.start);
+  prefs.set('sidebar', 'collapsed');
+  assert.equal(p.doc.activeElement, $('sidebarToggle'), 'a row\'s Start/Stop and More are not in the rail');
+  prefs.set('sidebar', 'expanded');
+  a.more.click();
+  assert.equal(p.keys.escDepth(), 1, 'the row menu is open, focus in it');
+  prefs.set('sidebar', 'collapsed');
+  assert.deepEqual([a.more.getAttribute('aria-expanded'), p.keys.escDepth(), p.doc.activeElement], ['false', 0, $('sidebarToggle')],
+    'the menu anchored to the hidden More closes; its focus goes to the toggle');
+});
+
+test('rail: nav items and device rows get a tooltip on the right, shown only while collapsed', () => {
+  const { p, prefs, $ } = shellPage({ st: { devices: { android: { id: 'a1', name: 'Pixel 8 Pro' }, ios: { id: '', name: '' } } } });
+  const live = $('sessLive');
+  const dev = parts(row(p, 'android')).main;
+  for (const el of [live, dev]) {
+    el.fire('pointerenter', { pointerType: 'mouse' });
+    p.advance(400);
+    assert.equal(tipOf(p, el).hidden, true, 'expanded: the label is visible, no tooltip');
+    el.fire('pointerleave');
+    p.advance(100);
+  }
+  prefs.set('sidebar', 'collapsed');
+  for (const [el, text] of [[live, 'Live session'], [dev, 'Pixel 8 Pro'], [$('cmdTrigger'), 'Search actions']]) {
+    el.fire('pointerenter', { pointerType: 'mouse' });
+    p.advance(400);
+    assert.deepEqual([tipOf(p, el).hidden, texts(tipOf(p, el)), tipOf(p, el).style.left], [false, text, '586px'], `${text}: to the right`);
+    el.fire('pointerleave');
+    p.advance(100);
+  }
+});
+
+test('rail: ⌘B does nothing over the legacy setup or stall modal (collapsing would move focus behind it)', () => {
+  const { p, prefs } = shellPage();
+  const modal = p.doc.createElement('div');
+  modal.className = 'modal-overlay visible';
+  p.doc.body.appendChild(modal);
+  const cmdB = () => p.keys.dispatch({ key: 'b', code: 'KeyB', metaKey: true, preventDefault() {} }, p.byId.filterbar);
+  assert.deepEqual([cmdB(), prefs.get('sidebar')], [null, 'expanded']);
+  modal.className = 'modal-overlay';
+  assert.deepEqual([cmdB(), prefs.get('sidebar')], ['view.sidebar', 'collapsed'], 'a closed modal does not block it');
 });

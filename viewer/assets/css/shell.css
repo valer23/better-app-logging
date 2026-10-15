@@ -14,7 +14,8 @@
   /* Drag bands (DRAG_BANDS in shell.js): the sidebar header and the top bar are one 52 px band. */
   #sidebarHeader, #toolbar { -webkit-user-select: none; user-select: none; }
   #sidebarHeader { display: flex; align-items: center; gap: 8px; height: var(--titlebar-h); padding: 0 8px 0 16px; flex: none; }
-  .side-title { font-size: 13px; font-weight: 600; white-space: nowrap; }
+  .side-title { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; white-space: nowrap; }
+  #sidebarToggle { margin-left: auto; }
   /* macOS: the traffic lights sit over the left of the band (titleBarStyle Overlay), so no title there. */
   .app[data-platform="mac"] #sidebarHeader { padding-left: 78px; }
   .app[data-platform="mac"] .side-title { display: none; }
@@ -64,6 +65,26 @@
 
   /* Footer (spec: 44 px, top hairline): Settings, Keyboard shortcuts, Theme. */
   #sidebarFooter { display: flex; align-items: center; gap: 4px; height: 44px; padding: 0 8px; flex: none; border-top: 1px solid var(--hairline); }
+
+  /* Collapsed rail (⌘B; spec: 52 px): icons only, every item with a tooltip on the right (shell.js). The
+     labels, counts, section heads and [data-rail-hide] items leave; a device keeps its badge and shape. */
+  .app[data-sidebar="collapsed"] #app { grid-template-columns: 52px minmax(0, 1fr); }
+  .app[data-sidebar="collapsed"] .side-title, .app[data-sidebar="collapsed"] .side-sec-h,
+  .app[data-sidebar="collapsed"] [data-rail-hide], .app[data-sidebar="collapsed"] .nav-item .meta, .app[data-sidebar="collapsed"] .dev-drops,
+  .app[data-sidebar="collapsed"] .dev-actions { display: none; }
+  /* A rail item's label is its accessible name (the icons are aria-hidden; the rail tooltip only describes),
+     so it is hidden visually, never with display: none. */
+  .app[data-sidebar="collapsed"] .side-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .app[data-sidebar="collapsed"] #sidebarHeader { justify-content: center; padding: 0; }
+  .app[data-sidebar="collapsed"] #sidebarToggle { margin: 0; }
+  .app[data-sidebar="collapsed"] .nav-item, .app[data-sidebar="collapsed"] .side-cmd { justify-content: center; padding: 0; }
+  .app[data-sidebar="collapsed"] .side-cmd { width: var(--ctl-h); margin: 0 auto 8px; border-color: transparent; background: transparent; }
+  .app[data-sidebar="collapsed"] .side-sec { margin-top: 8px; }
+  .app[data-sidebar="collapsed"] #sidebarFooter { flex-direction: column; height: auto; padding: 8px 0; }
+  /* macOS (spec Open item 5): the 52 px rail is narrower than the traffic lights, so the lights keep the whole
+     52 px band and the toggle wraps below it; the toolbar starts past the lights. */
+  .app[data-platform="mac"][data-sidebar="collapsed"] #sidebarHeader { flex-direction: column; justify-content: flex-start; height: auto; padding-top: var(--titlebar-h); padding-bottom: 4px; }
+  .app[data-platform="mac"][data-sidebar="collapsed"] #toolbar { padding-left: calc(78px - 52px + 16px); }
 
   /* Toolbar (spec "Toolbar": 52, .chrome, bottom hairline, padding 0 12 0 16, gap 8; a size container).
      Its height is fixed, so size and layout containment keep the badge's text updates inside it (no paint
