@@ -1,0 +1,529 @@
+/* Legacy viewer styles, moved verbatim out of applogs-viewer.html (P1) and shrunk by every region
+   PR until P13 deletes the file. Changes made by the move:
+   - tokens renamed --x -> --lg-x, colliding classes renamed .x -> .lg-x (btn-primary, icon-btn,
+     danger, msg, app);
+   - the universal reset and input[type="text"] are scoped to .lg-scope (the legacy regions) inside
+     :where(), so the scope adds no specificity and every rule keeps the cascade order it had;
+   - everything sits in @layer legacy: above foundation, below app (order set in foundation.css).
+   New rules never go here. */
+@layer legacy {
+  /* The foundation types <html class="app"> at 13px / 1.45 with antialiased smoothing and
+     `font: inherit` on controls; legacy regions keep the browser defaults. `revert` skips every
+     author layer back to the user-agent control font. Each control tag is its own selector so the
+     rule is filed under that tag rather than tried on every element; at (0,0,1), first in the layer,
+     every explicit legacy font rule below still wins. */
+  :where(.lg-scope) { font-size: 16px; line-height: normal; -webkit-font-smoothing: auto; }
+  :where(.lg-scope) button, :where(.lg-scope) input, :where(.lg-scope) select, :where(.lg-scope) textarea { font: revert; }
+
+  :root {
+    --lg-bg:       #0d1117;
+    --lg-surface:  #161b22;
+    --lg-surface2: #1c2128;
+    --lg-border:   #21262d;
+    --lg-text:     #e6edf3;
+    --lg-muted:    #7d8590;
+    --lg-accent:   #58a6ff;
+    --lg-green:    #56d364;
+    --lg-yellow:   #e3b341;
+    --lg-red:      #ff7b72;
+    --lg-d: #79c0ff; --lg-i: #56d364; --lg-w: #e3b341; --lg-e: #ff7b72; --lg-a: #f78166;
+    --lg-android:  #3ddc84;
+    --lg-ios:      #a8b3c1;
+    --lg-row-hover: #1c2128;
+  }
+  :root[data-theme="light"] {
+    --lg-bg:       #ffffff;
+    --lg-surface:  #f6f8fa;
+    --lg-surface2: #eaeef2;
+    --lg-border:   #d0d7de;
+    --lg-text:     #1f2328;
+    --lg-muted:    #59636e;
+    --lg-accent:   #0969da;
+    --lg-green:    #1a7f37;
+    --lg-yellow:   #9a6700;
+    --lg-red:      #cf222e;
+    --lg-d: #0969da; --lg-i: #1a7f37; --lg-w: #9a6700; --lg-e: #cf222e; --lg-a: #b35900;
+    --lg-android:  #1a7f37;
+    --lg-ios:      #57606a;
+    --lg-row-hover: #f6f8fa;
+  }
+  /* Liquid Glass mode — chrome surfaces become translucent overlays.
+     Combined with light/dark theme to yield 4 effective looks. */
+  [data-glass="on"] {
+    --lg-surface:        rgba(22, 27, 34, 0.62);
+    --lg-surface2:       rgba(22, 27, 34, 0.42);
+    --lg-border:         rgba(255, 255, 255, 0.16);
+    --lg-row-hover:      rgba(255, 255, 255, 0.05);
+    --lg-glass-edge:     inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  }
+  [data-glass="on"][data-theme="light"] {
+    --lg-surface:        rgba(255, 255, 255, 0.68);
+    --lg-surface2:       rgba(255, 255, 255, 0.48);
+    --lg-border:         rgba(0, 0, 0, 0.14);
+    --lg-row-hover:      rgba(0, 0, 0, 0.04);
+    --lg-glass-edge:     inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  }
+  /* Body stays transparent so chrome surfaces show desktop blur, BUT the
+     log-viewing region (#logWrapper, dropzone, livePanel) is forced opaque
+     so dense text never composites over the desktop. This is the
+     "chrome translucent, content opaque" rule from the original plan. */
+  [data-glass="on"] body { background: transparent; }
+  [data-glass="on"] #logWrapper,
+  [data-glass="on"] #logTable,
+  [data-glass="on"] tbody,
+  [data-glass="on"] tbody tr,
+  [data-glass="on"] tbody td,
+  [data-glass="on"] #dropzone,
+  [data-glass="on"] #livePanel { background: var(--lg-bg); }
+  /* Chrome text gains a 1px shadow against the bg color so it stays legible
+     when the blurred desktop behind is bright/noisy. */
+  [data-glass="on"] #topbar,
+  [data-glass="on"] #filterbar,
+  [data-glass="on"] #liveBar,
+  [data-glass="on"] .modal,
+  [data-glass="on"] .connect-card { text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25); }
+  [data-glass="on"][data-theme="light"] #topbar,
+  [data-glass="on"][data-theme="light"] #filterbar,
+  [data-glass="on"][data-theme="light"] #liveBar,
+  [data-glass="on"][data-theme="light"] .modal,
+  [data-glass="on"][data-theme="light"] .connect-card { text-shadow: 0 1px 1px rgba(255, 255, 255, 0.55); }
+
+  /* Apply backdrop-filter only to chrome surfaces when glass is on.
+     Log rows + tbody intentionally stay opaque for readability. */
+  [data-glass="on"] #topbar,
+  [data-glass="on"] #filterbar,
+  [data-glass="on"] #liveBar,
+  [data-glass="on"] thead th,
+  [data-glass="on"] .modal,
+  [data-glass="on"] .connect-card,
+  [data-glass="on"] .device-menu {
+    backdrop-filter: blur(40px) saturate(200%);
+    -webkit-backdrop-filter: blur(40px) saturate(200%);
+    box-shadow: var(--lg-glass-edge);
+  }
+
+  [data-glass="on"] .modal-overlay {
+    background: rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+
+  .topbar-spacer { flex: 1; }
+  /* Animated theme toggle — track + sliding thumb with sun/moon glyphs.
+     Thumb uses var(--lg-text) so it has high contrast in both palettes
+     (light thumb on dark track, dark thumb on light track). */
+  /* Zoom controls — scale the log table content via --log-fs.
+     Only affects the table; UI chrome (buttons, tabs) stays at native
+     pixel size so the controls remain usable on small laptops. */
+  .zoom-group { display: inline-flex; align-items: center; gap: 0; margin-right: 10px; border: 1px solid var(--lg-border); border-radius: 5px; overflow: hidden; }
+  .zoom-btn { background: transparent; border: 0; color: var(--lg-muted); font-family: var(--font-ui); font-size: 11px; font-weight: 600; padding: 4px 9px; cursor: pointer; transition: color .15s, background .15s; }
+  .zoom-btn:hover { color: var(--lg-text); background: var(--lg-surface2); }
+  .zoom-btn + .zoom-btn { border-left: 1px solid var(--lg-border); }
+
+  .theme-switch { position: relative; display: inline-flex; align-items: center; align-self: center; cursor: pointer; user-select: none; }
+  .theme-switch input { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
+  .theme-switch-track { position: relative; width: 60px; height: 28px; background: var(--lg-surface2); border: 1px solid var(--lg-muted); border-radius: 999px; display: inline-flex; align-items: center; justify-content: space-between; padding: 0 8px; box-sizing: border-box; transition: background .2s, border-color .2s; }
+  .theme-switch:hover .theme-switch-track { border-color: var(--lg-accent); }
+  .theme-switch-icon { font-size: 12px; line-height: 1; pointer-events: none; opacity: .9; }
+  .theme-switch-icon.sun  { color: var(--lg-yellow); }
+  .theme-switch-icon.moon { color: var(--lg-accent); }
+  .theme-switch-thumb { position: absolute; top: 2px; left: 2px; width: 22px; height: 22px; background: var(--lg-text); border: 1px solid var(--lg-muted); border-radius: 50%; transition: transform .25s cubic-bezier(.4, 0, .2, 1), background .2s, border-color .2s; box-shadow: 0 2px 4px rgba(0, 0, 0, .45); }
+  /* Dark = unchecked, thumb on the right (over moon). Light = checked, thumb on the left (over sun). */
+  .theme-switch-track .theme-switch-thumb { transform: translateX(30px); }
+  .theme-switch input:checked + .theme-switch-track .theme-switch-thumb { transform: translateX(0); }
+
+  /* Liquid Glass mode pill — same affordance as the theme switch.
+     Hidden on non-macOS platforms via .platform-mac class (set by JS). */
+  .glass-switch { position: relative; display: none; align-items: center; cursor: pointer; user-select: none; margin-left: 8px; }
+  .glass-switch.platform-mac { display: inline-flex; }
+  .glass-switch input { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
+  .glass-switch-track {
+    position: relative; width: 110px; height: 28px;
+    background: var(--lg-surface2); border: 1px solid var(--lg-muted);
+    border-radius: 999px;
+    display: inline-flex; align-items: center; justify-content: space-between;
+    padding: 0 10px; box-sizing: border-box;
+    font-family: var(--font-ui); font-size: 11px; font-weight: 600;
+    color: var(--lg-muted);
+    transition: background .2s, border-color .2s, color .2s;
+  }
+  .glass-switch:hover .glass-switch-track { border-color: var(--lg-accent); }
+  .glass-switch-label { z-index: 1; transition: color .2s; }
+  .glass-switch input:checked + .glass-switch-track .glass-switch-label.glass { color: var(--lg-text); }
+  .glass-switch input:not(:checked) + .glass-switch-track .glass-switch-label.classic { color: var(--lg-text); }
+  .glass-switch-thumb {
+    position: absolute; top: 2px; left: 2px;
+    width: 50px; height: 22px;
+    background: var(--lg-text); opacity: 0.18;
+    border-radius: 999px;
+    transition: transform .25s cubic-bezier(.4, 0, .2, 1);
+  }
+  .glass-switch input:checked + .glass-switch-track .glass-switch-thumb {
+    transform: translateX(54px);
+  }
+
+  html, body, :where(.lg-scope, .lg-scope *) { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--lg-bg); color: var(--lg-text); font-family: var(--font-ui); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+  /* ── Top bar ── */
+  #topbar { background: var(--lg-surface); border-bottom: 1px solid var(--lg-border); display: flex; align-items: stretch; padding: 0 16px; flex-shrink: 0; }
+  html[data-platform="mac"] #topbar { padding-left: 78px; }
+  .logo { font-family: var(--font-log); font-size: 13px; font-weight: 700; color: var(--lg-accent); letter-spacing: 0.05em; display: flex; align-items: center; gap: 8px; padding-right: 16px; border-right: 1px solid var(--lg-border); margin-right: 4px; }
+  .logo span { color: var(--lg-muted); }
+  .logo svg { display: block; flex-shrink: 0; }
+  .logo-mark { width: 22px; height: 22px; }
+  .mode-tab { font-family: var(--font-ui); font-size: 12px; font-weight: 600; padding: 0 14px; border: none; background: transparent; color: var(--lg-muted); cursor: pointer; border-bottom: 2px solid transparent; transition: color .15s, border-color .15s; display: flex; align-items: center; gap: 6px; }
+  .mode-tab:hover { color: var(--lg-text); }
+  .mode-tab.active { color: var(--lg-accent); border-bottom-color: var(--lg-accent); }
+
+  /* ── Filter bar ── */
+  #filterbar { background: var(--lg-surface); border-bottom: 1px solid var(--lg-border); padding: 8px 16px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex-shrink: 0; }
+  :where(.lg-scope) input[type="text"] { background: var(--lg-bg); border: 1px solid var(--lg-border); border-radius: 6px; color: var(--lg-text); font-family: var(--font-log); font-size: 12px; padding: 5px 10px; outline: none; transition: border-color .15s; }
+  :where(.lg-scope) input[type="text"]:focus { border-color: var(--lg-accent); }
+  #search { width: 280px; } #tagFilter { width: 220px; } #pidFilter { width: 220px; }
+
+  .toggle-group { display: flex; gap: 4px; }
+  .lvl-btn { font-family: var(--font-log); font-size: 11px; font-weight: 700; padding: 4px 7px; border-radius: 4px; border: 1px solid transparent; cursor: pointer; opacity: .35; transition: opacity .15s; background: transparent; }
+  .lvl-btn.active { opacity: 1; }
+
+  .search-mod { font-family: var(--font-log); font-size: 11px; font-weight: 700; padding: 4px 7px; border-radius: 4px; border: 1px solid var(--lg-border); cursor: pointer; background: transparent; color: var(--lg-muted); transition: color .15s, border-color .15s, background .15s; }
+  .search-mod:hover { color: var(--lg-text); border-color: var(--lg-muted); }
+  .search-mod.active { color: var(--lg-accent); border-color: var(--lg-accent); background: #58a6ff15; }
+  .search-mod.error { color: var(--lg-red); border-color: var(--lg-red); background: #ff7b7215; }
+  .lvl-btn[data-lvl="VERBOSE"] { color: #aaa; border-color: #aaa; }
+  .lvl-btn[data-lvl="DEBUG"]   { color: var(--lg-d); border-color: var(--lg-d); }
+  .lvl-btn[data-lvl="INFO"]    { color: var(--lg-i); border-color: var(--lg-i); }
+  .lvl-btn[data-lvl="WARN"]    { color: var(--lg-w); border-color: var(--lg-w); }
+  .lvl-btn[data-lvl="ERROR"]   { color: var(--lg-e); border-color: var(--lg-e); }
+  .lvl-btn[data-lvl="ASSERT"]  { color: var(--lg-a); border-color: var(--lg-a); }
+
+  .plat-btn { font-family: var(--font-ui); font-size: 11px; font-weight: 600; padding: 4px 8px; border-radius: 4px; border: 1px solid transparent; cursor: pointer; opacity: .35; transition: opacity .15s, color .15s, border-color .15s; background: transparent; }
+  .plat-btn.active { opacity: 1; }
+  .plat-btn[data-plat="android"]        { color: var(--lg-android); border-color: var(--lg-android); }
+  .plat-btn[data-plat="android"].active { color: var(--lg-green);   border-color: var(--lg-green);   }
+  .plat-btn[data-plat="ios"]            { color: var(--lg-ios);     border-color: var(--lg-ios);     }
+  .plat-btn[data-plat="ios"].active     { color: var(--lg-green);   border-color: var(--lg-green);   }
+
+  .sep { width: 1px; height: 20px; background: var(--lg-border); flex-shrink: 0; }
+  .bar-spacer { flex: 1; }
+
+  .lg-icon-btn { background: transparent; border: 1px solid var(--lg-border); border-radius: 5px; color: var(--lg-muted); font-size: 12px; padding: 4px 10px; cursor: pointer; display: flex; align-items: center; gap: 5px; transition: color .15s, border-color .15s; white-space: nowrap; font-family: var(--font-ui); }
+  .lg-icon-btn:hover  { color: var(--lg-text); border-color: var(--lg-muted); }
+  .lg-icon-btn.active { color: var(--lg-green); border-color: var(--lg-green); }
+  .lg-icon-btn.lg-danger { color: var(--lg-red); border-color: var(--lg-red); }
+  .lg-icon-btn.paused { color: var(--lg-yellow); border-color: var(--lg-yellow); }
+
+  /* `tabular-nums` keeps digit widths uniform so the counter doesn't
+     jitter glyph-by-glyph as the value grows (e.g. 9,999 → 10,000).
+     Right-pinning lives on the `.stats-export` wrapper below — keeping
+     it there (instead of on `.stats` itself) guarantees stats + Export
+     wrap together as a single unit when #filterbar wraps. */
+  .stats { font-size: 11px; color: var(--lg-muted); font-family: var(--font-log); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  /* Single inline-flex row that holds [stats][Export]. `flex-wrap: nowrap`
+     stops Export from breaking onto its own line when stats fattens up;
+     `margin-left: auto` pins the whole cluster to the right edge of
+     #filterbar (and of the wrapped row when the toolbar itself wraps). */
+  .stats-export { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
+
+  /* ── Drop Zone ── */
+  #dropzone { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; border: 2px dashed var(--lg-border); margin: 24px; border-radius: 12px; cursor: pointer; transition: border-color .2s, background .2s; }
+  #dropzone:hover, #dropzone.drag-over { border-color: var(--lg-accent); background: #161b2288; }
+  #dropzone .drop-icon { font-size: 48px; }
+  #dropzone h2 { font-size: 18px; font-weight: 600; }
+  #dropzone p  { font-size: 13px; color: var(--lg-muted); text-align: center; line-height: 1.6; }
+  #dropzone label { background: var(--lg-accent); color: #0d1117; font-weight: 600; font-size: 13px; padding: 8px 20px; border-radius: 6px; cursor: pointer; }
+  #fileInput { display: none; }
+
+  /* ── Live panel ── */
+  #livePanel { flex: 1; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 24px; }
+  #livePanel.visible { display: flex; }
+
+  .live-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; width: 100%; max-width: 880px; align-items: stretch; justify-items: stretch; margin: 0 auto; }
+  @media (max-width: 700px) { .live-cards { grid-template-columns: 1fr; } }
+
+  .connect-card { background: var(--lg-surface); border: 1px solid var(--lg-border); border-radius: 12px; padding: 22px 24px; display: flex; flex-direction: column; gap: 14px; }
+  .connect-card.android { border-top: 2px solid var(--lg-android); }
+  .connect-card.ios     { border-top: 2px solid var(--lg-ios); }
+
+  /* AMDS-missing banner — Windows-only, surfaced when /ios-driver-status
+     reports the Apple Mobile Device Service unreachable on :27015.
+     Uses semantic CSS vars so the banner tracks the active theme. */
+  .ios-driver-warning { display: none; background: var(--lg-surface2); border: 1px solid var(--lg-yellow); color: var(--lg-text); border-radius: 8px; padding: 10px 12px; font-size: 12px; line-height: 1.5; }
+  .ios-driver-warning.visible { display: block; }
+  .ios-driver-warning .title { font-weight: 600; margin-bottom: 4px; color: var(--lg-yellow); }
+  .ios-driver-warning .actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .ios-driver-warning a, .ios-driver-warning button { font-family: var(--font-ui); font-size: 11px; font-weight: 600; text-decoration: none; padding: 5px 10px; border-radius: 5px; cursor: pointer; border: 1px solid var(--lg-yellow); background: transparent; color: var(--lg-yellow); transition: background .15s, color .15s; }
+  .ios-driver-warning a:hover, .ios-driver-warning button:hover { background: var(--lg-yellow); color: var(--lg-bg); }
+
+  .card-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+  .card-title  { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .card-desc   { font-size: 12px; color: var(--lg-muted); line-height: 1.5; min-height: 34px; }
+  .card-desc code { font-family: var(--font-log); font-size: 11px; background: var(--lg-bg); border: 1px solid var(--lg-border); border-radius: 3px; padding: 1px 5px; color: #79c0ff; }
+
+  .connect-row { display: flex; gap: 6px; align-items: center; }
+  .connect-row input { flex: 1; background: var(--lg-bg); border: 1px solid var(--lg-border); border-radius: 6px; color: var(--lg-text); font-family: var(--font-log); font-size: 12px; padding: 7px 10px; outline: none; transition: border-color .15s; min-width: 0; }
+  .connect-row input:focus { border-color: var(--lg-accent); }
+  /* Custom device dropdown — themed to match the rest of the UI and forced
+     to open below the trigger (the native <select> popup is OS-controlled
+     and ignores the page theme entirely). */
+  .device-picker { position: relative; flex: 1; min-width: 0; }
+  .device-trigger { width: 100%; background: var(--lg-bg); border: 1px solid var(--lg-border); border-radius: 6px; color: var(--lg-text); font-family: var(--font-ui); font-size: 12px; padding: 7px 10px; cursor: pointer; text-align: left; display: flex; justify-content: space-between; align-items: center; gap: 8px; transition: border-color .15s, background .15s; }
+  .device-trigger:hover:not(:disabled) { border-color: var(--lg-muted); }
+  .device-trigger.open { border-color: var(--lg-accent); }
+  .device-trigger:disabled { opacity: .55; cursor: not-allowed; }
+  .device-trigger .device-trigger-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .device-trigger .device-trigger-caret { font-size: 10px; color: var(--lg-muted); flex-shrink: 0; transition: transform .15s; }
+  .device-trigger.open .device-trigger-caret { transform: rotate(180deg); }
+  .device-menu { position: absolute; top: calc(100% + 4px); left: 0; right: 0; background: var(--lg-surface); border: 1px solid var(--lg-border); border-radius: 6px; box-shadow: 0 8px 24px rgba(0, 0, 0, .55); z-index: 100; max-height: 240px; overflow-y: auto; display: none; padding: 4px; }
+  .device-menu.open { display: block; }
+  .device-menu-item { padding: 7px 10px; cursor: pointer; font-size: 12px; color: var(--lg-text); border-radius: 4px; transition: background .1s; }
+  .device-menu-item:hover { background: var(--lg-surface2); }
+  .device-menu-item.selected { background: #1a3a5e; color: var(--lg-accent); }
+  .device-menu-empty { padding: 10px; color: var(--lg-muted); font-size: 12px; font-style: italic; cursor: default; }
+
+  .lg-btn-primary   { background: var(--lg-accent); color: #0d1117; font-weight: 700; font-size: 12px; padding: 7px 14px; border-radius: 6px; border: none; cursor: pointer; white-space: nowrap; font-family: var(--font-ui); transition: opacity .15s; }
+  .lg-btn-primary:hover { opacity: .85; } .lg-btn-primary:disabled { opacity: .4; cursor: not-allowed; }
+  .lg-btn-primary.lg-danger { background: var(--lg-red); color: #fff; }
+  .btn-secondary { background: transparent; color: var(--lg-muted); font-size: 12px; font-weight: 600; padding: 7px 12px; border-radius: 6px; border: 1px solid var(--lg-border); cursor: pointer; white-space: nowrap; font-family: var(--font-ui); transition: color .15s, border-color .15s; }
+  .btn-secondary:hover { color: var(--lg-text); border-color: var(--lg-muted); }
+
+  .status-pill { display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-log); font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 20px; border: 1px solid; }
+  .status-pill.disconnected { color: var(--lg-muted);  border-color: var(--lg-border); }
+  .status-pill.connecting   { color: var(--lg-yellow); border-color: var(--lg-yellow); background: #e3b34110; }
+  .status-pill.connected    { color: var(--lg-green);  border-color: var(--lg-green);  background: #56d36415; }
+  .status-pill.error        { color: var(--lg-red);    border-color: var(--lg-red);    background: #ff7b7215; }
+  /* Server-side frame drops (ws `dropped` frames). Warning tint like
+     .connecting, but static: it is a persistent fact, not an in-progress state. */
+  .status-pill.dropped { color: var(--lg-yellow); border-color: var(--lg-yellow); background: #e3b34110; display: none; cursor: help; }
+  .status-pill.dropped.visible { display: inline-flex; }
+  /* "N lines below" pill over the bottom of the log table (live mode, auto-scroll off). A sibling of the
+     scroller, so repainting it never relayouts the rows or changes #logTable.scrollHeight. bottom: 18px
+     also clears the horizontal scrollbar shown below 960px. No transition: nothing animates per flush. */
+  .newer-pill { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 6; display: none; align-items: center; gap: 8px; padding: 5px 12px; line-height: 16px; border-radius: 999px; border: 1px solid var(--lg-accent); background: var(--lg-surface); color: var(--lg-text); font-family: var(--font-ui); font-size: 12px; font-weight: 600; white-space: nowrap; cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,.35); }
+  .newer-pill.visible { display: inline-flex; }
+  .newer-pill .newer-count { font-family: var(--font-log); font-variant-numeric: tabular-nums; }
+  .newer-pill .newer-sep { color: var(--lg-muted); }
+  .newer-pill .newer-action { color: var(--lg-accent); }
+  .newer-pill:hover { background: var(--lg-surface2); }
+  .newer-pill:focus-visible { outline: 2px solid var(--lg-accent); outline-offset: 2px; }
+  :root[data-theme="light"] .newer-pill { box-shadow: 0 4px 16px rgba(0,0,0,.15); }
+  [data-glass="on"] .newer-pill { backdrop-filter: blur(40px) saturate(200%); -webkit-backdrop-filter: blur(40px) saturate(200%); box-shadow: var(--lg-glass-edge), 0 4px 16px rgba(0,0,0,.35); text-shadow: 0 1px 1px rgba(0,0,0,.25); }
+  [data-glass="on"][data-theme="light"] .newer-pill { text-shadow: 0 1px 1px rgba(255,255,255,.55); box-shadow: var(--lg-glass-edge), 0 4px 16px rgba(0,0,0,.15); }
+  /* Room below the last row so it can scroll above the pill: 56px = bottom 18 + pill ~28 (16px line-height
+     + 10 padding + 2 border) + an 8px margin. Toggled with the armed state (live, auto-scroll off, live
+     last line), not the count, so the content end does not jump as the count crosses 0. While armed the
+     200px end-detection in extendReadingWindow and the scroll handler is effectively ~144px from the last row. */
+  #logTable.newer-room::after { content: ''; display: block; height: 56px; }
+  /* "lines X–Y of Z" (updateReadingWindowHint) over the right end of the sticky header. A sibling of the
+     scroller like .newer-pill, so its per-flush text change never relayouts the rows; inside the header's
+     height it can't cover row text, and the header's own surface/muted pair keeps it legible in every theme.
+     top 4px + 18px tall fits the fixed-size header (~27px, independent of the log zoom); right 14px clears
+     the vertical scrollbar. */
+  .reading-window-hint { position: absolute; top: 4px; right: 14px; z-index: 6; display: none; padding: 1px 8px; line-height: 14px; border: 1px solid var(--lg-border); border-radius: 999px; background: var(--lg-surface); color: var(--lg-muted); font-family: var(--font-log); font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; cursor: help; }
+  .reading-window-hint.visible { display: inline-block; }
+  .status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .status-pill.connecting .status-dot { animation: blink 1s ease-in-out infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
+
+  .device-badge { background: var(--lg-surface2); border: 1px solid var(--lg-border); border-radius: 6px; padding: 7px 10px; font-family: var(--font-log); font-size: 10px; color: var(--lg-muted); line-height: 1.6; display: none; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 96px; overflow-y: auto; }
+  .device-badge.visible { display: block; }
+
+  /* ── Live status bar (shown above log table in live mode) ── */
+  #liveBar { background: var(--lg-surface); border-bottom: 1px solid var(--lg-border); padding: 6px 16px; display: none; align-items: center; gap: 16px; flex-shrink: 0; flex-wrap: wrap; }
+  #liveBar.visible { display: flex; }
+  .live-bar-item { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .live-bar-platform { font-weight: 600; font-size: 12px; display: flex; align-items: center; gap: 5px; }
+
+  /* ── Setup modal ── */
+  .modal-overlay { position: fixed; inset: 0; background: #000000cc; z-index: 100; display: none; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
+  .modal-overlay.visible { display: flex; }
+  .modal { background: var(--lg-surface); border: 1px solid var(--lg-border); border-radius: 12px; padding: 28px; width: 640px; max-width: 90vw; max-height: 85vh; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+  .modal h2 { font-size: 15px; font-weight: 600; }
+  .modal p  { font-size: 12px; color: var(--lg-muted); line-height: 1.6; }
+  .modal code { font-family: var(--font-log); font-size: 11px; background: var(--lg-bg); border: 1px solid var(--lg-border); border-radius: 3px; padding: 1px 5px; color: #79c0ff; }
+  .modal-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--lg-border); margin-bottom: 4px; }
+  .modal-tab { font-size: 13px; font-weight: 600; padding: 8px 16px; background: transparent; border: none; color: var(--lg-muted); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .modal-tab.active { color: var(--lg-accent); border-bottom-color: var(--lg-accent); }
+  .modal-content { display: none; flex-direction: column; gap: 14px; }
+  .modal-content.active { display: flex; }
+  .steps { display: flex; flex-direction: column; gap: 10px; }
+  .step  { display: flex; gap: 10px; align-items: flex-start; }
+  .step-num { background: var(--lg-accent); color: #0d1117; font-family: var(--font-log); font-size: 10px; font-weight: 700; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 2px; }
+  .step p { font-size: 12px; color: var(--lg-text); line-height: 1.6; }
+  .code-block { background: var(--lg-bg); border: 1px solid var(--lg-border); border-radius: 8px; padding: 10px 12px; font-family: var(--font-log); font-size: 11px; color: #79c0ff; white-space: pre; overflow-x: auto; position: relative; }
+  .copy-btn { position: absolute; top: 6px; right: 6px; background: var(--lg-surface2); border: 1px solid var(--lg-border); border-radius: 4px; color: var(--lg-muted); font-size: 10px; padding: 2px 7px; cursor: pointer; font-family: var(--font-ui); }
+  .copy-btn:hover { color: var(--lg-text); }
+  .modal-footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px; border-top: 1px solid var(--lg-border); }
+
+  /* ── iOS troubleshoot section in Bridge Setup ── */
+  .troubleshoot { border-top: 1px solid var(--lg-border); padding-top: 14px; display: flex; flex-direction: column; gap: 10px; }
+  .troubleshoot .ts-title { font-size: 12px; font-weight: 600; color: var(--lg-text); }
+  .troubleshoot .ts-desc  { font-size: 12px; color: var(--lg-muted); line-height: 1.6; margin: 0; }
+  .troubleshoot .ts-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .troubleshoot .ts-result { font-family: var(--font-log); font-size: 11px; color: var(--lg-muted); white-space: pre-wrap; word-break: break-word; display: none; }
+  .troubleshoot .ts-result.visible { display: block; padding: 8px 10px; background: var(--lg-bg); border: 1px solid var(--lg-border); border-radius: 6px; }
+  .troubleshoot .ts-result.ok  { color: var(--lg-green); border-color: var(--lg-green); }
+  .troubleshoot .ts-result.err { color: var(--lg-red);   border-color: var(--lg-red);   }
+
+  /* ── Stall error popup (iOS log stream went silent) ── */
+  .stall-modal h2 { color: var(--lg-yellow); }
+  .stall-modal p  { font-size: 12px; color: var(--lg-text); line-height: 1.6; }
+
+  /* ── Manual-fallback command block (shown in stall popup + setup tab) ── */
+  .ts-manual          { font-size: 12px; color: var(--lg-muted); line-height: 1.5; }
+  .ts-manual .ts-manual-title { color: var(--lg-text); font-weight: 600; margin-bottom: 4px; }
+  .ts-manual pre      { font-family: var(--font-log); font-size: 11px; background: var(--lg-bg); border: 1px solid var(--lg-border); border-radius: 6px; padding: 8px 10px; margin: 6px 0 0; white-space: pre-wrap; color: var(--lg-text); }
+  .ts-manual pre .cmt { color: var(--lg-muted); }
+
+  /* ── Log table ── */
+  #logWrapper { flex: 1; overflow: hidden; display: none; flex-direction: column; position: relative; /* anchor for .newer-pill and .reading-window-hint */ }
+  #logWrapper.visible { display: flex; }
+  #logTable { flex: 1; overflow-y: auto; overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--lg-border) transparent; }
+  /* `--log-fs` is set on `:root` by prefs.js (zoom buttons, keyboard
+     shortcut; persisted in localStorage); the header keeps a fixed
+     small size so column titles stay readable at any body zoom. */
+  /* Sized columns are 128px + 78ch; the Message column keeps a 24ch floor (the 960px floor still governs up to ~14px, as before), so at large log sizes in small windows the table scrolls sideways instead of squeezing Message. */
+  table { table-layout: fixed; border-collapse: separate; border-spacing: 0; font-family: var(--font-log); font-size: var(--log-fs, 13px); min-width: max(960px, calc(102ch + 148px)); width: 100%; }
+  /* Sticky header — declared on thead, tr, AND th for cross-browser reliability. */
+  thead    { position: sticky; top: 0; z-index: 5; }
+  thead tr { position: sticky; top: 0; }
+  thead th { position: sticky; top: 0; background: var(--lg-surface); border-bottom: 1px solid var(--lg-border); padding: 6px 10px; text-align: left; font-size: 11px; font-weight: 600; color: var(--lg-muted); text-transform: uppercase; letter-spacing: .06em; white-space: nowrap; z-index: 5; overflow: hidden; user-select: none; box-shadow: 0 1px 0 var(--lg-border); }
+  tbody td { border-bottom: 1px solid var(--lg-border); }
+  mark { background: var(--lg-yellow); color: #0d1117; padding: 0 2px; border-radius: 2px; font-weight: 700; }
+  .col-resize-handle { position: absolute; right: 0; top: 0; bottom: 0; width: 5px; cursor: col-resize; z-index: 2; }
+  .col-resize-handle::after { content: ''; position: absolute; right: 1px; top: 20%; bottom: 20%; width: 2px; background: var(--lg-border); border-radius: 1px; transition: background .15s; }
+  .col-resize-handle:hover::after, .col-resize-handle.dragging::after { background: var(--lg-accent); }
+  tbody tr { border-bottom: 1px solid var(--lg-border); transition: background .05s; cursor: pointer; }
+  tbody tr:hover { background: var(--lg-row-hover); }
+  tbody tr.selected { background: #58a6ff22; box-shadow: inset 3px 0 0 var(--lg-accent); }
+  tbody tr.selected:hover { background: #58a6ff33; }
+  td { padding: 3px 10px; vertical-align: top; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  td.lg-msg { white-space: pre-wrap; word-break: break-all; }
+
+  .plat-badge { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 3px; font-size: 9px; font-weight: 700; font-family: var(--font-ui); flex-shrink: 0; }
+  .plat-badge.android { background: #3ddc8420; color: var(--lg-android); border: 1px solid #3ddc8440; }
+  .plat-badge.ios     { background: #a8b3c120; color: var(--lg-ios);     border: 1px solid #a8b3c140; }
+  td.plat-cell { text-align: center; padding: 3px 4px; }
+
+  .ts  { color: #8b949e; }
+  .pid { color: #6e7681; }
+  .tag { color: #79c0ff; font-weight: 500; }
+  .lg-app { color: #6e7681; }
+  .lvl-badge { display: inline-block; width: 14px; text-align: center; font-weight: 700; border-radius: 2px; }
+  .V .lvl-badge { color: #888; } .D .lvl-badge { color: var(--lg-d); } .I .lvl-badge { color: var(--lg-i); }
+  .W .lvl-badge { color: var(--lg-w); } .E .lvl-badge, .A .lvl-badge { color: var(--lg-e); }
+  .W td.lg-msg { color: var(--lg-w); } .E td.lg-msg, .A td.lg-msg { color: var(--lg-e); }
+
+  @keyframes fadeIn { from { opacity:0; background: #58a6ff08; } to { opacity:1; } }
+  tr.new-row { animation: fadeIn .25s ease; }
+
+  /* ── Export dropdown ── */
+  /* Right-pinning is owned by the `.stats-export` wrapper around this
+     element, so `.export-wrap` only needs to anchor the menu in CSS.
+     (The menu itself is `position: fixed` and placed by JS.) */
+  .export-wrap { position: relative; }
+  /* Menu uses `position: fixed` and is positioned by JS (toggleExportMenu)
+     against the button's bounding rect, clamped to the viewport. This
+     prevents the menu from clipping off-screen when the button wraps to
+     the far left of the toolbar on small screens. */
+  .export-menu {
+    display: none;
+    position: fixed; top: 0; left: 0;
+    background: var(--lg-surface); border: 1px solid var(--lg-border);
+    border-radius: 10px; padding: 6px;
+    /* Prefer 240px, but shrink below that on very narrow viewports so the
+       menu never exceeds the viewport (16px = 2 × PAD from positionExportMenu).
+       No `min-width` — JS clamping reads `menu.offsetWidth` and needs the
+       laid-out width to be ≤ viewport for `Math.min(left, vw - mw - PAD)`
+       to keep the menu on-screen. */
+    width: min(240px, calc(100vw - 16px));
+    box-shadow: 0 8px 32px #00000060; z-index: 50;
+    flex-direction: column; gap: 2px;
+  }
+  .export-menu.open { display: flex; }
+  .export-menu-header { font-size: 10px; font-weight: 600; color: var(--lg-muted); text-transform: uppercase; letter-spacing: .06em; padding: 4px 8px 6px; }
+  .export-opt {
+    display: flex; align-items: center; gap: 10px;
+    background: transparent; border: none; border-radius: 6px;
+    padding: 8px 10px; cursor: pointer; text-align: left;
+    transition: background .1s; width: 100%;
+    font-family: var(--font-ui); color: var(--lg-text);
+  }
+  .export-opt:hover { background: var(--lg-surface2); }
+  .export-opt strong { font-size: 13px; display: block; margin-bottom: 1px; }
+  .export-icon { font-size: 18px; flex-shrink: 0; }
+  .export-desc { font-size: 11px; color: var(--lg-muted); }
+  .export-scope { border-top: 1px solid var(--lg-border); margin-top: 4px; padding: 8px 10px 4px; display: flex; flex-direction: column; gap: 5px; }
+  .export-scope label { font-size: 11px; color: var(--lg-muted); display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .export-scope input[type="radio"] { accent-color: var(--lg-accent); cursor: pointer; }
+  .export-note { border-top: 1px solid var(--lg-border); margin-top: 4px; padding: 6px 10px 4px; font-size: 11px; line-height: 1.35; color: var(--lg-yellow); }
+
+  /* ── Loading ── */
+  #loading { display: none; align-items: center; justify-content: center; gap: 12px; flex: 1; font-size: 14px; color: var(--lg-muted); }
+  #loading.visible { display: flex; }
+  .spinner { width: 20px; height: 20px; border: 2px solid var(--lg-border); border-top-color: var(--lg-accent); border-radius: 50%; animation: spin .6s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Reduce motion ──
+     Legacy transitions and animations use literal times, so the foundation's zeroed --t-* tokens do
+     not reach them. These two rules switch them off for OS Reduce motion (unless Settings says Off)
+     and for Settings On, as the foundation did before v1.2. Each selector is listed by class or tag,
+     never a universal selector; tests/viewer/static.test.mjs fails if a legacy rule animates and is
+     missing here. !important because several selectors above out-rank a single class. */
+  @media (prefers-reduced-motion: reduce) {
+    :where(.app:not([data-motion="off"])) .zoom-btn,
+    :where(.app:not([data-motion="off"])) .theme-switch-track,
+    :where(.app:not([data-motion="off"])) .theme-switch-thumb,
+    :where(.app:not([data-motion="off"])) .glass-switch-track,
+    :where(.app:not([data-motion="off"])) .glass-switch-label,
+    :where(.app:not([data-motion="off"])) .glass-switch-thumb,
+    :where(.app:not([data-motion="off"])) .mode-tab,
+    :where(.app:not([data-motion="off"])) input[type="text"],
+    :where(.app:not([data-motion="off"])) .lvl-btn,
+    :where(.app:not([data-motion="off"])) .search-mod,
+    :where(.app:not([data-motion="off"])) .plat-btn,
+    :where(.app:not([data-motion="off"])) .lg-icon-btn,
+    :where(.app:not([data-motion="off"])) #dropzone,
+    :where(.app:not([data-motion="off"])) .ios-driver-warning a,
+    :where(.app:not([data-motion="off"])) .ios-driver-warning button,
+    :where(.app:not([data-motion="off"])) .connect-row input,
+    :where(.app:not([data-motion="off"])) .device-trigger,
+    :where(.app:not([data-motion="off"])) .device-trigger .device-trigger-caret,
+    :where(.app:not([data-motion="off"])) .device-menu-item,
+    :where(.app:not([data-motion="off"])) .lg-btn-primary,
+    :where(.app:not([data-motion="off"])) .btn-secondary,
+    :where(.app:not([data-motion="off"])) .status-pill.connecting .status-dot,
+    :where(.app:not([data-motion="off"])) .col-resize-handle::after,
+    :where(.app:not([data-motion="off"])) tbody tr,
+    :where(.app:not([data-motion="off"])) tr.new-row,
+    :where(.app:not([data-motion="off"])) .export-opt,
+    :where(.app:not([data-motion="off"])) .spinner { animation: none !important; transition: none !important; }
+  }
+  .app[data-motion="reduce"] .zoom-btn,
+  .app[data-motion="reduce"] .theme-switch-track,
+  .app[data-motion="reduce"] .theme-switch-thumb,
+  .app[data-motion="reduce"] .glass-switch-track,
+  .app[data-motion="reduce"] .glass-switch-label,
+  .app[data-motion="reduce"] .glass-switch-thumb,
+  .app[data-motion="reduce"] .mode-tab,
+  .app[data-motion="reduce"] input[type="text"],
+  .app[data-motion="reduce"] .lvl-btn,
+  .app[data-motion="reduce"] .search-mod,
+  .app[data-motion="reduce"] .plat-btn,
+  .app[data-motion="reduce"] .lg-icon-btn,
+  .app[data-motion="reduce"] #dropzone,
+  .app[data-motion="reduce"] .ios-driver-warning a,
+  .app[data-motion="reduce"] .ios-driver-warning button,
+  .app[data-motion="reduce"] .connect-row input,
+  .app[data-motion="reduce"] .device-trigger,
+  .app[data-motion="reduce"] .device-trigger .device-trigger-caret,
+  .app[data-motion="reduce"] .device-menu-item,
+  .app[data-motion="reduce"] .lg-btn-primary,
+  .app[data-motion="reduce"] .btn-secondary,
+  .app[data-motion="reduce"] .status-pill.connecting .status-dot,
+  .app[data-motion="reduce"] .col-resize-handle::after,
+  .app[data-motion="reduce"] tbody tr,
+  .app[data-motion="reduce"] tr.new-row,
+  .app[data-motion="reduce"] .export-opt,
+  .app[data-motion="reduce"] .spinner { animation: none !important; transition: none !important; }
+}

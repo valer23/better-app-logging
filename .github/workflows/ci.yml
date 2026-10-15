@@ -48,6 +48,10 @@ jobs:
       - name: node --test
         run: node --test "tests/viewer/*.test.mjs"
 
+      - name: Bundled fonts match SHA256SUMS
+        working-directory: viewer/assets/fonts
+        run: sha256sum -c SHA256SUMS
+
   rust:
     name: cargo fmt + check + clippy + test
     runs-on: ubuntu-latest

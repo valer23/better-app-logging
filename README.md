@@ -57,6 +57,8 @@ zero-install device tooling on Android, drag-and-drop bundling on macOS.
 
 ### macOS (Apple Silicon)
 
+Requires macOS 13.1 (Ventura) or later.
+
 1. Download `AppLogsViewer_<version>_aarch64.dmg` from the
    [Releases](https://github.com/valer23/better-app-logging/releases) page
 2. Open the `.dmg` and drag `AppLogsViewer.app` into `/Applications`
