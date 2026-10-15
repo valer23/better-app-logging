@@ -378,3 +378,33 @@ test('a grid binding does not take Enter or Space from a button, link or checkbo
   assert.equal(k.dispatch(key(' '), ROW_CHECK), null);
   assert.equal(k.dispatch(key('f'), ROW_BUTTON), 'stream.follow', 'a letter is not the button\'s');
 });
+
+test('Esc: a hover tooltip ranks after menus and text editing, a keyboard tooltip before everything (P4)', () => {
+  assert.deepEqual([...P.ESC_LEVELS], ['tooltip', 'palette', 'sheet', 'stall', 'menu', 'autocomplete', 'rename', 'title',
+    'tooltip-hover', 'context', 'drawer', 'selection']);
+  const k = ALV.createKeys({ platform: 'mac' });
+  const hit = [];
+  const popHover = k.pushEsc(() => hit.push('hover'), 'tooltip-hover');
+  const popMenu = k.pushEsc(() => hit.push('menu'), 'menu');
+  k.dispatch(key('Escape'), BODY);
+  popMenu();
+  k.dispatch(key('Escape'), BODY);
+  popHover();
+  const popKb = k.pushEsc(() => hit.push('keyboard'), 'tooltip');
+  const popMenu2 = k.pushEsc(() => hit.push('menu'), 'menu');
+  k.dispatch(key('Escape'), BODY);
+  popKb(); popMenu2();
+  const popHover2 = k.pushEsc(() => hit.push('hover'), 'tooltip-hover');
+  const popAc = k.pushEsc(() => hit.push('autocomplete'), 'autocomplete');
+  k.dispatch(key('Escape'), BODY);
+  popAc(); popHover2();
+  assert.deepEqual(hit, ['menu', 'hover', 'keyboard', 'autocomplete'], 'Esc cancels what the keyboard is typing first');
+});
+
+test('comboLabel labels a written combo outside the registry, per platform (P4 zoom tooltips)', () => {
+  const mac = ALV.createKeys({ platform: 'mac' });
+  const pc = ALV.createKeys({ platform: 'other' });
+  assert.deepEqual([mac.comboLabel('Mod+-'), mac.comboLabel('Mod+='), mac.comboLabel('Mod+0'), mac.comboLabel('Mod+Backspace')], ['⌘-', '⌘=', '⌘0', '⌘⌫']);
+  assert.deepEqual([pc.comboLabel('Mod+-'), pc.comboLabel('Shift+Mod+L')], ['Ctrl+-', 'Ctrl+Shift+L']);
+  assert.throws(() => mac.comboLabel('Hyper+X'), /bad modifier/);
+});

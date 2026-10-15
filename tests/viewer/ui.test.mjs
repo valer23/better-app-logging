@@ -1245,3 +1245,106 @@ test('dialog destroy(): closes an open dialog (onClose "destroy", page live agai
   closed.destroy();
   assert.deepEqual(reasons, ['destroy'], 'destroying a closed dialog calls no onClose');
 });
+
+// ---- P4: the tooltip API the shell needs (P3 follow-ups b and d) ----
+
+test('place: side right / left centres beside the anchor, flips at the viewport edge and clamps top', () => {
+  const r = rect(10, 300, 32, 32);   // a rail button: right 42, vertical centre 316
+  assert.deepEqual({ ...U.place(r, { w: 80, h: 24 }, { vw: 800, vh: 600 }, { side: 'right', gap: 6 }) }, { left: 48, top: 304, side: 'right' });
+  assert.deepEqual({ ...U.place(rect(760, 300, 32, 32), { w: 80, h: 24 }, { vw: 800, vh: 600 }, { side: 'right' }) }, { left: 674, top: 304, side: 'left' });
+  assert.deepEqual({ ...U.place(rect(20, 300, 32, 32), { w: 80, h: 24 }, { vw: 800, vh: 600 }, { side: 'left' }) }, { left: 58, top: 304, side: 'right' });
+  assert.equal(U.place(rect(10, 2, 32, 8), { w: 80, h: 24 }, { vw: 800, vh: 600 }, { side: 'right' }).top, 8, 'top clamped to pad');
+  assert.equal(U.place(rect(10, 590, 32, 8), { w: 80, h: 24 }, { vw: 800, vh: 600 }, { side: 'right' }).top, 568, 'and to the bottom');
+});
+
+test('tooltip: several shortcuts (binding ids and written combos), text after the kbds, a side, setText only re-renders on change', () => {
+  const p = fakePage();
+  p.keys.register({ id: 'stream.clear', keys: 'Mod+Backspace', run() {} });
+  const btn = p.dom.el('button', { 'aria-label': 'Clear view' });
+  p.byId.filterbar.appendChild(btn);
+  const t = p.ui.tooltip(btn, { text: 'Clear view', shortcut: ['stream.clear', { combo: 'Mod+-' }, 'not.bound'], after: '(undo for 10 s)', side: 'right' });
+  const tip = p.byId[btn.attrs['aria-describedby']];
+  assert.deepEqual(tip.children.map(c => [c.className, c.textContent, c.hidden]), [
+    ['', 'Clear view', false], ['kbd', '⌘⌫', false], ['kbd', '⌘-', false], ['kbd', '', true], ['', '(undo for 10 s)', false]],
+    'one kbd per shortcut; an unbound id shows none');
+  assert.equal(texts(tip), 'Clear view⌘⌫⌘-(undo for 10 s)');
+  btn.fire('pointerenter', { pointerType: 'mouse' });
+  p.advance(400);
+  assert.deepEqual([tip.hidden, tip.style.left, tip.style.top], [false, '586px', '34px'], 'placed to the right of the trigger (580 + 6), centred on it');
+  let writes = 0;
+  const label = tip.children[0];
+  let value = label.textContent;
+  Object.defineProperty(label, 'textContent', { get: () => value, set: v => { writes++; value = v; } });
+  t.setText('Clear view');
+  assert.equal(writes, 0, 'the same text writes nothing');
+  t.setText('Clear');
+  assert.deepEqual([writes, value], [1, 'Clear']);
+  const plain = p.ui.tooltip(p.dom.el('button'), { text: 'Export' });
+  assert.equal(p.byId.ovTips.children.at(-1).children.at(-1).hidden, true, 'no after text: its span stays hidden');
+  t.destroy(); plain.destroy();
+});
+
+test('tooltip: shows on an aria-disabled trigger, and `when` keeps it hidden while false', () => {
+  const p = fakePage();
+  const btn = p.dom.el('button', { 'aria-disabled': 'true', 'aria-label': 'Settings' });
+  p.byId.filterbar.appendChild(btn);
+  let rail = false;
+  const t = p.ui.tooltip(btn, { text: 'Settings', side: 'right', when: () => rail });
+  const tip = p.byId[btn.attrs['aria-describedby']];
+  btn.fire('pointerenter', { pointerType: 'mouse' });
+  p.advance(400);
+  assert.equal(tip.hidden, true, 'when() is false: no tooltip');
+  btn.fire('pointerleave');
+  rail = true;
+  btn.fire('pointerenter', { pointerType: 'mouse' });
+  p.advance(400);
+  assert.equal(tip.hidden, false, 'aria-disabled does not stop the tooltip (WebKit gives a disabled button no pointer events)');
+  t.destroy();
+});
+
+test('Esc ranking: a hover tooltip waits for a keyboard-focused menu; a keyboard tooltip goes first (review follow-up d)', () => {
+  const p = fakePage();
+  const more = p.dom.el('button', { text: 'More' });
+  const other = p.dom.el('button', { text: 'Clear' });
+  p.byId.filterbar.appendChild(more);
+  p.byId.filterbar.appendChild(other);
+  const m = simpleMenu(p, more, ['Open log file…']);
+  const tip = p.ui.tooltip(other, { text: 'Clear view' });
+  const tipEl = p.byId[other.attrs['aria-describedby']];
+  m.ctl.open({ focus: 'first' });
+  other.fire('pointerenter', { pointerType: 'mouse' });
+  p.advance(400);
+  assert.deepEqual([m.ctl.isOpen(), tipEl.hidden], [true, false], 'precondition: menu open, hover tooltip shown');
+  assert.equal(esc(p), 'esc');
+  assert.deepEqual([m.ctl.isOpen(), tipEl.hidden, p.doc.activeElement === more], [false, false, true], 'the first Esc closes the menu');
+  assert.equal(esc(p), 'esc');
+  assert.equal(tipEl.hidden, true, 'the second Esc hides the hover tooltip');
+  other.fire('pointerleave');
+  p.setFocusVisible(true);
+  other.fire('focus');
+  m.ctl.open({ focus: 'none' });
+  other.fire('focus');
+  assert.equal(tipEl.hidden, false);
+  assert.equal(esc(p), 'esc');
+  assert.deepEqual([tipEl.hidden, m.ctl.isOpen()], [true, true], 'a keyboard-focus tooltip still goes first');
+  m.ctl.close();
+  tip.destroy();
+});
+
+test('Esc ranking: a hover tooltip that then gets keyboard focus moves up to the keyboard level', () => {
+  const p = fakePage();
+  const btn = p.dom.el('button', { text: 'Clear' });
+  p.byId.filterbar.appendChild(btn);
+  const tip = p.ui.tooltip(btn, { text: 'Clear view' });
+  const order = [];
+  const popMenu = p.keys.pushEsc(() => order.push('menu'), 'menu');
+  btn.fire('pointerenter', { pointerType: 'mouse' });
+  p.advance(400);
+  p.setFocusVisible(true);
+  btn.fire('focus');
+  assert.equal(p.keys.escDepth(), 2, 'still one tooltip entry');
+  assert.equal(esc(p), 'esc');
+  assert.deepEqual([p.byId[btn.attrs['aria-describedby']].hidden, order], [true, []], 'the tooltip, now keyboard-shown, goes before the menu');
+  popMenu();
+  tip.destroy();
+});
