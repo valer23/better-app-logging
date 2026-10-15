@@ -243,6 +243,8 @@
     <!-- #58: which slice of the history the table holds, while Follow is off (updateReadingWindowHint). -->
     <span id="readingWindowHint" title="The scrollbar covers only the loaded window of the history, not every line. Scroll near the top or bottom of the table to load more."></span>
     <span id="retainedText"></span>
+    <!-- The #45 discard note alone: shown in place of #retainedText at the bar's narrow tier (shell.css). -->
+    <span id="retainedNote"></span>
     <span id="followState"><span class="dot" aria-hidden="true"></span><span id="followText"></span></span>
   </div>
 </footer>
@@ -1852,15 +1854,16 @@ function updateStats() {
   const s = cur, live = s.kind === 'live';
   statText('filterCount', ALV.livePure.lineCount(s.filtered.length, s.all.length));
   statText('retainedText', live ? ALV.livePure.retainedText(s.all.length, MAX_RETAINED, s.discarded, s.overflowed) : '');
+  // The #45 note alone, which the status bar shows instead of the plain count at its narrow tier (shell.css).
+  statText('retainedNote', live ? ALV.livePure.retainedNote(s.discarded, s.overflowed) : '');
   const max = ALV.shellPure.num(MAX_RETAINED);
   const title = !live || !s.discarded ? ''
     : s.overflowed ? `The paused backlog exceeded ${max} lines, so its oldest frames were discarded. On resume the lines shown now are discarded and the view continues from the newest lines.`
     : `Live view keeps the newest ${max} lines; older lines are discarded to bound memory.`;
-  const el = document.getElementById('retainedText');
-  if (el.title !== title) el.title = title;   // avoid an attribute write on every flush
-  // data-note keeps the #45 note visible at the status bar's narrow tier (shell.css), written on change only.
-  const note = live && s.discarded > 0;
-  if (el._note !== note) { el._note = note; el.toggleAttribute('data-note', note); }
+  for (const id of ['retainedText', 'retainedNote']) {
+    const el = document.getElementById(id);
+    if (el.title !== title) el.title = title;   // avoid an attribute write on every flush
+  }
 }
 function statText(id, text) {
   const el = document.getElementById(id);

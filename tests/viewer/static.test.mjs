@@ -194,8 +194,10 @@ test('status bar: devices, drops (with its popover in the popover layer), the mo
   assert.deepEqual([...new Set(tiers.flatMap(r => r.atRules.filter(a => a.startsWith('@container'))))].sort(),
     ['@container statusbar (max-width: 975px)', '@container toolbar (max-width: 1011px)', '@container toolbar (max-width: 1151px)'],
     'the spec\'s tiers, as border-box widths minus the padding');
-  assert.deepEqual(tiers.filter(r => r.atRules.includes('@container statusbar (max-width: 975px)')).flatMap(r => r.selectors), ['#retainedText:not([data-note])', '#statusBar:has(#retainedText[data-note]) #readingWindowHint'],
-    'the narrow tier hides the plain count, and the #58 hint only when the #45 note is present (the one case the right group does not fit next to the devices); the note itself is never hidden');
+  assert.deepEqual(tiers.filter(r => r.atRules.includes('@container statusbar (max-width: 975px)')).flatMap(r => r.selectors), ['#retainedText', '#retainedNote:not(:empty)'],
+    'the narrow tier swaps the plain count for the #45 note alone; the #58 hint is never hidden (the legacy hint showed at every width), and the note itself is never hidden');
+  const right = findById(root, 'readingWindowHint').parent;
+  assert.deepEqual(right.children.map(c => c.attrs.id), ['readingWindowHint', 'retainedText', 'retainedNote', 'followState'], 'the note sits beside the plain count, in the right group');
   const shellRules = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')));
   const declsOf = sel => shellRules.filter(r => r.selectors.includes(sel) && !r.atRules.some(a => a.startsWith('@container'))).flatMap(r => C.declarations(r.body));
   const sbDev = declsOf('.sb-dev');
@@ -207,7 +209,16 @@ test('status bar: devices, drops (with its popover in the popover layer), the mo
   const has = (ds, prop, value) => ds.some(d => d.prop === prop && d.value === value);
   assert.ok(has(nameDecls, 'max-width', '160px') && has(nameDecls, 'overflow', 'hidden') && has(nameDecls, 'text-overflow', 'ellipsis') && has(nameDecls, 'min-width', '0'),
     'the name span is clipped with an ellipsis at 160 px');
-  assert.ok(has(declsOf('.sb-left'), 'flex', '0 1 auto') && has(declsOf('.sb-right'), 'flex', 'none'), 'the left group shrinks first');
+  // Nothing may be drawn over its neighbour at any width (the Retained text and its note are long at the 1100 px
+  // minimum window, with the drops button and the devices next to them): the right group takes most of a
+  // shortfall and clips (it holds no control, so no ring), and only the Retained text and the note ellipsize.
+  assert.ok(has(declsOf('.sb-left'), 'flex', '0 1 auto') && has(declsOf('.sb-right'), 'flex', '0 8 auto') && has(declsOf('.sb-right'), 'overflow', 'hidden'),
+    'the right group shrinks (weight 8) and clips; the left one gives way after it');
+  for (const sel of ['#retainedText', '#retainedNote']) {
+    const ds = declsOf(sel);
+    assert.ok(has(ds, 'min-width', '0') && has(ds, 'overflow', 'hidden') && has(ds, 'text-overflow', 'ellipsis'), `${sel} ends in an ellipsis instead of overflowing`);
+  }
+  assert.ok(has(declsOf('#readingWindowHint'), 'flex', 'none') && has(declsOf('#followState'), 'flex', 'none'), 'the #58 hint and Following keep their width');
   for (const id of ['sbAndroid', 'sbIos']) {
     const b = findById(root, id);
     assert.deepEqual([b.attrs['aria-labelledby'], b.attrs['aria-describedby']], [`${id}Name`, `${id}Rate`], `#${id} is named by the device, described by the rate`);

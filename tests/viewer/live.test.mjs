@@ -20,6 +20,8 @@ test('status-bar copy: line count, Retained with the #45 note, drops (singular /
   assert.equal(L.retainedText(90, 100, 60, false), 'Retained 90 of 100 · 60 older discarded');
   assert.equal(L.retainedText(5, 100, 11, true), 'Retained 5 of 100 · 11 discarded, resume skips to newest');
   assert.equal(L.retainedText(5, Infinity, 0, false), 'Retained 5', 'no cap (MAX_RETAINED = Infinity from the console)');
+  assert.deepEqual([L.retainedNote(0, false), L.retainedNote(60, false), L.retainedNote(11, true), L.retainedNote(1234, false)],
+    ['', '60 older discarded', '11 discarded, resume skips to newest', `1${T}234 older discarded`], 'the note alone: the #45 wording after the count');
   assert.deepEqual([L.dropsText(1), L.dropsText(312)], ['1 line dropped', '312 lines dropped']);
   assert.deepEqual({ ...L.dropDetail(312, 'iPhone 15', 2700) }, {
     title: '312 lines dropped from iPhone 15',

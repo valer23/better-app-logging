@@ -22,13 +22,18 @@
   const lines = n => (n === 1 ? 'line' : 'lines');
   // The filter count (the filter bar until P6's chip row): "47 106 of 48 310 lines".
   function lineCount(shown, all) { return `${sp().num(shown)} of ${sp().num(all)} lines`; }
-  // The status bar's Retained text with the #45 discard note (spec "Status bar"; the note is the legacy
-  // stats wording). max is MAX_RETAINED; Infinity (no cap, set from the console) leaves "of …" out.
+  // The #45 discard note (the legacy stats wording): what the status bar keeps at its narrow tier, where the
+  // plain Retained count gives way. '' when nothing was discarded.
+  function retainedNote(discarded, overflowed) {
+    if (!discarded) return '';
+    return overflowed ? `${sp().num(discarded)} discarded, resume skips to newest` : `${sp().num(discarded)} older discarded`;
+  }
+  // The status bar's Retained text with the #45 discard note (spec "Status bar"). max is MAX_RETAINED;
+  // Infinity (no cap, set from the console) leaves "of …" out.
   function retainedText(n, max, discarded, overflowed) {
     const { num } = sp();
     const head = Number.isFinite(max) ? `Retained ${num(n)} of ${num(max)}` : `Retained ${num(n)}`;
-    if (!discarded) return head;
-    return overflowed ? `${head} · ${num(discarded)} discarded, resume skips to newest` : `${head} · ${num(discarded)} older discarded`;
+    return discarded ? `${head} · ${retainedNote(discarded, overflowed)}` : head;
   }
   // The drops button and its popover (spec "Status bar"). The spec's "the log shows a gap row where it
   // happened" and "Jump to gap" wait for P10's gap rows. rate: the device's rate when the drop was counted.
@@ -178,6 +183,6 @@
   }
 
   const ALV = g.ALV || (g.ALV = {});
-  ALV.livePure = Object.freeze({ streamBadge, lineCount, retainedText, dropsText, dropDetail, deviceRate });
+  ALV.livePure = Object.freeze({ streamBadge, lineCount, retainedText, retainedNote, dropsText, dropDetail, deviceRate });
   ALV.createLive = createLive;
 })(typeof window !== 'undefined' ? window : globalThis);

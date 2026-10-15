@@ -120,12 +120,17 @@
      outside a 2 px offset) would be drawn past the window edge: inset it, as for a log row. */
   #statusBar button:focus-visible { outline-offset: -2px; }
   .sb-left, .sb-right { display: flex; align-items: center; gap: 12px; min-width: 0; white-space: nowrap; font-variant-numeric: tabular-nums; }
-  /* Overflow rule: the right group keeps its size and the left one gives way first. A device name is free text
-     from the bridge, so it is the part that shrinks: it is clipped to 160 px, and further when the bar is
+  /* Overflow rule: nothing may be drawn over its neighbour. The Retained text gives way first (it is the long
+     one, its full wording is its title and Following's tooltip), then the device names. The right group takes
+     most of a shortfall (shrink 8) and clips what is left (it holds no control, so no focus ring is cut); inside
+     it only the Retained text and the note shrink, to an ellipsis, while the #58 hint and Following keep their
+     width. A device name is free text from the bridge: it is clipped to 160 px, and further when the bar is
      narrower, on the inner span only (clipping the button would cut its focus ring). The platform badge and the
      rate never shrink. */
   .sb-left { flex: 0 1 auto; }
-  .sb-right { flex: none; }
+  .sb-right { flex: 0 8 auto; overflow: hidden; }
+  #readingWindowHint, #followState { flex: none; }
+  #retainedText, #retainedNote { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .sb-dev { gap: 6px; min-width: 0; }   /* .btn-sm's --ctl-h-sm (24/24/28 px): at least the 24×24 target (WCAG 2.5.8) */
   .sb-dev .plat, .sb-dev .sb-rate { flex: none; }
   .sb-dev .plat { width: 16px; height: 16px; }
@@ -133,20 +138,18 @@
   .sb-dev[data-state="streaming"] .sb-rate { color: var(--ok); }
   .sb-dev[data-state="stalled"] .sb-rate { color: var(--warn); }
   #dropsBtn { color: var(--warn); }
-  #readingWindowHint:not(.visible), #retainedText:empty { display: none; }
+  #readingWindowHint:not(.visible), #retainedText:empty, #retainedNote { display: none; }
   #followState { display: inline-flex; align-items: center; gap: 6px; }
   #followState[hidden] { display: none; }
   #followState .dot { color: var(--text-3); }
   #followState[data-on="true"] .dot { color: var(--ok); }
-  /* Below the tier the plain count hides, but the #45 discard note (data-note, updateStats) stays: it is the
-     only place that warning lives (#45 parity). The #58 hint (shown whenever the user is reading, at any width)
-     gives way only when the note is present, the one case where the right group does not fit: note, hint and
-     Following are about 570 px, which the app's minimum window (a 828 px content box) cannot give next to the
-     device buttons, even with their names clipped. Without the note the right group is at most the hint and
-     Following, which fits. */
+  /* Below the tier the plain count gives way to the #45 discard note alone (#retainedNote, written by
+     updateStats): it is the only place that warning lives (#45 parity). The #58 hint is never hidden, at any
+     width: without it the scrollbar thumb misleads while the table holds a partial window. Where hint, note and
+     Following do not fit next to the devices, the note ends in an ellipsis (see the overflow rule above). */
   @container statusbar (max-width: 975px) {
-    #retainedText:not([data-note]) { display: none; }
-    #statusBar:has(#retainedText[data-note]) #readingWindowHint { display: none; }
+    #retainedText { display: none; }
+    #retainedNote:not(:empty) { display: block; }
   }
   .drops-pop { width: 320px; max-width: calc(100vw - 16px); padding: 12px; display: flex; flex-direction: column; gap: 12px; background: var(--raised); border: 1px solid var(--hairline); border-radius: 8px; box-shadow: var(--shadow-md); }
   .drops-pop[hidden] { display: none; }

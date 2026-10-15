@@ -59,7 +59,8 @@ test('#45: past MAX_RETAINED the oldest live lines go, and the Retained text say
   assert.equal(v.text('filterCount'), '90 of 90 lines');
   assert.equal(v.text('retainedText'), 'Retained 90 of 100 · 60 older discarded');
   assert.equal(v.title('retainedText'), 'Live view keeps the newest 100 lines; older lines are discarded to bound memory.');
-  assert.equal(v.run("document.getElementById('retainedText')._note"), true, 'data-note: the narrow status-bar tier keeps the note');
+  assert.equal(v.text('retainedNote'), '60 older discarded', 'the note alone: what the narrow status-bar tier shows instead of the count');
+  assert.equal(v.title('retainedNote'), v.title('retainedText'));
 });
 
 test('#45: while paused the backlog is capped, the Retained text says resume skips to newest, and Resume drains the rest', () => {
@@ -71,6 +72,7 @@ test('#45: while paused the backlog is capped, the Retained text says resume ski
   assert.equal(v.run('pendingBatch.length'), 90);
   assert.equal(v.get('liveDiscarded'), 11);
   assert.equal(v.text('retainedText'), 'Retained 5 of 100 · 11 discarded, resume skips to newest');
+  assert.equal(v.text('retainedNote'), '11 discarded, resume skips to newest');
   assert.match(v.title('retainedText'), /^The paused backlog exceeded 100 lines/);
   v.api.togglePause();
   assert.equal(v.get('liveAll').length, 90);
@@ -99,6 +101,7 @@ test('#45: Clear resets the discarded count, so the Retained text stops reportin
   v.api.clearLogs();
   assert.equal(v.get('liveDiscarded'), 0);
   assert.equal(v.text('retainedText'), 'Retained 0 of 100');
+  assert.equal(v.text('retainedNote'), '', 'no note left: the narrow tier shows nothing');
 });
 
 test('#46: server drops are counted per platform in the status bar and reset by Clear', () => {

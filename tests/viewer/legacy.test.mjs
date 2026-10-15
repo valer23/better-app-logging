@@ -79,7 +79,7 @@ test('updateStats (every flush) writes the line count and the Retained text only
   const { run } = loadLegacy([], { document: stickyDocument() });
   const writes = run(`(() => {
     const seen = { filterCount: 0, retainedText: 0 }, get = document.getElementById;
-    const els = { filterCount: { set textContent(v) { seen.filterCount++; } }, retainedText: { title: '', toggleAttribute() {}, set textContent(v) { seen.retainedText++; } } };
+    const els = { filterCount: { set textContent(v) { seen.filterCount++; } }, retainedText: { title: '', set textContent(v) { seen.retainedText++; } } };
     document.getElementById = id => els[id] || get(id);
     updateStats(); updateStats(); updateStats();
     liveSession.all.push({}); liveSession.filtered.push({});
