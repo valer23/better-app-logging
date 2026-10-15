@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { parseHtml, elements, findById } from './_html.mjs';
+import { parseHtml, elements, findById, closestWithin } from './_html.mjs';
 import { ROOT, ASSETS, HTML_PATH, read, listAssets, inlineScripts } from './_load.mjs';
 import * as C from './_checks.mjs';
 import { build as buildFoundation, REGEN_CMD } from './gen-foundation.mjs';
@@ -89,6 +89,63 @@ test('hidden overlay surfaces really hide: base.css gives [hidden] back to every
   for (const cls of ['menu', 'tooltip', 'toast', 'kbd', 'dialog-host', 'btn']) {
     assert.ok(hiddenSelectors.includes(`.${cls}[hidden]`), `.${cls}[hidden] { display: none } is missing`);
   }
+});
+
+test('the Export menu lives in the popover layer: one menu button, three formats, two scope radios, the note outside the menu', () => {
+  const btn = findById(root, 'exportBtn');
+  assert.ok(closestWithin(btn, '[id=filterbar]', root), '#exportBtn stays in #filterbar (P4 re-parents it)');
+  assert.deepEqual([btn.attrs['aria-haspopup'], btn.attrs['aria-expanded'], btn.attrs['aria-controls'], btn.attrs.onclick], ['menu', 'false', 'exportMenu', undefined]);
+  const surface = findById(root, 'exportSurface');
+  assert.equal(surface.parent.attrs.id, 'ovPopovers');
+  assert.ok('hidden' in surface.attrs);
+  const menu = findById(root, 'exportMenu');
+  assert.equal(menu.attrs.role, 'menu');
+  const items = elements(menu).filter(el => /^menuitem/.test(el.attrs.role || ''));
+  assert.deepEqual(items.map(el => [el.tag, el.attrs.role, el.attrs.tabindex]), [
+    ['button', 'menuitem', '-1'], ['button', 'menuitem', '-1'], ['button', 'menuitem', '-1'],
+    ['button', 'menuitemradio', '-1'], ['button', 'menuitemradio', '-1']]);
+  assert.deepEqual(items.slice(0, 3).map(el => el.attrs.onclick), ["exportClicked('txt')", "exportClicked('csv')", "exportClicked('json')"]);
+  assert.deepEqual(items.slice(3).map(el => [el.attrs.value, el.attrs['aria-checked']]), [['filtered', 'true'], ['all', 'false']]);
+  assert.equal(elements(menu).filter(el => el.attrs.role && !/^(menuitem|menuitemradio|separator|group)$/.test(el.attrs.role)).length, 0, 'a menu holds menu roles only');
+  const note = findById(root, 'exportNote');
+  assert.ok(closestWithin(note, '[id=exportSurface]', root) && !closestWithin(note, '[id=exportMenu]', root), '#exportNote is in the surface, outside role=menu');
+  const legacy = inlineScripts(html).at(-1).code;
+  assert.doesNotMatch(legacy, /\bpositionExportMenu\b|name="exportScope"|getElementById\('exportMenu'\)\.classList/);
+  assert.match(legacy, /ALV\.keys\.register\(\{ id: 'export\.menu', keys: 'Mod\+E', inText: true/);
+});
+
+test('every [aria-haspopup] control has aria-expanded and an aria-controls that resolves', () => {
+  const ids = new Set(elements(root).map(el => el.attrs.id).filter(Boolean));
+  const popups = elements(root).filter(el => 'aria-haspopup' in el.attrs);
+  assert.ok(popups.length >= 1);
+  for (const el of popups) {
+    assert.ok(['true', 'false'].includes(el.attrs['aria-expanded']), `line ${el.line}: aria-expanded`);
+    assert.ok(ids.has(el.attrs['aria-controls']), `line ${el.line}: aria-controls="${el.attrs['aria-controls']}"`);
+  }
+});
+
+test('every sprite symbol is used by the page or the JS', () => {
+  assert.deepEqual(C.unusedSymbols(root, jsText), []);
+});
+
+test('no emoji in the primitives, the app-layer CSS, the overlay root or the Export button', () => {
+  const EMOJI = /\p{Extended_Pictographic}/u;
+  for (const p of ['js/dom.js', 'js/keys.js', 'js/ui.js', 'css/base.css']) assert.doesNotMatch(read(path.join(ASSETS, p)), EMOJI, p);
+  const lines = html.split('\n');
+  for (const id of ['overlayRoot', 'exportWrap']) {
+    const el = findById(root, id);
+    const last = elements(el).at(-1);
+    const text = lines.slice(el.line - 1, (last ? last.line : el.line)).join('\n');
+    assert.doesNotMatch(text, EMOJI, `#${id}`);
+  }
+});
+
+test('app-layer CSS takes its colours from tokens: no hex literal outside foundation.css and legacy.css', () => {
+  const app = cssFiles.filter(f => !/(^|\/)(foundation|legacy)\.css$/.test(f.path) && !f.path.startsWith('fonts/'));
+  assert.ok(app.some(f => f.path === 'css/base.css'));
+  const hex = app.flatMap(f => C.cssRules(f.text).flatMap(r => C.declarations(r.body)
+    .filter(d => /#[0-9a-f]{3,8}\b/i.test(d.value)).map(d => `${f.path}:${r.line}: ${d.prop}: ${d.value}`)));
+  assert.deepEqual(hex, []);
 });
 
 test('INTERACTIVE is one literal, in dom.js, and the legacy drag code reads it from ALV.dom', () => {

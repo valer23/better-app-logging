@@ -94,29 +94,10 @@
        a unit and stay right-anchored together — see `.stats-export` CSS. -->
   <div class="stats-export">
     <div class="stats" id="stats"></div>
-    <!-- Export button + dropdown (always visible when logs are loaded) -->
+    <!-- Export button (always visible when logs are loaded). Its menu is #exportSurface in #overlayRoot:
+         inside #filterbar, the glass backdrop-filter made the bar the containing block of the fixed menu. -->
     <div class="export-wrap" id="exportWrap" style="display:none; position:relative;">
-      <button class="lg-icon-btn" id="exportBtn" onclick="toggleExportMenu()" style="color:var(--lg-accent);border-color:var(--lg-accent)">💾 Export</button>
-      <div class="export-menu" id="exportMenu">
-        <div class="export-menu-header">Export <span id="exportCount"></span></div>
-        <button class="export-opt" onclick="exportClicked('txt')">
-          <span class="export-icon">📄</span>
-          <div><strong>Plain Text</strong><div class="export-desc">Terminal-style, easy to share</div></div>
-        </button>
-        <button class="export-opt" onclick="exportClicked('csv')">
-          <span class="export-icon">📊</span>
-          <div><strong>CSV</strong><div class="export-desc">Open in Excel / Numbers</div></div>
-        </button>
-        <button class="export-opt" onclick="exportClicked('json')">
-          <span class="export-icon">🗂</span>
-          <div><strong>JSON</strong><div class="export-desc">Re-import into this viewer</div></div>
-        </button>
-        <div class="export-scope">
-          <label><input type="radio" name="exportScope" value="filtered" checked> Filtered view (<span id="exportFilteredCount"></span>)</label>
-          <label><input type="radio" name="exportScope" value="all"> All logs (<span id="exportAllCount"></span>)</label>
-        </div>
-        <div class="export-note" id="exportNote" hidden></div>
-      </div>
+      <button type="button" class="lg-icon-btn" id="exportBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="exportMenu" style="color:var(--lg-accent);border-color:var(--lg-accent)"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-download"/></svg>Export<svg class="icon" aria-hidden="true" focusable="false"><use href="#i-chevron-down"/></svg></button>
     </div>
   </div>
 </div>
@@ -341,7 +322,23 @@ pkill -f idevicesyslog</pre>
      last element before the scripts, so overlays follow the page in Tab order. Layers paint in DOM order. -->
 <div id="overlayRoot">
   <div class="ov-layer" id="ovDialogs"></div>
-  <div class="ov-layer" id="ovPopovers"></div>
+  <div class="ov-layer" id="ovPopovers">
+    <!-- Export menu: ALV.ui.menu on #exportBtn and ⌘E / Ctrl+E. Legacy captions until P11 (spec "Export"). -->
+    <div class="menu export-menu ov" id="exportSurface" hidden>
+      <div class="menu-label" id="exportMenuLabel">Export <span id="exportCount"></span></div>
+      <div role="menu" id="exportMenu" aria-labelledby="exportMenuLabel" aria-describedby="exportNote">
+        <button type="button" class="menu-item" role="menuitem" tabindex="-1" onclick="exportClicked('txt')"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-file-text"/></svg><span class="menu-text"><strong>Plain Text</strong> <span class="menu-desc">Terminal-style, easy to share</span></span></button>
+        <button type="button" class="menu-item" role="menuitem" tabindex="-1" onclick="exportClicked('csv')"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-file-spreadsheet"/></svg><span class="menu-text"><strong>CSV</strong> <span class="menu-desc">Open in Excel / Numbers</span></span></button>
+        <button type="button" class="menu-item" role="menuitem" tabindex="-1" onclick="exportClicked('json')"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-file-json"/></svg><span class="menu-text"><strong>JSON</strong> <span class="menu-desc">Re-import into this viewer</span></span></button>
+        <div class="menu-sep" role="separator"></div>
+        <div role="group" aria-label="Lines">
+          <button type="button" class="menu-item" role="menuitemradio" aria-checked="true" tabindex="-1" value="filtered"><svg class="icon menu-check" aria-hidden="true" focusable="false"><use href="#i-check"/></svg><span>Filtered view (<span id="exportFilteredCount"></span>)</span></button>
+          <button type="button" class="menu-item" role="menuitemradio" aria-checked="false" tabindex="-1" value="all"><svg class="icon menu-check" aria-hidden="true" focusable="false"><use href="#i-check"/></svg><span>All logs (<span id="exportAllCount"></span>)</span></button>
+        </div>
+      </div>
+      <div class="export-note" id="exportNoteBox" hidden><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-triangle-alert"/></svg><span id="exportNote"></span></div>
+    </div>
+  </div>
   <section class="toast-region" id="toastRegion" aria-label="Notifications">
     <div class="toast-stack" id="toastAlerts"></div>
     <div class="toast-stack" id="toastLive" aria-live="polite" aria-relevant="additions"></div>
@@ -1632,75 +1629,38 @@ function trimPausedBacklog(s) {
 }
 
 // ── Export ──
-// Position the export menu against the button's bounding rect, clamped to
-// the viewport. Menu uses `position: fixed` so its placement is independent
-// of how the toolbar wrapped — fixes the off-screen-menu bug on narrow
-// viewports where the Export button wraps to the far left of the row.
-function positionExportMenu() {
-  const btn  = document.getElementById('exportBtn');
-  const menu = document.getElementById('exportMenu');
-  if (!btn || !menu) return;
-  const PAD = 8;
-  const rect = btn.getBoundingClientRect();
-  // Measure menu while it's invisible-but-laid-out (display:flex via .open).
-  const mw = menu.offsetWidth;
-  const mh = menu.offsetHeight;
-  const vw = document.documentElement.clientWidth;
-  const vh = document.documentElement.clientHeight;
-  // Preferred: right-align menu's right edge with button's right edge.
-  let left = rect.right - mw;
-  let top  = rect.bottom + 6;
-  // Clamp horizontally so the menu always stays fully on-screen.
-  left = Math.max(PAD, Math.min(left, vw - mw - PAD));
-  // Flip above the button if there isn't enough room below.
-  if (top + mh + PAD > vh) {
-    top = Math.max(PAD, rect.top - mh - 6);
-  }
-  menu.style.left = `${left}px`;
-  menu.style.top  = `${top}px`;
+// The menu is #exportSurface in #overlayRoot, driven by ALV.ui.menu (assets/js/ui.js): placed against the
+// button on open and on resize (the legacy placement arithmetic, now ALV.uiPure.place), closed by
+// Esc, an outside press or choosing a format, with focus back on the button. ⌘E / Ctrl+E toggles it from
+// anywhere, text fields included. refreshExportMenu fills the counts and the loss note on each open.
+function refreshExportMenu() {
+  const s = cur;
+  document.getElementById('exportFilteredCount').textContent = s.filtered.length.toLocaleString() + ' lines';
+  document.getElementById('exportAllCount').textContent = s.all.length.toLocaleString() + ' lines';
+  const note = document.getElementById('exportNote');
+  const lost = s.dropped.android + s.dropped.ios;
+  document.getElementById('exportNoteBox').hidden = !(s.discarded || lost);
+  const parts = [];
+  if (s.discarded) parts.push(s.overflowed
+    ? `Exports the lines held before the pause (${s.all.length.toLocaleString()}). ${s.discarded.toLocaleString()} lines were discarded because the paused backlog exceeded ${MAX_RETAINED.toLocaleString()}; on resume the live lines here are discarded and the view continues from the newest.`
+    : `Exports retained lines only: ${s.discarded.toLocaleString()} older lines were discarded (live view keeps the newest ${MAX_RETAINED.toLocaleString()}).`);
+  if (lost) parts.push(`${lost.toLocaleString()} ${lost === 1 ? 'line' : 'lines'} never reached the viewer (server buffer overflow); the export may have gaps where ${lost === 1 ? 'it' : 'they'} occurred${s.discarded ? ' (unless later discarded by the retention cap)' : ''}.`);
+  note.textContent = parts.join(' ');
 }
-function toggleExportMenu() {
-  const menu = document.getElementById('exportMenu');
-  const open = menu.classList.toggle('open');
-  if (open) {
-    const s = cur;
-    document.getElementById('exportFilteredCount').textContent = s.filtered.length.toLocaleString() + ' lines';
-    document.getElementById('exportAllCount').textContent = s.all.length.toLocaleString() + ' lines';
-    const note = document.getElementById('exportNote');
-    const lost = s.dropped.android + s.dropped.ios;
-    note.hidden = !(s.discarded || lost);
-    const parts = [];
-    if (s.discarded) parts.push(s.overflowed
-      ? `Exports the lines held before the pause (${s.all.length.toLocaleString()}). ${s.discarded.toLocaleString()} lines were discarded because the paused backlog exceeded ${MAX_RETAINED.toLocaleString()}; on resume the live lines here are discarded and the view continues from the newest.`
-      : `Exports retained lines only: ${s.discarded.toLocaleString()} older lines were discarded (live view keeps the newest ${MAX_RETAINED.toLocaleString()}).`);
-    if (lost) parts.push(`${lost.toLocaleString()} ${lost === 1 ? 'line' : 'lines'} never reached the viewer (server buffer overflow); the export may have gaps where ${lost === 1 ? 'it' : 'they'} occurred${s.discarded ? ' (unless later discarded by the retention cap)' : ''}.`);
-    note.textContent = parts.join(' ');
-    positionExportMenu();
-  }
-}
-document.addEventListener('click', e => {
-  const wrap = document.getElementById('exportWrap');
-  const menu = document.getElementById('exportMenu');
-  // The menu is `position: fixed`, so it's no longer a descendant of `wrap`
-  // for hit-testing purposes when sized by JS — check both to avoid the
-  // click-inside-menu immediately closing it.
-  if (wrap && !wrap.contains(e.target) && menu && !menu.contains(e.target)) {
-    menu.classList.remove('open');
-  }
-});
-// Keep the menu glued to the button if the viewport changes while open.
-// Only `resize` is wired — the Export button lives in the static #filterbar
-// above the log table, and `body { overflow: hidden }` plus an internal
-// scroll container (`#logTable`) mean no scroll event can move the button.
-// A capture-phase scroll listener here would re-run positionExportMenu()
-// on every #logTable scroll for nothing — wasted layout reads/writes.
-window.addEventListener('resize', () => {
-  const menu = document.getElementById('exportMenu');
-  if (menu && menu.classList.contains('open')) positionExportMenu();
-});
+const exportMenuCtl = ALV.ui.menu(document.getElementById('exportBtn'), document.getElementById('exportSurface'), { onOpen: refreshExportMenu });
+// Not while a legacy setup / stall modal is shown: they are not ALV dialogs, so keys.setModal never covers
+// them. Opened by the shortcut, the menu gives focus back to where it was (the search field), not the button.
+ALV.keys.register({ id: 'export.menu', keys: 'Mod+E', inText: true,
+  when: () => cur.all.length > 0 && !document.querySelector('.modal-overlay.visible'),
+  run: () => (exportMenuCtl.isOpen() ? exportMenuCtl.close() : exportMenuCtl.open({ focus: 'first', returnFocus: document.activeElement })) });
+document.getElementById('exportBtn').setAttribute('aria-keyshortcuts', ALV.keys.aria('export.menu'));
+ALV.ui.tooltip(document.getElementById('exportBtn'), { text: 'Export', shortcut: 'export.menu' });
+// .p1-evidence/states.mjs (CDP screenshots) opens the menu through this global.
+function toggleExportMenu() { exportMenuCtl.toggle({ focus: 'first' }); }
 
+// The scope is the checked radio item of the menu (button.value is 'filtered' or 'all').
 function getExportData() {
-  return document.querySelector('input[name="exportScope"]:checked').value === 'filtered' ? cur.filtered : cur.all;
+  return document.querySelector('#exportMenu [aria-checked="true"]').value === 'filtered' ? cur.filtered : cur.all;
 }
 
 // Sync wrapper for inline onclick — async doExport is awaited and any
@@ -1710,7 +1670,7 @@ function exportClicked(fmt) {
 }
 
 async function doExport(fmt) {
-  document.getElementById('exportMenu').classList.remove('open');
+  exportMenuCtl.close();
   const data = getExportData();
   const ts   = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const name = `device_logs_${ts}`;
@@ -1807,6 +1767,8 @@ function legacyDownload(filename, content, type) {
 
 function updateExportVisibility() {
   document.getElementById('exportWrap').style.display = cur.all.length ? '' : 'none';
+  // Nothing left to export (Clear, a session switch): the menu goes with its hidden button. O(1) when closed.
+  if (!cur.all.length) exportMenuCtl.close({ restoreFocus: false });
 }
 
 // ── Filtering ──
