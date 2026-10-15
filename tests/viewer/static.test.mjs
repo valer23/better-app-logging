@@ -142,6 +142,14 @@ test('window chrome: the macOS traffic-light inset is on #sidebarHeader, no long
   assert.match(read(path.join(ASSETS, 'css', 'shell.css')), /^@layer app \{$/m);
 });
 
+test('#topbar centres its children: the 52 px band must not stretch .zoom-group or .glass-switch into dead (non-dragging) boxes', () => {
+  const rules = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')));
+  const decls = rules.filter(r => r.selectors.includes('#topbar')).flatMap(r => C.declarations(r.body));
+  assert.ok(decls.some(d => d.prop === 'min-height' && d.value === 'var(--titlebar-h)'), 'the band is --titlebar-h tall');
+  assert.ok(decls.some(d => d.prop === 'align-items' && d.value === 'center'),
+    'legacy.css sets #topbar to align-items: stretch; at 52 px that stretches the zoom group and the glass label (both INTERACTIVE) to the full band height');
+});
+
 test('#sidebarBody scrolls, so its top padding keeps the 4 px focus ring of the first stop (#cmdTrigger) unclipped', () => {
   const decls = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')))
     .filter(r => r.selectors.includes('#sidebarBody')).flatMap(r => C.declarations(r.body));

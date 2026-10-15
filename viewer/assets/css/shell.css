@@ -10,7 +10,9 @@
   /* Drag bands (DRAG_BANDS in shell.js): the sidebar header and the top bar are one 52 px band. */
   #sidebarHeader, #topbar { -webkit-user-select: none; user-select: none; }
   #sidebarHeader { display: flex; align-items: center; gap: 8px; height: var(--titlebar-h); padding: 0 8px 0 16px; flex: none; }
-  #topbar { min-height: var(--titlebar-h); }
+  /* align-items: center overrides legacy's stretch: at 52 px the zoom group and the glass switch would stretch to the
+     full band, and both are INTERACTIVE, so the empty band around the pill or the buttons would not drag. */
+  #topbar { min-height: var(--titlebar-h); align-items: center; }
   .side-title { font-size: 13px; font-weight: 600; white-space: nowrap; }
   /* macOS: the traffic lights sit over the left of the band (titleBarStyle Overlay), so no title there. */
   .app[data-platform="mac"] #sidebarHeader { padding-left: 78px; }
