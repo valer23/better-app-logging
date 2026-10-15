@@ -30,6 +30,7 @@ const INDIRECT_IDS = [
   'dropzone', 'livePanel', 'loading', 'logWrapper',
   'iosRepairBtn', 'setupRepairBtn', 'setupUnpairBtn', 'setupPairBtn', 'stallRepairBtn',
   'androidStatus', 'androidStatusText', 'iosStatus', 'iosStatusText',
+  'settingsBtn', 'shortcutsBtn',   // shell.js: tooltips over an [id, text] array
   'liveBarAndroidDropped', 'liveBarAndroidDroppedText', 'liveBarIosDropped', 'liveBarIosDroppedText',
 ];
 
@@ -65,8 +66,107 @@ test('XSS: innerHTML is only ever cleared; no outerHTML, insertAdjacentHTML or d
   assert.deepEqual(allJs.flatMap(s => C.xssErrors(s.code, s.filename, s.line)), []);
 });
 
-test('drag band: every control inside #topbar matches INTERACTIVE', () => {
-  assert.deepEqual(C.dragErrors(root, jsText, ['topbar']), []);
+// The drag bands, as shell.js lists them (initDragBand runs over this literal).
+const DRAG_BANDS = (() => {
+  const m = /const DRAG_BANDS = \[([^\]]*)\];/.exec(read(path.join(ASSETS, 'js', 'shell.js')));
+  return m ? [...m[1].matchAll(/'([\w-]+)'/g)].map(x => x[1]) : [];
+})();
+
+test('drag bands: every control inside each band in shell.js DRAG_BANDS matches INTERACTIVE', () => {
+  assert.ok(DRAG_BANDS.includes('sidebarHeader') && DRAG_BANDS.length >= 2, `DRAG_BANDS = ${DRAG_BANDS}`);
+  assert.deepEqual(C.dragErrors(root, jsText, DRAG_BANDS), []);
+});
+
+test('app grid: #app holds aside#sidebar (labelled, with the #sidebarHeader band) and #main, which holds every legacy region', () => {
+  const body = root.children.find(el => el.tag === 'html').children.find(el => el.tag === 'body');
+  const app = findById(root, 'app');
+  assert.equal(app.parent, body);
+  assert.deepEqual(app.children.map(el => el.attrs.id), ['sidebar', 'main']);
+  const side = findById(root, 'sidebar');
+  assert.deepEqual([side.tag, side.attrs['aria-label']], ['aside', 'Sidebar']);
+  assert.equal(findById(root, 'sidebarHeader').parent, side);
+  for (const id of ['topbar', 'filterbar', 'dropzone', 'livePanel', 'liveBar', 'loading', 'logWrapper']) {
+    assert.equal(findById(root, id).parent.attrs.id, 'main', `#${id} is a child of #main`);
+  }
+  for (const id of ['setupModal', 'stallModal', 'overlayRoot']) assert.equal(findById(root, id).parent, body, `#${id} stays on <body>`);
+});
+
+test('sidebar footer: Settings and Keyboard shortcuts are aria-disabled stubs, the theme button replaced the legacy switch', () => {
+  const foot = findById(root, 'sidebarFooter');
+  assert.equal(foot.parent.attrs.id, 'sidebar');
+  assert.deepEqual(foot.children.map(el => el.attrs.id), ['settingsBtn', 'shortcutsBtn', 'themeBtn']);
+  for (const id of ['settingsBtn', 'shortcutsBtn']) assert.deepEqual([findById(root, id).attrs['aria-disabled'], 'disabled' in findById(root, id).attrs], ['true', false], id);
+  assert.equal(findById(root, 'themeIcon').tag, 'use');
+  assert.equal(findById(root, 'themeToggle'), null);
+  assert.doesNotMatch(read(path.join(ASSETS, 'css', 'legacy.css')), /\.theme-switch/);
+  assert.doesNotMatch(read(path.join(ASSETS, 'js', 'dom.js')), /\.theme-switch/, 'INTERACTIVE drops the deleted class');
+  assert.doesNotMatch(inlineScripts(html).at(-1).code, /_syncThemeButton|toggleTheme|THEME_LABEL/);
+  const caps = JSON.parse(read(path.join(ROOT, 'src-tauri', 'capabilities', 'default.json')));
+  assert.ok(caps.permissions.includes('core:window:allow-set-theme'), 'the Windows caption follows the app theme (spec "Window chrome")');
+});
+
+test('sidebar: DEVICES comes before SESSIONS; its rows are built into #deviceList', () => {
+  const sections = elements(findById(root, 'sidebarBody')).filter(el => el.tag === 'section').map(el => el.attrs['aria-labelledby']);
+  assert.deepEqual(sections, ['devHead', 'sessHead']);
+  const head = findById(root, 'devHead');
+  assert.deepEqual([head.attrs['aria-expanded'], head.attrs['aria-controls']], ['true', 'deviceList']);
+  assert.equal(findById(root, 'deviceList').children.length, 0, 'the shell builds the rows');
+  assert.deepEqual([...C.referencedIds("$('a'); onClick('b', f); tip('c', {}); usable('d'); showTip('e'); x$('f')")].sort(), ['a', 'b', 'c', 'd'],
+    'the id contract sees the shell\'s lookup helpers');
+  const off = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css'))).flatMap(r => r.selectors).filter(s => s.startsWith('.dev-main[aria-pressed="false"]'));
+  assert.deepEqual(off.sort(), ['.dev-main[aria-pressed="false"] .dev-name', '.dev-main[aria-pressed="false"] .plat'], 'a row toggled out of the filter looks it');
+});
+
+test('sidebar: "Search actions…" is an aria-disabled stub, SESSIONS rows are buttons, and the mode tabs are gone', () => {
+  const cmd = findById(root, 'cmdTrigger');
+  assert.deepEqual([cmd.tag, cmd.attrs.type, cmd.attrs['aria-disabled'], 'disabled' in cmd.attrs], ['button', 'button', 'true', false],
+    'aria-disabled, never disabled: WebKit gives a disabled button no hover, so no tooltip');
+  for (const id of ['sessLive', 'sessFile', 'openFileBtn', 'sessHead']) {
+    assert.deepEqual([findById(root, id).tag, findById(root, id).attrs.type], ['button', 'button'], id);
+  }
+  assert.ok('hidden' in findById(root, 'sessFileItem').attrs, 'the file row is hidden until a file is open');
+  assert.equal(findById(root, 'tabFile'), null);
+  assert.equal(findById(root, 'tabLive'), null);
+  assert.doesNotMatch(read(path.join(ASSETS, 'css', 'legacy.css')), /\.mode-tab\b/);
+  const hides = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')))
+    .filter(r => C.declarations(r.body).some(d => d.prop === 'display' && d.value === 'none')).flatMap(r => r.selectors);
+  assert.ok(hides.includes('.side-list[hidden]'), '.side-list sets display: flex, so a folded list needs [hidden] back');
+});
+
+test('window chrome: the macOS traffic-light inset is on #sidebarHeader, no longer on #topbar', () => {
+  const shellRules = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')));
+  const inset = shellRules.filter(r => r.selectors.includes('.app[data-platform="mac"] #sidebarHeader')).flatMap(r => C.declarations(r.body));
+  assert.ok(inset.some(d => d.prop === 'padding-left' && d.value === '78px'), 'the lights sit over the sidebar header (spec: about 78 px)');
+  const legacyRules = C.cssRules(read(path.join(ASSETS, 'css', 'legacy.css')));
+  assert.equal(legacyRules.filter(r => r.selectors.some(s => /data-platform="mac"\] #topbar/.test(s))).length, 0);
+  assert.match(read(path.join(ASSETS, 'css', 'shell.css')), /^@layer app \{$/m);
+});
+
+test('#app never sizes to its content: flex-basis 0 and a minmax(0, 1fr) row, so the log table is not laid out twice', () => {
+  const decls = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css'))).filter(r => r.selectors.includes('#app')).flatMap(r => C.declarations(r.body));
+  assert.ok(decls.some(d => d.prop === 'flex' && /^1 1 0(px|%)?$/.test(d.value)),
+    'flex: 1 1 auto makes <body>\'s column measure #app\'s content height, laying out the whole table first (300-row build +13 %, layout CPU +31 %)');
+  assert.ok(decls.some(d => d.prop === 'grid-template-rows' && d.value === 'minmax(0, 1fr)'),
+    'an implicit auto row sizes the grid to the log table\'s full height');
+});
+
+test('#topbar centres its children: the 52 px band must not stretch .zoom-group or .glass-switch into dead (non-dragging) boxes', () => {
+  const rules = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')));
+  const decls = rules.filter(r => r.selectors.includes('#topbar')).flatMap(r => C.declarations(r.body));
+  assert.ok(decls.some(d => d.prop === 'min-height' && d.value === 'var(--titlebar-h)'), 'the band is --titlebar-h tall');
+  assert.ok(decls.some(d => d.prop === 'align-items' && d.value === 'center'),
+    'legacy.css sets #topbar to align-items: stretch; at 52 px that stretches the zoom group and the glass label (both INTERACTIVE) to the full band height');
+});
+
+test('#sidebarBody scrolls, so its top padding keeps the 4 px focus ring of the first stop (#cmdTrigger) unclipped', () => {
+  const decls = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')))
+    .filter(r => r.selectors.includes('#sidebarBody')).flatMap(r => C.declarations(r.body));
+  assert.ok(decls.some(d => d.prop === 'overflow' && d.value === 'auto'), 'still the scroll container');
+  const pad = decls.find(d => d.prop === 'padding');
+  assert.ok(pad, '#sidebarBody sets padding');
+  const [top, right = top, , left = right] = pad.value.split(/\s+/).map(parseFloat);
+  // The global ring (outline 2 px, offset 2 px) reaches 4 px outside a control; overflow clips beyond the padding box.
+  for (const [side, v] of Object.entries({ top, right, left })) assert.ok(v >= 4, `padding-${side} ${v}px clips the focus ring`);
 });
 
 test('#overlayRoot is a direct child of <body>, the last element before the scripts, with its layers in paint order', () => {
@@ -154,11 +254,11 @@ test('every sprite symbol is used by the page or the JS', () => {
   assert.deepEqual(C.unusedSymbols(root, jsText), []);
 });
 
-test('no emoji in the primitives, the app-layer CSS, the overlay root or the Export button', () => {
+test('no emoji in the primitives, the shell, the app-layer CSS, the overlay root, the sidebar or the Export button', () => {
   const EMOJI = /\p{Extended_Pictographic}/u;
-  for (const p of ['js/dom.js', 'js/keys.js', 'js/ui.js', 'css/base.css']) assert.doesNotMatch(read(path.join(ASSETS, p)), EMOJI, p);
+  for (const p of ['js/dom.js', 'js/keys.js', 'js/ui.js', 'js/shell.js', 'css/base.css', 'css/shell.css']) assert.doesNotMatch(read(path.join(ASSETS, p)), EMOJI, p);
   const lines = html.split('\n');
-  for (const id of ['overlayRoot', 'exportWrap']) {
+  for (const id of ['overlayRoot', 'exportWrap', 'sidebar']) {
     const el = findById(root, id);
     const last = elements(el).at(-1);
     const text = lines.slice(el.line - 1, (last ? last.line : el.line)).join('\n');
@@ -174,11 +274,22 @@ test('app-layer CSS takes its colours from tokens: no hex literal outside founda
   assert.deepEqual(hex, []);
 });
 
-test('INTERACTIVE is one literal, in dom.js, and the legacy drag code reads it from ALV.dom', () => {
+test('INTERACTIVE is one literal, in dom.js, and the shell\'s drag bands read it from the dom builders', () => {
   const literals = allJs.filter(s => /const INTERACTIVE\s*=\s*'/.test(s.code)).map(s => s.filename);
   assert.deepEqual(literals, ['viewer/assets/js/dom.js']);
   assert.equal((jsText.match(/const INTERACTIVE\s*=\s*'/g) || []).length, 1);
-  assert.match(inlineScripts(html).at(-1).code, /const INTERACTIVE = ALV\.dom\.INTERACTIVE;/);
+  assert.equal((read(path.join(ASSETS, 'js', 'shell.js')).match(/\.closest\(dom\.INTERACTIVE\)/g) || []).length, 2, 'mousedown and dblclick');
+  assert.doesNotMatch(inlineScripts(html).at(-1).code, /INTERACTIVE|initTopbarDrag|startDragging/, 'the legacy script has no drag code left');
+});
+
+test('the macOS window entry (its windows[] replaces the base array) carries the base window\'s size and minimum size', () => {
+  const win = f => JSON.parse(read(path.join(ROOT, 'src-tauri', f))).app.windows.find(w => w.label === 'main');
+  const base = win('tauri.conf.json');
+  const mac = win('tauri.macos.conf.json');
+  for (const k of ['width', 'height', 'minWidth', 'minHeight']) {
+    assert.equal(typeof base[k], 'number', `base ${k}`);
+    assert.equal(mac[k], base[k], `macOS ${k}`);
+  }
 });
 
 test('the Lucide sprite is the first element of <body>: aria-hidden, zero-size, exactly the generator\'s icons', () => {
@@ -256,6 +367,11 @@ test('the checks reject deliberately broken input', () => {
   assert.deepEqual(C.dragErrors(h('<div id="topbar"><span role="switch" tabindex="0">x</span></div>'), "const INTERACTIVE = 'button, [role=switch]';", ['topbar']), []);
   assert.notDeepEqual(C.dragErrors(h('<div id="topbar"><span role="tab" tabindex="0">x</span></div>'), "const INTERACTIVE = 'button, [role=switch]';", ['topbar']), []);
   assert.deepEqual(C.dragErrors(h('<div id="topbar"><div data-no-drag><span tabindex="0">x</span></div></div>'), "const INTERACTIVE = '[data-no-drag]';", ['topbar']), []);
+  // Only widget roles make an element a control: a role=group wrapper is drag space, a role=menuitem is not (P4).
+  assert.deepEqual(C.dragErrors(h('<div id="topbar"><div role="group" aria-label="Log text size"><button>A</button></div></div>'), "const INTERACTIVE = 'button';", ['topbar']), []);
+  assert.notDeepEqual(C.dragErrors(h('<div id="topbar"><span role="menuitem">x</span></div>'), "const INTERACTIVE = 'button';", ['topbar']), []);
+  assert.notDeepEqual(C.dragErrors(h('<div id="topbar"><span role="option" aria-selected="false">x</span></div>'), "const INTERACTIVE = 'button';", ['topbar']), []);
+  assert.notDeepEqual(C.dragErrors(h('<div id="topbar"><div role="group" tabindex="0">x</div></div>'), "const INTERACTIVE = 'button';", ['topbar']), [], 'a focusable group is still a control');
   assert.notDeepEqual(C.offlineErrors("@import url('https://fonts.googleapis.com/css2');", 'x.css'), []);
   assert.deepEqual(C.offlineErrors("new WebSocket('ws://localhost:8765')", 'x.js'), []);
   assert.notDeepEqual(C.lgScopeSpecificityErrors('.lg-scope * { margin: 0 }'), []);

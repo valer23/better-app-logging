@@ -22,7 +22,7 @@ const PINNED = {
   dropTooltipEnd: 'Resets on Clear.',
 };
 
-const NAMES = ['handleWsMsg', 'flushBatch', 'togglePause', 'toggleAutoScroll', 'clearLogs', 'handleFile', 'updateNewerPill', 'doExport'];
+const NAMES = ['handleWsMsg', 'flushBatch', 'togglePause', 'toggleAutoScroll', 'clearLogs', 'handleFile', 'updateNewerPill', 'doExport', 'openLogFile'];
 const frame = i => JSON.stringify({
   type: 'log', ts: `2026 Oct 14 15:53:43.${String(i).padStart(6, '0')}`,
   pid: 57, tid: 0, tag: 'SpringBoard', app: '', lvl: 'INFO', msg: `line ${i}`,
@@ -497,4 +497,39 @@ test('the frozen-row guard reads the shown session: a trimmed live row is ignore
   clickRow(v, msg);
   assert.equal(v.run('liveSession.sel'), null);
   assert.equal(v.run('liveSession.follow'), true);
+});
+
+// The legacy half of the shell adapter: "Open log file…" (the SESSIONS row and ⌘O) and the row's file name.
+function spyFileInputClicks(v) {
+  const input = v.doc.getElementById('fileInput');
+  let clicks = 0;
+  input.click = () => { clicks++; };
+  return () => clicks;
+}
+
+test('openLogFile does nothing over the legacy setup or stall modal: cur stays Live and the picker stays closed', () => {
+  const v = boot();
+  const clicks = spyFileInputClicks(v);
+  v.doc.getElementById('stallModal').classList.add('modal-overlay', 'visible');
+  v.api.openLogFile();
+  assert.equal(v.run('cur === liveSession'), true);
+  assert.equal(clicks(), 0);
+});
+
+test('openLogFile selects the file session, then opens the picker', () => {
+  const v = boot();
+  const clicks = spyFileInputClicks(v);
+  v.doc.getElementById('stallModal').classList.add('modal-overlay');   // present but not visible
+  v.api.openLogFile();
+  assert.equal(v.run('cur === fileSession'), true);
+  assert.equal(clicks(), 1);
+});
+
+test('a loaded file names its SESSIONS row and shows it', () => {
+  const v = boot();
+  v.go('toFile');
+  v.api.handleFile({ name: 'x.logcat', text: fileText(3) });
+  assert.equal(v.text('sessFileName'), 'x.logcat');
+  assert.equal(v.doc.getElementById('sessFileItem').hidden, false);
+  assert.equal(v.text('sessFileCount'), '3');
 });

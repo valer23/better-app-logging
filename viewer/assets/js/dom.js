@@ -15,8 +15,10 @@
   'use strict';
 
   // A mousedown on anything matching this never starts a window drag. tests/viewer/static.test.mjs
-  // reads this literal (the only `const INTERACTIVE` in the viewer) for its drag-band lint.
-  const INTERACTIVE = 'button, input, select, textarea, a, label, [role=button], [role=switch], [role=radio], [role=tab], [role=slider], [role=combobox], [data-no-drag], .zoom-group, .theme-switch, .glass-switch';
+  // reads this literal (the only `const INTERACTIVE` in the viewer) for its drag-band lint; the P4 CDP
+  // probe checks the live DOM of both bands against it. Every widget role a control may carry is listed,
+  // so a JS-built control in a band is covered whatever element it is.
+  const INTERACTIVE = 'button, input, select, textarea, a, label, [role=button], [role=switch], [role=radio], [role=tab], [role=slider], [role=combobox], [role=checkbox], [role=menuitem], [role=menuitemradio], [role=menuitemcheckbox], [role=option], [role=link], [data-no-drag], .zoom-group, .glass-switch';
   const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"]), [contenteditable="true"]';
   const SVG_NS = 'http://www.w3.org/2000/svg';
   // Compared lowercased: setAttribute lowercases names on HTML elements, so srcDoc / onClick would land as srcdoc / onclick.

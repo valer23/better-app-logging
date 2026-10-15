@@ -17,19 +17,21 @@ const BENCH_BINDINGS = [
 const BENCH_REASSIGNED = ['flushBatch', 'iosLive', 'MAX_RETAINED'];
 
 const { api, run } = loadLegacy([
-  'toggleTheme', 'setLogZoom',
+  'setLogZoom',
   'csvCell', 'formatTs', 'parseIosText', 'parseCsvRows', 'doExport', 'handleFile',
   ...BENCH_BINDINGS,
 ]);
 const prefs = run('ALV.prefs');
 
-test('toggleTheme cycles Dark, Light, System through ALV.prefs', () => {
+test('Ctrl+Shift+L (the shell\'s view.theme) cycles Dark, Light, System through ALV.prefs on the page', () => {
+  const keys = run('ALV.keys');
+  const press = () => keys.dispatch({ key: 'L', code: 'KeyL', ctrlKey: true, shiftKey: true, preventDefault() {} }, null);
   prefs.set('theme', 'dark');
-  api.toggleTheme();
+  assert.equal(press(), 'view.theme');
   assert.equal(prefs.get('theme'), 'light');
-  api.toggleTheme();
+  press();
   assert.equal(prefs.get('theme'), 'system');
-  api.toggleTheme();
+  press();
   assert.equal(prefs.get('theme'), 'dark');
 });
 
@@ -71,6 +73,14 @@ test('a sticky document hands out one stub per id, keeps what the legacy script 
   const { run } = loadLegacy([], { document: doc });
   run('updateStats()');
   assert.equal(doc.getElementById('stats').textContent, '0 / 0 lines');
+});
+
+test('the page wires both window drag bands through the shell: one mousedown and one dblclick listener each', () => {
+  const doc = stickyDocument();
+  loadLegacy([], { document: doc });
+  for (const id of ['sidebarHeader', 'topbar']) {
+    for (const type of ['mousedown', 'dblclick']) assert.equal((doc.listeners.get(`${id}:${type}`) || []).length, 1, `${id}:${type}`);
+  }
 });
 
 test('csvCell quotes only cells with a comma, quote or newline', () => {
@@ -150,4 +160,126 @@ test('JSON export re-imports unchanged, both platforms', async () => {
 test('known gap, fixed in P11: a TXT export of Android lines does not re-import', async () => {
   const { parsed } = await roundTrip('txt', ANDROID);
   assert.deepEqual(parsed, []);   // EXPORTED_TXT_RE only accepts the iOS timestamp shape
+});
+
+test('togglePlatform hides and shows one platform\'s lines and keeps the filter bar button in step (P4 sidebar rows)', () => {
+  const doc = stickyDocument();
+  const { run } = loadLegacy([], { document: doc });
+  run('togglePlatform("ios")');
+  assert.deepEqual([run('enabledPlatforms.has("ios")'), run('enabledPlatforms.has("android")'), run('filterGen')], [false, true, 1]);
+  run('togglePlatform("ios")');
+  assert.deepEqual([run('enabledPlatforms.has("ios")'), run('filterGen')], [true, 2]);
+});
+
+const LOG = '{"type":"log","ts":"2026 Oct 14 15:53:43","pid":1,"tid":0,"lvl":"INFO","tag":"t","app":"","msg":"m"}';
+const DEVICES = '{"type":"devices","data":"[connected:00008110-000A1B2C3D4E5F60]"}';
+const STALL = '{"type":"error","data":"iOS log stream stalled — restarting idevicesyslog. Unlock the iPhone."}';
+const OTHER_ERROR = '{"type":"error","data":"ios bridge error: spawn idevicesyslog"}';
+const DROPPED = '{"type":"dropped","count":3}';
+
+test('the WebSocket handlers count log lines only, and pass every frame on to handleWsMsg unchanged (P4)', () => {
+  const doc = stickyDocument();
+  const { run } = loadLegacy([], { document: doc });
+  run(`document.getElementById('androidDeviceSelect').value = 'a1'; document.getElementById('iosDeviceSelect').value = 'u1';
+       globalThis.__seen = []; handleWsMsg = (e, p) => __seen.push([p, e.data]); connectAndroid(); connectIos();`);
+  const frames = [['android', LOG], ['ios', LOG], ['ios', DEVICES], ['ios', LOG], ['ios', OTHER_ERROR], ['ios', DROPPED], ['android', DEVICES]];
+  for (const [p, data] of frames) run(`${p === 'ios' ? 'wsIos' : 'wsAndroid'}.onmessage({ data: ${JSON.stringify(data)} })`);
+  run('wsIos.onmessage({ data: {} })');   // not text: ignored by the counter
+  assert.deepEqual([run('wsLines.android'), run('wsLines.ios')], [1, 2]);
+  assert.deepEqual(JSON.parse(JSON.stringify(run('__seen'))).slice(0, frames.length), frames, 'handleWsMsg got every frame');
+});
+
+test('the iOS stall frame marks the sidebar row stalled whether or not the stream is paused; no other frame does (P4)', () => {
+  const doc = stickyDocument();
+  const { run } = loadLegacy([], { document: doc });
+  run(`document.getElementById('iosDeviceSelect').value = 'u1'; globalThis.__stalls = []; shell = { markStalled: p => __stalls.push(p), sync() {} };
+       handleWsMsg = () => {}; connectIos(); connectAndroid();`);
+  const send = (p, data) => run(`${p === 'ios' ? 'wsIos' : 'wsAndroid'}.onmessage({ data: ${JSON.stringify(data)} })`);
+  for (const data of [LOG, DEVICES, OTHER_ERROR, DROPPED]) send('ios', data);
+  send('android', STALL);
+  assert.deepEqual(JSON.parse(JSON.stringify(run('__stalls'))), [], 'only the iOS stall hint counts');
+  send('ios', STALL);
+  run('livePaused = true');
+  send('ios', STALL);
+  assert.deepEqual(JSON.parse(JSON.stringify(run('__stalls'))), ['ios', 'ios']);
+  assert.equal(run('wsLines.ios'), 1, 'the stall hint is not a line');
+});
+
+test('handleWsMsg still shows the stall sheet for the stall frame unless the stream is paused (P4)', () => {
+  const doc = stickyDocument();
+  const { run } = loadLegacy([], { document: doc });
+  run(`globalThis.__sheet = 0; showStallModal = () => { __sheet++; };`);
+  run(`handleWsMsg({ data: ${JSON.stringify(STALL)} }, 'ios'); livePaused = true; handleWsMsg({ data: ${JSON.stringify(STALL)} }, 'ios');`);
+  assert.equal(run('__sheet'), 1, 'paused: no sheet');
+});
+
+test('showStallModal and showSetup close the sidebar row menus: #overlayRoot (z 200) would paint them above the modal (P4)', () => {
+  const { run } = loadLegacy([], { document: stickyDocument() });
+  run(`globalThis.__closed = 0; shell = { closeMenus: () => { __closed++; }, sync() {} };`);
+  run(`showStallModal('x')`);
+  assert.equal(run('__closed'), 1, 'the stall modal is opened by a frame, so no pointerdown light dismiss runs');
+  run(`showSetup('ios')`);
+  assert.equal(run('__closed'), 2);
+});
+
+// The legacy side of the shell adapter, against the real legacy code: the fields shellState() returns are what
+// shell.js reads, so a typo here fails at runtime only.
+const settle = () => new Promise(r => setImmediate(r));
+
+test('shellState has the shape the shell reads: live, status, devices, driverMissing, lines, dropped and enabled', () => {
+  const { run } = loadLegacy([], { document: stickyDocument() });
+  const st = run('shellState()');
+  assert.deepEqual(Object.keys(st).sort(), ['cur', 'devices', 'driverMissing', 'dropped', 'enabled', 'lines', 'live', 'sessions', 'status']);
+  assert.deepEqual([st.cur === run('liveSession'), st.sessions[0] === run('liveSession'), st.sessions[1] === run('fileSession')], [true, true, true]);
+  assert.equal(st.dropped, run('liveSession.dropped'), 'the same object, so a drop shows without a copy');
+  assert.equal(st.lines, run('wsLines'));
+  assert.equal(st.devices, run('deviceInfo'));
+  assert.equal(st.status, run('liveStatus'));
+  assert.equal(st.enabled, run('enabledPlatforms'));
+  assert.deepEqual(JSON.parse(JSON.stringify(st.live)), { android: false, ios: false });
+  assert.equal(st.driverMissing, false);
+  run('androidLive = true; iosLive = true');
+  assert.deepEqual(JSON.parse(JSON.stringify(run('shellState().live'))), { android: true, ios: true }, 'read fresh on each call');
+});
+
+test('setStatus feeds the status the rows show; drops land in shellState().dropped', () => {
+  const { run } = loadLegacy([], { document: stickyDocument() });
+  run(`setStatus('ios', 'connecting', 'Connecting…'); setStatus('android', 'error', 'No device');`);
+  assert.deepEqual(JSON.parse(JSON.stringify(run('shellState().status'))),
+    { android: { state: 'error', text: 'No device' }, ios: { state: 'connecting', text: 'Connecting…' } });
+  run(`handleWsMsg({ data: ${JSON.stringify(DROPPED)} }, 'ios');`);
+  assert.deepEqual(JSON.parse(JSON.stringify(run('shellState().dropped'))), { android: 0, ios: 3 });
+});
+
+test('loadDevices fills deviceInfo on the list, restore, empty and error paths; the iOS driver check fills driverMissing', async () => {
+  const { run } = loadLegacy([], { document: stickyDocument() });
+  run('globalThis.__answers = {}; fetch = url => __answers[url]();');
+  const answer = (url, fn) => { run(`__answers[${JSON.stringify(url)}] = ${fn}`); };
+  const info = () => JSON.parse(JSON.stringify(run('shellState().devices')));
+  const NONE = { id: '', name: '' };
+  answer('/devices/android', `() => Promise.resolve({ ok: true, json: () => Promise.resolve({ devices: [{ id: 'a1', name: 'Pixel 8 Pro' }, { id: 'a2' }] }) })`);
+  await run('loadAndroidDevices()');
+  assert.deepEqual(info().android, { id: 'a1', name: 'Pixel 8 Pro' }, 'the first device when nothing was picked');
+  answer('/devices/android', `() => Promise.resolve({ ok: true, json: () => Promise.resolve({ devices: [{ id: 'a0', name: 'Old' }, { id: 'a2' }] }) })`);
+  run(`document.getElementById('androidDevice' + 'Select').value = 'a2'`);
+  await run('loadAndroidDevices()');
+  assert.deepEqual(info().android, { id: 'a2', name: 'a2' }, 'the previous pick is restored, and a nameless device is named by its id');
+  answer('/devices/android', `() => Promise.resolve({ ok: true, json: () => Promise.resolve({ devices: [] }) })`);
+  await run('loadAndroidDevices()');
+  assert.deepEqual(info().android, NONE, 'no device');
+  answer('/devices/ios', `() => Promise.resolve({ ok: true, json: () => Promise.resolve({ devices: [{ id: 'u1', name: 'iPhone 15' }] }) })`);
+  answer('/ios-driver-status', `() => Promise.resolve({ ok: true, json: () => Promise.resolve({ available: false }) })`);
+  await run('loadIosDevices()');
+  await settle();
+  assert.deepEqual([info().ios, run('shellState().driverMissing')], [{ id: 'u1', name: 'iPhone 15' }, true]);
+  answer('/ios-driver-status', `() => Promise.resolve({ ok: true, json: () => Promise.resolve({ available: true }) })`);
+  await run('loadIosDevices()');
+  await settle();
+  assert.equal(run('shellState().driverMissing'), false);
+  answer('/devices/ios', `() => Promise.resolve({ ok: false, status: 500 })`);
+  answer('/ios-driver-status', `() => Promise.reject(new Error('older backend'))`);
+  run('iosDriverMissing = true');
+  await run('loadIosDevices()');
+  await settle();
+  assert.deepEqual([info().ios, run('shellState().driverMissing')], [NONE, false], 'a failed discovery clears the device; a missing endpoint fails open');
 });

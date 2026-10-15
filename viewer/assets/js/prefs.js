@@ -9,6 +9,7 @@
      material     'solid' | 'glass'              absent: migrated once from glassMode ('on' = glass)
      glassMode    'on' | 'off'                   legacy; mirrored on every material write (downgrade)
      uiSize       's' | 'm' | 'l'                default 'm'
+     sidebar      'expanded' | 'collapsed'       default 'expanded' (P4: ⌘B collapses it to the rail)
      settings     JSON object (font, density, contrast, motion here; later PRs add fields).
                   Corrupt JSON reads as defaults and is not written back until the user changes
                   a setting. Unknown fields are preserved.
@@ -52,6 +53,7 @@
     return pref === 'glass' && platform === 'mac' && !reducedTransparency ? 'glass' : 'solid';
   }
   function parseUiSize(raw) { return raw === 's' || raw === 'l' ? raw : 'm'; }
+  function parseSidebar(raw) { return raw === 'collapsed' ? 'collapsed' : 'expanded'; }
   function platformOf(userAgent) { return /Mac OS X/i.test(userAgent || '') ? 'mac' : 'other'; }
   function defaultSettings() {
     const out = {};
@@ -93,6 +95,7 @@
       logFontSize: clampLogFs(store.get('logFontSize')),
       material: parseMaterial(store.get('material'), store.get('glassMode')),
       uiSize: parseUiSize(store.get('uiSize')),
+      sidebar: parseSidebar(store.get('sidebar')),
     };
     let settings = parseSettings(store.get('settings'));
 
@@ -104,6 +107,7 @@
         materialEffective: resolveMaterial(prefs.material, platform, transparencyMq ? transparencyMq.matches : false),
         logFontSize: prefs.logFontSize,
         uiSize: prefs.uiSize,
+        sidebar: prefs.sidebar,
         platform,
         settings: Object.assign({}, settings.value),
       };
@@ -115,6 +119,7 @@
         rootEl.setAttribute('data-theme', s.themeResolved);
         rootEl.setAttribute('data-material', s.materialEffective);
         rootEl.setAttribute('data-ui', s.uiSize);
+        rootEl.setAttribute('data-sidebar', s.sidebar);
         rootEl.setAttribute('data-platform', s.platform);
         rootEl.setAttribute('data-font', s.settings.font);
         rootEl.setAttribute('data-density', s.settings.density);
@@ -141,6 +146,7 @@
       logFontSize(v) { if (!Number.isFinite(Number(v))) throw new RangeError('logFontSize must be a number'); return clampLogFs(Number(v)); },
       material(v) { if (v !== 'solid' && v !== 'glass') throw new RangeError('material must be solid or glass'); return v; },
       uiSize(v) { if (v !== 's' && v !== 'm' && v !== 'l') throw new RangeError('uiSize must be s, m or l'); return v; },
+      sidebar(v) { if (v !== 'expanded' && v !== 'collapsed') throw new RangeError('sidebar must be expanded or collapsed'); return v; },
     };
 
     return {
@@ -192,7 +198,7 @@
   ALV.createPrefs = createPrefs;
   ALV.prefsPure = Object.freeze({
     LOG_FS, SETTINGS_SCHEMA, parseTheme, resolveTheme, nextTheme, clampLogFs, parseMaterial,
-    resolveMaterial, parseUiSize, platformOf, parseSettings,
+    resolveMaterial, parseUiSize, parseSidebar, platformOf, parseSettings,
   });
 
   // In the page: boot against <html> now (pre-paint). In tests (no document): do nothing.

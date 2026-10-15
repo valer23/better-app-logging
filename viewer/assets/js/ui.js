@@ -8,14 +8,25 @@
   // ---- Pure ----
 
   // Where a surface of `size` {w, h} goes next to `anchor` (a DOMRect-like {left, top, right, bottom,
-  // width}) inside `viewport` {vw, vh}. side 'bottom' flips above when it does not fit below; 'top' flips
-  // below. align 'end' right-aligns with the anchor (the Export menu), 'start' left-aligns, 'center'
-  // centres (tooltips). Left is clamped to `pad` from both edges. The defaults reproduce the legacy
-  // positionExportMenu() exactly.
+  // width, height}) inside `viewport` {vw, vh}. side 'bottom' flips above when it does not fit below;
+  // 'top' flips below. align 'end' right-aligns with the anchor (the Export menu), 'start' left-aligns,
+  // 'center' centres (tooltips). Left is clamped to `pad` from both edges. The defaults reproduce the
+  // legacy positionExportMenu() exactly. side 'right' / 'left' (the collapsed rail's tooltips) centres the
+  // surface beside the anchor, flips to the other side when it does not fit, and clamps top to `pad`.
   function place(anchor, size, viewport, opts = {}) {
     const { side = 'bottom', align = 'end', gap = 6, pad = 8 } = opts;
     const { w, h } = size;
     const { vw, vh } = viewport;
+    if (side === 'right' || side === 'left') {
+      const toRight = anchor.right + gap;
+      const toLeft = anchor.left - w - gap;
+      let x = side === 'right' ? toRight : toLeft;
+      let used = side;
+      if (side === 'right' && x + w + pad > vw) { used = 'left'; x = toLeft; }
+      else if (side === 'left' && x < pad) { used = 'right'; x = toRight; }
+      const y = anchor.top + (anchor.height - h) / 2;
+      return { left: Math.max(pad, Math.min(x, vw - w - pad)), top: Math.max(pad, Math.min(y, vh - h - pad)), side: used };
+    }
     let left = align === 'start' ? anchor.left : align === 'center' ? anchor.left + (anchor.width - w) / 2 : anchor.right - w;
     left = Math.max(pad, Math.min(left, vw - w - pad));
     let top;
@@ -255,6 +266,8 @@
       const placement = { side: opts.side || 'bottom', align: opts.align || 'end', gap: 6, pad: 8 };
       let popEsc = null;
       let returnTo = null;   // open({ returnFocus }): where a shortcut opener had focus
+      let destroyed = false;
+      const offs = [];       // removers of the trigger listeners that menu() and popover() add through listen()
       const ctl = {
         trigger,
         isOpen: () => !surface.hidden,
@@ -262,6 +275,7 @@
         owns: node => surface.contains(node) || trigger.contains(node),
         reposition() { if (ctl.isOpen()) position(trigger, surface, placement); },
         open(o = {}) {
+          if (destroyed) return;
           if (!ctl.isOpen()) {
             if (openPopup) openPopup.close({ restoreFocus: false });
             hideTip();
@@ -290,6 +304,20 @@
           if (opts.onClose) opts.onClose();
         },
         toggle(o) { if (ctl.isOpen()) ctl.close(); else ctl.open(o); },
+        listen(target, type, fn) { target.addEventListener(type, fn); offs.push(() => target.removeEventListener(type, fn)); },
+        // For an owner that rebuilds its trigger (P4 device rows): closes without moving focus, removes the
+        // surface and the trigger's listeners, and strips the trigger's popup ARIA. Focus that was inside the
+        // surface goes to the trigger while it is shown. Idempotent; a destroyed controller never opens again.
+        destroy() {
+          if (destroyed) return;
+          const hadFocus = surface.contains(doc.activeElement);
+          ctl.close({ restoreFocus: false });
+          destroyed = true;
+          for (const off of offs.splice(0)) off();
+          for (const a of ['aria-haspopup', 'aria-expanded', 'aria-controls']) trigger.removeAttribute(a);
+          surface.remove();
+          if (hadFocus && isShown(trigger)) trigger.focus();
+        },
       };
       return ctl;
     }
@@ -310,8 +338,8 @@
         if (focus === 'none' || !all.length) return;
         all[focus === 'last' ? all.length - 1 : 0].focus();
       });
-      trigger.addEventListener('click', () => ctl.toggle({ focus: 'first' }));
-      trigger.addEventListener('keydown', e => {
+      ctl.listen(trigger, 'click', () => ctl.toggle({ focus: 'first' }));
+      ctl.listen(trigger, 'keydown', e => {
         if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
         // Cmd/Ctrl/Alt + arrow belong to the shortcut registry (jump to latest / oldest line): neither open
         // the menu nor swallow the event, or a global binding could never fire from a menu button.
@@ -371,7 +399,7 @@
       const ctl = popup(trigger, panel, opts, () => {
         ((opts.initialFocus && panel.querySelector(opts.initialFocus)) || dom.focusables(panel)[0] || panel).focus();
       });
-      trigger.addEventListener('click', () => ctl.toggle());
+      ctl.listen(trigger, 'click', () => ctl.toggle());
       panel.addEventListener('keydown', e => {
         if (e.key !== 'Tab') return;
         const f = dom.focusables(panel);
@@ -388,33 +416,48 @@
     // Tooltip (spec Open item 1): a real role="tooltip" element in the tip layer, referenced from the
     // trigger's aria-describedby from the start. 400 ms after the pointer enters, at once on keyboard focus;
     // stays while the pointer is on it (100 ms grace); Esc hides it until the pointer leaves or focus moves.
-    // `shortcut` is a binding id: the kbd shows its current label (⌘E / Ctrl+E). Text only, no controls.
-    function tooltip(trigger, { text = '', shortcut = null } = {}) {
+    // It shows on an aria-disabled trigger too: the shell disables with aria-disabled, never `disabled`,
+    // because WebKit gives a disabled button no pointer events, so its tooltip would never open.
+    //   shortcut: a binding id (the kbd follows overrides: ⌘E / Ctrl+E), a written combo { combo: 'Mod+-' }
+    //             for keys outside the registry, or an array of them: one kbd each, in order.
+    //   after:    text after the kbds: "Clear view ⌘⌫ (undo for 10 s)".
+    //   side:     'bottom' (default), 'top', 'right' or 'left' (the collapsed rail).
+    //   when:     () => boolean; while it is false the tooltip does not show (rail labels).
+    // Text only, no controls.
+    function tooltip(trigger, { text = '', shortcut = null, after = '', side = 'bottom', when = null } = {}) {
       const label = dom.el('span', { text });
-      const kbd = dom.el('span', { class: 'kbd', hidden: true });
-      const tip = dom.portal(dom.el('div', { class: 'tooltip ov', role: 'tooltip', id: dom.uid('tip'), hidden: true }, label, kbd), 'tip');
+      const shortcuts = [].concat(shortcut || []);
+      const kbds = shortcuts.map(() => dom.el('span', { class: 'kbd', hidden: true }));
+      const tail = dom.el('span', { hidden: true });
+      const tip = dom.portal(dom.el('div', { class: 'tooltip ov', role: 'tooltip', id: dom.uid('tip'), hidden: true }, label, kbds, tail), 'tip');
       const prior = (trigger.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean);
       trigger.setAttribute('aria-describedby', prior.concat(tip.id).join(' '));
       let showTimer = 0;
       let hideTimer = 0;
       let popEsc = null;
+      let escLevel = null;
       let suppressed = false;
       const clearTimers = () => { win.clearTimeout(showTimer); win.clearTimeout(hideTimer); };
+      const keyLabel = s => (typeof s === 'string' ? keys.label(s) : s && s.combo ? keys.comboLabel(s.combo) : '');
       function render() {
         label.textContent = text;
-        const k = shortcut ? keys.label(shortcut) : '';
-        kbd.textContent = k;
-        kbd.hidden = !k;
+        shortcuts.forEach((s, i) => { const k = keyLabel(s); kbds[i].textContent = k; kbds[i].hidden = !k; });
+        tail.textContent = after;
+        tail.hidden = !after;
       }
-      function show() {
+      // byKeyboard: shown by keyboard focus (Esc level 'tooltip'), not by hovering ('tooltip-hover'). A hover
+      // tooltip that then gets keyboard focus moves up to the keyboard level.
+      function show(byKeyboard) {
         clearTimers();
-        if (suppressed || trigger.getAttribute('aria-expanded') === 'true' || !isShown(trigger)) return;
+        if (suppressed || trigger.getAttribute('aria-expanded') === 'true' || !isShown(trigger) || (when && !when())) return;
         if (activeTip && activeTip !== api) activeTip.hide();
         render();
         tip.hidden = false;
-        position(trigger, tip, { side: 'bottom', align: 'center', gap: 6, pad: 8 });
+        position(trigger, tip, { side, align: 'center', gap: 6, pad: 8 });
         activeTip = api;
-        if (!popEsc) popEsc = keys.pushEsc(() => { suppressed = true; hide(); }, 'tooltip');
+        const level = byKeyboard ? 'tooltip' : 'tooltip-hover';
+        if (popEsc && escLevel !== level) { popEsc(); popEsc = null; }
+        if (!popEsc) { escLevel = level; popEsc = keys.pushEsc(() => { suppressed = true; hide(); }, level); }
       }
       function hide() {
         clearTimers();
@@ -428,10 +471,10 @@
         pointerenter: e => {
           if (e.pointerType === 'touch') return;
           win.clearTimeout(hideTimer);
-          if (tip.hidden) { win.clearTimeout(showTimer); showTimer = win.setTimeout(show, TIP_DELAY_MS); }
+          if (tip.hidden) { win.clearTimeout(showTimer); showTimer = win.setTimeout(() => show(false), TIP_DELAY_MS); }
         },
         pointerleave: () => { suppressed = false; win.clearTimeout(showTimer); if (!tip.hidden) hideSoon(); },
-        focus: () => { if (keyboardFocus()) show(); },
+        focus: () => { if (keyboardFocus()) show(true); },
         blur: () => { suppressed = false; hide(); },
         pointerdown: () => hide(),
         click: () => hide(),
@@ -441,7 +484,7 @@
       tip.addEventListener('pointerleave', hideSoon);
       const api = {
         hide,
-        setText(s) { text = String(s); render(); },
+        setText(s) { if (String(s) !== text) { text = String(s); render(); } },
         // Call when the trigger goes away; tooltips are not garbage-collected with it.
         destroy() {
           hide();
@@ -625,6 +668,7 @@
       let opener = null;
       let popEsc = null;
       let inerted = [];
+      let destroyed = false;
       panel.addEventListener('keydown', e => {
         if (e.key !== 'Tab') return;
         const f = dom.focusables(panel);
@@ -638,7 +682,7 @@
         el: panel,
         isOpen: () => !host.hidden,
         open(from) {
-          if (ctl.isOpen()) return;
+          if (destroyed || ctl.isOpen()) return;
           // A dialog opened from a menu item comes back to the menu button: the item is hidden by then.
           opener = from || doc.activeElement;
           if (openPopup && openPopup.inSurface(opener)) opener = openPopup.trigger;
@@ -670,6 +714,13 @@
           opener = null;
           if (back) back.focus();
           if (onClose) onClose(reason);
+        },
+        // Closes it if open (onClose gets 'destroy') and removes its host. Idempotent.
+        destroy() {
+          if (destroyed) return;
+          ctl.close('destroy');
+          destroyed = true;
+          host.remove();
         },
       };
       return ctl;

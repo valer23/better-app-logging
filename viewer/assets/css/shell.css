@@ -1,0 +1,68 @@
+/* App shell (roadmap P4; spec "Window frame and sidebar", "Window chrome (Tauri)"): the app grid, the
+   sidebar and the window drag bands. @layer app, foundation tokens only (no hex). */
+@layer app {
+  /* <body> is the legacy flex column; #app fills it: the sidebar beside the main column. Neither the flex
+     basis nor the row may size to content: with `flex: 1 1 auto` or an auto row, every log change first lays
+     out the whole table at its full height (300-row build +13 %, layout CPU +31 % in Chromium). */
+  #app { flex: 1 1 0; min-height: 0; display: grid; grid-template-columns: var(--side-w) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  #main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  /* contain: layout keeps the sidebar's twice-a-second text updates from relaying out the log column. */
+  #sidebar { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--hairline); contain: layout; }
+
+  /* Drag bands (DRAG_BANDS in shell.js): the sidebar header and the top bar are one 52 px band. */
+  #sidebarHeader, #topbar { -webkit-user-select: none; user-select: none; }
+  #sidebarHeader { display: flex; align-items: center; gap: 8px; height: var(--titlebar-h); padding: 0 8px 0 16px; flex: none; }
+  /* align-items: center overrides legacy's stretch: at 52 px the zoom group and the glass switch would stretch to the
+     full band, and both are INTERACTIVE, so the empty band around the pill or the buttons would not drag. */
+  #topbar { min-height: var(--titlebar-h); align-items: center; }
+  .side-title { font-size: 13px; font-weight: 600; white-space: nowrap; }
+  /* macOS: the traffic lights sit over the left of the band (titleBarStyle Overlay), so no title there. */
+  .app[data-platform="mac"] #sidebarHeader { padding-left: 78px; }
+  .app[data-platform="mac"] .side-title { display: none; }
+  #sidebarBody { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 4px 8px 8px; }   /* 4 px top: the 2 px focus ring + 2 px offset on the first stop (#cmdTrigger) would be clipped by this scroll container */
+
+  /* Sidebar content (spec: command trigger, then sections with a collapsible header, label and count). */
+  .side-cmd { display: flex; align-items: center; gap: 8px; width: 100%; height: var(--ctl-h); margin: 0 0 8px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text-2); }
+  .side-cmd[aria-disabled="true"] { cursor: not-allowed; }
+  .side-sec { margin-top: 12px; }
+  .side-sec-h { margin: 0; font: inherit; }
+  .nav-group-head { color: var(--text-2); border-radius: 6px; }
+  .nav-group-head:hover { background: var(--fill-hover); }
+  .nav-group-head .icon { transition: transform var(--t-fast) var(--ease); }
+  .nav-group-head[aria-expanded="false"] .icon { transform: rotate(-90deg); }
+  .nav-group-head .meta { margin-left: auto; font-size: var(--ui-fs-xs); font-variant-numeric: tabular-nums; }
+  .side-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+  /* display: flex beats the UA [hidden] rule (as for .menu and .btn in base.css): a folded list must hide. */
+  .side-list[hidden] { display: none; }
+  .side-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .nav-item .kbd { margin-left: auto; }
+
+  /* DEVICES rows (spec: 48 px; badge, name, status line, drops line; Start/Stop and More on hover or focus). */
+  .dev-row { position: relative; }
+  .dev-main { min-height: 48px; padding-right: 60px; }
+  .dev-text { display: flex; flex-direction: column; min-width: 0; }
+  .dev-name { color: var(--text); font-weight: 500; }
+  .dev-status, .dev-drops { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: var(--ui-fs-sm); color: var(--text-2); }
+  .dev-drops { color: var(--warn); }
+  .dev-drops[hidden] { display: none; }
+  .dev-drops .icon { width: 12px; height: 12px; }
+  /* A device toggled out of the filter (aria-pressed="false") must look it: its lines vanish, so the row says
+     why without relying on colour alone. */
+  .dev-main[aria-pressed="false"] .dev-name { text-decoration: line-through; color: var(--text-2); }
+  .dev-main[aria-pressed="false"] .plat { filter: grayscale(1); }
+  /* Status shapes, so the state is never colour alone (spec): a filled dot streaming, a ring stopped, a
+     spinning ring connecting, a triangle stalled or failing. */
+  .dev-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: currentColor; color: var(--text-2); }
+  .dev-row[data-tone="ok"] .dev-dot { color: var(--ok); }
+  .dev-row[data-tone="info"] .dev-dot { color: var(--info); }
+  .dev-row[data-tone="warn"] .dev-dot { color: var(--warn); }
+  .dev-row[data-tone="err"] .dev-dot, .dev-row[data-tone="err"] .dev-status { color: var(--err); }
+  .dev-row[data-state="ready"] .dev-dot, .dev-row[data-state="disconnected"] .dev-dot { background: transparent; box-shadow: inset 0 0 0 1.5px currentColor; }
+  .dev-row[data-state="connecting"] .dev-dot { background: transparent; border: 1.5px solid currentColor; border-top-color: transparent; animation: spin var(--t-spin) linear infinite; }
+  .dev-row[data-state="stalled"] .dev-dot, .dev-row[data-state="driver"] .dev-dot, .dev-row[data-state="error"] .dev-dot { width: 8px; height: 8px; border-radius: 0; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+  .dev-actions { position: absolute; top: 50%; right: 6px; display: flex; gap: 2px; transform: translateY(-50%); opacity: 0; }
+  .dev-row:hover .dev-actions, .dev-row:focus-within .dev-actions, .dev-row[data-menu="open"] .dev-actions { opacity: 1; }
+
+  /* Footer (spec: 44 px, top hairline): Settings, Keyboard shortcuts, Theme. */
+  #sidebarFooter { display: flex; align-items: center; gap: 4px; height: 44px; padding: 0 8px; flex: none; border-top: 1px solid var(--hairline); }
+}

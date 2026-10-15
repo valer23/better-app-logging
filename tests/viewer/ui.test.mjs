@@ -6,7 +6,8 @@
 // ui.js loads in an EMPTY vm context, so its DOM side must not run at load.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadPureModule, loadPureModules } from './_load.mjs';
+import { loadPureModule } from './_load.mjs';
+import { fakePage, texts } from './_fake.mjs';
 
 const ALV = loadPureModule('ui.js');
 const U = ALV.uiPure;
@@ -475,89 +476,7 @@ test('focus trap: Tab wraps last → first, Shift+Tab wraps first → last, the 
 });
 
 // ---- DOM side, against a small fake document and a manual clock ----
-
-// Elements with attributes, children, listeners and the few layout reads the primitives make.
-function fakePage() {
-  const byId = {};
-  let focused = null;
-  let focusVisible = false;   // what ':focus-visible' answers; tests flip it with setFocusVisible
-  const node = tag => {
-    const n = {
-      tagName: tag.toUpperCase(), attrs: {}, children: [], parent: null, listeners: {}, dataset: {}, style: {},
-      hidden: false, inert: false, className: '', textContent: '', id: '', offsetWidth: 120, offsetHeight: 40,
-      setAttribute(k, v) { this.attrs[k] = String(v); if (k === 'id') { this.id = String(v); byId[v] = this; } },
-      getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; },
-      removeAttribute(k) { delete this.attrs[k]; },
-      appendChild(c) { if (c.parent) c.remove(); c.parent = this; this.children.push(c); return c; },
-      remove() { if (this.parent) { this.parent.children.splice(this.parent.children.indexOf(this), 1); this.parent = null; } },
-      addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); },
-      removeEventListener(type, fn) { this.listeners[type] = (this.listeners[type] || []).filter(f => f !== fn); },
-      // Bubbles like a real event, so delegated listeners (the menu's click on its list) see it.
-      fire(type, ev = {}) {
-        for (let n = this; n; n = n.parent) for (const fn of n.listeners[type] || []) fn({ target: this, currentTarget: n, preventDefault() {}, ...ev });
-      },
-      contains(x) { for (let p = x; p; p = p.parent) if (p === this) return true; return false; },
-      querySelector(sel) { return all(this).find(c => matches(c, sel)) || null; },
-      querySelectorAll(sel) { return all(this).filter(c => matches(c, sel)); },
-      closest(sel) { for (let p = this; p; p = p.parent) if (matches(p, sel)) return p; return null; },
-      matches(sel) { return sel === ':focus-visible' ? focusVisible : false; },
-      getClientRects() { return this.hidden ? [] : [1]; },
-      getBoundingClientRect: () => ({ left: 500, top: 40, right: 580, bottom: 68, width: 80, height: 28 }),
-      focus() { focused = this; },
-      click() { this.fire('click'); },
-      get isConnected() { return true; },
-    };
-    return n;
-  };
-  const all = n => n.children.flatMap(c => [c, ...all(c)]);
-  // Only the selectors the primitives use: [role="x"], [role="x"], ... and [data-primary].
-  const matches = (el, sel) => sel.split(',').map(s => s.trim()).some(s => {
-    const m = /^\[([\w-]+)(?:="([^"]*)")?\]$/.exec(s);
-    return !!m && m[1] in el.attrs && (m[2] === undefined || el.attrs[m[1]] === m[2]);
-  });
-  const doc = {
-    listeners: {},
-    addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); },
-    createElement: tag => node(tag),
-    createElementNS: (ns, tag) => node(tag),
-    createTextNode: data => ({ nodeType: 3, textContent: data, attrs: {}, children: [], parent: null }),
-    getElementById: id => byId[id] || null,
-    documentElement: { clientWidth: 1400, clientHeight: 900 },
-    body: node('body'),
-    get activeElement() { return focused; },
-  };
-  for (const id of ['overlayRoot', 'ovDialogs', 'ovPopovers', 'toastAlerts', 'toastLive', 'ovTips', 'announcer', 'filterbar']) {
-    doc.createElement('div').setAttribute('id', id);
-  }
-  doc.body.appendChild(byId.filterbar);
-  doc.body.appendChild(byId.overlayRoot);
-  let clock = 0;
-  let timers = [];
-  const win = {
-    addEventListener() {},
-    setTimeout(fn, ms) { timers.push({ fn, at: clock + ms }); return timers.length; },
-    clearTimeout() {},
-  };
-  // Advance the clock, running due timers in time order (a cleared timer may still run: the
-  // primitives re-check their state, as they must with real timers).
-  const advance = ms => {
-    const end = clock + ms;
-    for (;;) {
-      const due = timers.filter(t => t.at <= end).sort((a, b) => a.at - b.at)[0];
-      if (!due) break;
-      timers = timers.filter(t => t !== due);
-      clock = Math.max(clock, due.at);
-      due.fn();
-    }
-    clock = end;
-  };
-  const ALV = loadPureModules('dom.js', 'keys.js', 'ui.js');
-  const dom = ALV.createDom(doc);
-  const keys = ALV.createKeys({ platform: 'mac' });
-  const ui = ALV.createUi({ doc, win, dom, keys, now: () => clock });
-  return { doc, byId, dom, keys, ui, advance, node, focus: n => { focused = n; }, setFocusVisible: v => { focusVisible = v; } };
-}
-const texts = n => (n.textContent || '') + n.children.map(texts).join('');
+// fakePage() and texts() live in _fake.mjs (shell.test.mjs uses them too).
 
 test('menu wires the trigger (aria-haspopup, -expanded, -controls) and opens, moves and closes through its keys', () => {
   const p = fakePage();
@@ -1168,4 +1087,183 @@ test('dialogs: a stacked dialog makes the lower one inert and keeps page shortcu
   assert.equal(p.byId.filterbar.inert, false);
   assert.equal(cmdE(), 'page.e', 'with no dialog left, the shortcut fires again');
   assert.deepEqual([hits, p.keys.escDepth()], [['e'], 0]);
+});
+
+// ---- P4: destroy() for owners that rebuild their triggers (sidebar device rows) ----
+
+test('menu destroy(): closes without moving focus, removes the surface, the trigger listeners and its popup ARIA; idempotent', () => {
+  const p = fakePage();
+  const trigger = p.dom.el('button', { text: 'More' });
+  p.byId.filterbar.appendChild(trigger);
+  const m = simpleMenu(p, trigger, ['Start streaming', 'Setup guide']);
+  m.ctl.open({ focus: 'first' });
+  assert.equal(p.keys.escDepth(), 1);
+  p.focus(p.byId.filterbar);
+  m.ctl.destroy();
+  assert.deepEqual([m.ctl.isOpen(), p.keys.escDepth(), m.surface.parent], [false, 0, null], 'closed, Esc entry popped, surface gone');
+  assert.equal(p.doc.activeElement, p.byId.filterbar, 'focus outside the surface stays where it is');
+  assert.deepEqual(['aria-haspopup', 'aria-expanded', 'aria-controls'].map(a => trigger.getAttribute(a)), [null, null, null]);
+  assert.deepEqual([(trigger.listeners.click || []).length, (trigger.listeners.keydown || []).length], [0, 0], 'no listener left on the trigger');
+  trigger.click();
+  m.ctl.open({ focus: 'first' });
+  assert.equal(m.ctl.isOpen(), false, 'a destroyed menu never opens again');
+  assert.doesNotThrow(() => m.ctl.destroy());
+});
+
+test('menu destroy() with focus inside the surface puts focus on the trigger; a new menu can take the same trigger', () => {
+  const p = fakePage();
+  const trigger = p.dom.el('button', { text: 'More' });
+  p.byId.filterbar.appendChild(trigger);
+  const first = simpleMenu(p, trigger, ['Old']);
+  first.ctl.open({ focus: 'first' });
+  assert.equal(p.doc.activeElement, first.list.children[0]);
+  first.ctl.destroy();
+  assert.equal(p.doc.activeElement, trigger);
+  const second = simpleMenu(p, trigger, ['New']);
+  trigger.click();
+  assert.deepEqual([second.ctl.isOpen(), trigger.getAttribute('aria-expanded'), p.keys.escDepth()], [true, 'true', 1], 'one click opens only the new menu');
+  second.ctl.destroy();
+});
+
+test('popover destroy(): same contract as a menu', () => {
+  const p = fakePage();
+  const trigger = p.dom.el('button', { text: 'Drops' });
+  p.byId.filterbar.appendChild(trigger);
+  const btn = p.dom.el('button', { text: 'Jump to gap' });
+  const panel = p.dom.portal(p.dom.el('div', { hidden: true }, btn), 'popover');
+  panel.querySelectorAll = () => [btn];
+  const ctl = p.ui.popover(trigger, panel);
+  trigger.click();
+  assert.equal(p.doc.activeElement, btn);
+  ctl.destroy();
+  assert.deepEqual([ctl.isOpen(), panel.parent, p.keys.escDepth(), p.doc.activeElement === trigger], [false, null, 0, true]);
+  assert.deepEqual([trigger.getAttribute('aria-haspopup'), (trigger.listeners.click || []).length], [null, 0]);
+});
+
+test('dialog destroy(): closes an open dialog (onClose "destroy", page live again, focus back) and removes its host', () => {
+  const p = fakePage();
+  const opener = p.dom.el('button', { text: 'Open' });
+  p.byId.filterbar.appendChild(opener);
+  const ok = p.dom.el('button', { text: 'OK' });
+  const panel = p.dom.el('div', null, ok);
+  panel.querySelectorAll = () => [ok];
+  const reasons = [];
+  const d = p.ui.dialog(panel, { label: 'Sheet', onClose: r => reasons.push(r) });
+  const host = panel.parent;
+  p.focus(opener);
+  d.open();
+  assert.equal(p.byId.filterbar.inert, true);
+  d.destroy();
+  assert.deepEqual([d.isOpen(), host.parent, p.byId.filterbar.inert, p.keys.escDepth(), reasons], [false, null, false, 0, ['destroy']]);
+  assert.equal(p.doc.activeElement, opener);
+  d.open();
+  assert.equal(d.isOpen(), false, 'a destroyed dialog never opens again');
+  d.destroy();
+  assert.deepEqual(reasons, ['destroy'], 'a second destroy does nothing');
+  const closed = p.ui.dialog(p.dom.el('div'), { label: 'Never opened', onClose: r => reasons.push(r) });
+  closed.destroy();
+  assert.deepEqual(reasons, ['destroy'], 'destroying a closed dialog calls no onClose');
+});
+
+// ---- P4: the tooltip API the shell needs (P3 follow-ups b and d) ----
+
+test('place: side right / left centres beside the anchor, flips at the viewport edge and clamps top', () => {
+  const r = rect(10, 300, 32, 32);   // a rail button: right 42, vertical centre 316
+  assert.deepEqual({ ...U.place(r, { w: 80, h: 24 }, { vw: 800, vh: 600 }, { side: 'right', gap: 6 }) }, { left: 48, top: 304, side: 'right' });
+  assert.deepEqual({ ...U.place(rect(760, 300, 32, 32), { w: 80, h: 24 }, { vw: 800, vh: 600 }, { side: 'right' }) }, { left: 674, top: 304, side: 'left' });
+  assert.deepEqual({ ...U.place(rect(20, 300, 32, 32), { w: 80, h: 24 }, { vw: 800, vh: 600 }, { side: 'left' }) }, { left: 58, top: 304, side: 'right' });
+  assert.equal(U.place(rect(10, 2, 32, 8), { w: 80, h: 24 }, { vw: 800, vh: 600 }, { side: 'right' }).top, 8, 'top clamped to pad');
+  assert.equal(U.place(rect(10, 590, 32, 8), { w: 80, h: 24 }, { vw: 800, vh: 600 }, { side: 'right' }).top, 568, 'and to the bottom');
+});
+
+test('tooltip: several shortcuts (binding ids and written combos), text after the kbds, a side, setText only re-renders on change', () => {
+  const p = fakePage();
+  p.keys.register({ id: 'stream.clear', keys: 'Mod+Backspace', run() {} });
+  const btn = p.dom.el('button', { 'aria-label': 'Clear view' });
+  p.byId.filterbar.appendChild(btn);
+  const t = p.ui.tooltip(btn, { text: 'Clear view', shortcut: ['stream.clear', { combo: 'Mod+-' }, 'not.bound'], after: '(undo for 10 s)', side: 'right' });
+  const tip = p.byId[btn.attrs['aria-describedby']];
+  assert.deepEqual(tip.children.map(c => [c.className, c.textContent, c.hidden]), [
+    ['', 'Clear view', false], ['kbd', '⌘⌫', false], ['kbd', '⌘−', false], ['kbd', '', true], ['', '(undo for 10 s)', false]],
+    'one kbd per shortcut; an unbound id shows none');
+  assert.equal(texts(tip), 'Clear view⌘⌫⌘−(undo for 10 s)');
+  btn.fire('pointerenter', { pointerType: 'mouse' });
+  p.advance(400);
+  assert.deepEqual([tip.hidden, tip.style.left, tip.style.top], [false, '586px', '34px'], 'placed to the right of the trigger (580 + 6), centred on it');
+  let writes = 0;
+  const label = tip.children[0];
+  let value = label.textContent;
+  Object.defineProperty(label, 'textContent', { get: () => value, set: v => { writes++; value = v; } });
+  t.setText('Clear view');
+  assert.equal(writes, 0, 'the same text writes nothing');
+  t.setText('Clear');
+  assert.deepEqual([writes, value], [1, 'Clear']);
+  const plain = p.ui.tooltip(p.dom.el('button'), { text: 'Export' });
+  assert.equal(p.byId.ovTips.children.at(-1).children.at(-1).hidden, true, 'no after text: its span stays hidden');
+  t.destroy(); plain.destroy();
+});
+
+test('tooltip: shows on an aria-disabled trigger, and `when` keeps it hidden while false', () => {
+  const p = fakePage();
+  const btn = p.dom.el('button', { 'aria-disabled': 'true', 'aria-label': 'Settings' });
+  p.byId.filterbar.appendChild(btn);
+  let rail = false;
+  const t = p.ui.tooltip(btn, { text: 'Settings', side: 'right', when: () => rail });
+  const tip = p.byId[btn.attrs['aria-describedby']];
+  btn.fire('pointerenter', { pointerType: 'mouse' });
+  p.advance(400);
+  assert.equal(tip.hidden, true, 'when() is false: no tooltip');
+  btn.fire('pointerleave');
+  rail = true;
+  btn.fire('pointerenter', { pointerType: 'mouse' });
+  p.advance(400);
+  assert.equal(tip.hidden, false, 'aria-disabled does not stop the tooltip (WebKit gives a disabled button no pointer events)');
+  t.destroy();
+});
+
+test('Esc ranking: a hover tooltip waits for a keyboard-focused menu; a keyboard tooltip goes first (review follow-up d)', () => {
+  const p = fakePage();
+  const more = p.dom.el('button', { text: 'More' });
+  const other = p.dom.el('button', { text: 'Clear' });
+  p.byId.filterbar.appendChild(more);
+  p.byId.filterbar.appendChild(other);
+  const m = simpleMenu(p, more, ['Open log file…']);
+  const tip = p.ui.tooltip(other, { text: 'Clear view' });
+  const tipEl = p.byId[other.attrs['aria-describedby']];
+  m.ctl.open({ focus: 'first' });
+  other.fire('pointerenter', { pointerType: 'mouse' });
+  p.advance(400);
+  assert.deepEqual([m.ctl.isOpen(), tipEl.hidden], [true, false], 'precondition: menu open, hover tooltip shown');
+  assert.equal(esc(p), 'esc');
+  assert.deepEqual([m.ctl.isOpen(), tipEl.hidden, p.doc.activeElement === more], [false, false, true], 'the first Esc closes the menu');
+  assert.equal(esc(p), 'esc');
+  assert.equal(tipEl.hidden, true, 'the second Esc hides the hover tooltip');
+  other.fire('pointerleave');
+  p.setFocusVisible(true);
+  other.fire('focus');
+  m.ctl.open({ focus: 'none' });
+  other.fire('focus');
+  assert.equal(tipEl.hidden, false);
+  assert.equal(esc(p), 'esc');
+  assert.deepEqual([tipEl.hidden, m.ctl.isOpen()], [true, true], 'a keyboard-focus tooltip still goes first');
+  m.ctl.close();
+  tip.destroy();
+});
+
+test('Esc ranking: a hover tooltip that then gets keyboard focus moves up to the keyboard level', () => {
+  const p = fakePage();
+  const btn = p.dom.el('button', { text: 'Clear' });
+  p.byId.filterbar.appendChild(btn);
+  const tip = p.ui.tooltip(btn, { text: 'Clear view' });
+  const order = [];
+  const popMenu = p.keys.pushEsc(() => order.push('menu'), 'menu');
+  btn.fire('pointerenter', { pointerType: 'mouse' });
+  p.advance(400);
+  p.setFocusVisible(true);
+  btn.fire('focus');
+  assert.equal(p.keys.escDepth(), 2, 'still one tooltip entry');
+  assert.equal(esc(p), 'esc');
+  assert.deepEqual([p.byId[btn.attrs['aria-describedby']].hidden, order], [true, []], 'the tooltip, now keyboard-shown, goes before the menu');
+  popMenu();
+  tip.destroy();
 });

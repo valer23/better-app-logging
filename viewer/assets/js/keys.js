@@ -37,8 +37,12 @@
   const SCOPES = ['global', 'grid', 'dialog'];
   // The spec's Esc back-out order (spec "Selection": palette → sheet → stall sheet → menu → autocomplete →
   // rename → title edit → context → drawer → selection), with P3's tooltip first. Menus and popovers push
-  // 'menu'. palette, sheet and stall are modal: a layer opened inside one backs out before it.
-  const ESC_LEVELS = ['tooltip', 'palette', 'sheet', 'stall', 'menu', 'autocomplete', 'rename', 'title', 'context', 'drawer', 'selection'];
+  // 'menu'. A tooltip shown by keyboard focus pushes 'tooltip'; one shown by hovering pushes 'tooltip-hover',
+  // after 'menu' and every keyboard editing context (autocomplete, rename, title edit), so a hover tooltip
+  // elsewhere never takes the Esc meant for the menu the keyboard is in or for the text being typed (it still
+  // backs out before context, the drawer and the selection: WCAG 1.4.13). palette, sheet and stall are modal:
+  // a layer opened inside one backs out before it.
+  const ESC_LEVELS = ['tooltip', 'palette', 'sheet', 'stall', 'menu', 'autocomplete', 'rename', 'title', 'tooltip-hover', 'context', 'drawer', 'selection'];
   const MODAL_ESC = new Set(['palette', 'sheet', 'stall']);
   // The unshifted US character of the punctuation keys, by e.code (the physical key under Alt).
   const CODE_KEY = { BracketLeft: '[', BracketRight: ']', Backslash: '\\', Slash: '/', Comma: ',', Period: '.',
@@ -55,8 +59,8 @@
   const TEXT_ROLES = new Set(['textbox', 'searchbox', 'combobox', 'spinbutton']);
   const MAC_MOD = { Ctrl: '⌃', Alt: '⌥', Shift: '⇧', Meta: '⌘' };
   const MAC_KEY = { ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Enter: '↵', Backspace: '⌫',
-    Delete: '⌦', Escape: 'esc', Tab: '⇥', Space: 'Space' };
-  const PC_KEY = { ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Escape: 'Esc' };
+    Delete: '⌦', Escape: 'esc', Tab: '⇥', Space: 'Space', '-': '−' };
+  const PC_KEY = { ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Escape: 'Esc', '-': '−' };
 
   // 'Mod++' is Mod and the '+' key; a lone '+' is the '+' key.
   function splitCombo(s) {
@@ -321,6 +325,8 @@
       setSingleKeys(on) { singleKeys = !!on; },
       keysOf: id => { const b = bindings.get(id); return b ? b.keys.slice() : []; },
       label: id => { const c = first(id); return c ? label(c, plat) : ''; },
+      // The label of a written combo that is no binding (the zoom keys the legacy listener owns until P13).
+      comboLabel: combo => label(parse(combo, plat), plat),
       aria: id => { const b = bindings.get(id); return b ? b.keys.map(ariaOf).join(' ') : ''; },
     };
   }

@@ -147,6 +147,14 @@ export function stickyDocument({ hidden = true, values = { search: '', tagFilter
     if (!els.has(id)) {
       const el = deepStub(`#${id}`);
       if (Object.prototype.hasOwnProperty.call(values, id)) el.value = values[id];
+      // A real class list, so a test can mark an element (stallModal 'visible') and querySelector can find it.
+      const classes = new Set();
+      el.classList = {
+        add: (...c) => c.forEach(x => classes.add(x)),
+        remove: (...c) => c.forEach(x => classes.delete(x)),
+        contains: c => classes.has(c),
+        toggle: (c, force) => { const on = force === undefined ? !classes.has(c) : !!force; if (on) classes.add(c); else classes.delete(c); return on; },
+      };
       el.addEventListener = (type, fn) => {
         const k = `${id}:${type}`;
         if (!listeners.has(k)) listeners.set(k, []);
@@ -155,6 +163,14 @@ export function stickyDocument({ hidden = true, values = { search: '', tagFilter
       els.set(id, el);
     }
     return els.get(id);
+  };
+  // Minimal querySelector: one compound class selector ('.modal-overlay.visible') over the elements a
+  // page or test has already touched by id; null when none matches (a deepStub would always be truthy).
+  doc.querySelector = sel => {
+    const wanted = /^(\.[\w-]+)+$/.test(sel) ? sel.slice(1).split('.') : null;
+    if (!wanted) return deepStub(`document.querySelector(${sel})`);
+    for (const el of els.values()) if (wanted.every(c => el.classList.contains(c))) return el;
+    return null;
   };
   return doc;
 }

@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Device Log Viewer</title>
 <!-- Settings store and pre-paint boot: writes data-theme, data-material, data-ui, data-platform,
-     data-font/density/contrast/motion, data-glass and --log-fs on <html> before any stylesheet
-     loads. Keep it first and synchronous (no async/defer). -->
+     data-font/density/contrast/motion, data-glass, data-sidebar and --log-fs on <html> before any
+     stylesheet loads. Keep it first and synchronous (no async/defer). -->
 <script src="assets/js/prefs.js"></script>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3.5' fill='%2318181b'/><rect x='3' y='4' width='1' height='1' fill='%2371717a'/><rect x='5' y='4' width='8' height='1' rx='.5' fill='%2352525b'/><rect x='2' y='6' width='12' height='4' rx='1' fill='%237c3aed'/><circle cx='4' cy='8' r='1' fill='%23f5f3ff'/><rect x='6' y='7' width='6' height='2' rx='1' fill='%23f5f3ff'/><rect x='3' y='11' width='1' height='1' fill='%2371717a'/><rect x='5' y='11' width='5' height='1' rx='.5' fill='%2352525b'/></svg>">
 <link rel="preload" href="assets/fonts/geist-5.3.0-latin.woff2" as="font" type="font/woff2" crossorigin>
@@ -15,6 +15,7 @@
 <link rel="stylesheet" href="assets/css/foundation.css">
 <link rel="stylesheet" href="assets/css/legacy.css">
 <link rel="stylesheet" href="assets/css/base.css">
+<link rel="stylesheet" href="assets/css/shell.css">
 </head>
 <body>
 <!-- Lucide icon sprite (lucide-static 1.49.0, ISC: assets/icons/SOURCES.md, assets/icons/LICENSE-lucide.txt).
@@ -26,45 +27,63 @@
 <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></symbol>
 <symbol id="i-circle-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><line x1="12" x2="12" y1="8" y2="12" /><line x1="12" x2="12.01" y1="16" y2="16" /></symbol>
 <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 15V3" /><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="m7 10 5 5 5-5" /></symbol>
+<symbol id="i-ellipsis" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /><circle cx="5" cy="12" r="1" /></symbol>
 <symbol id="i-file-json" viewBox="0 0 24 24"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" /><path d="M14 2v5a1 1 0 0 0 1 1h5" /><path d="M10 12a1 1 0 0 0-1 1v1a1 1 0 0 1-1 1 1 1 0 0 1 1 1v1a1 1 0 0 0 1 1" /><path d="M14 18a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1 1 1 0 0 1-1-1v-1a1 1 0 0 0-1-1" /></symbol>
 <symbol id="i-file-spreadsheet" viewBox="0 0 24 24"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" /><path d="M14 2v5a1 1 0 0 0 1 1h5" /><path d="M8 13h2" /><path d="M14 13h2" /><path d="M8 17h2" /><path d="M14 17h2" /></symbol>
 <symbol id="i-file-text" viewBox="0 0 24 24"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" /><path d="M14 2v5a1 1 0 0 0 1 1h5" /><path d="M10 9H8" /><path d="M16 13H8" /><path d="M16 17H8" /></symbol>
+<symbol id="i-folder-open" viewBox="0 0 24 24"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" /></symbol>
 <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" /></symbol>
+<symbol id="i-keyboard" viewBox="0 0 24 24"><path d="M10 8h.01" /><path d="M12 12h.01" /><path d="M14 8h.01" /><path d="M16 12h.01" /><path d="M18 8h.01" /><path d="M6 8h.01" /><path d="M7 16h10" /><path d="M8 12h.01" /><rect width="20" height="16" x="2" y="4" rx="2" /></symbol>
+<symbol id="i-monitor" viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="3" rx="2" /><line x1="8" x2="16" y1="21" y2="21" /><line x1="12" x2="12" y1="17" y2="21" /></symbol>
+<symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401" /></symbol>
+<symbol id="i-play" viewBox="0 0 24 24"><path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z" /></symbol>
+<symbol id="i-radio" viewBox="0 0 24 24"><path d="M16.247 7.761a6 6 0 0 1 0 8.478" /><path d="M19.075 4.933a10 10 0 0 1 0 14.134" /><path d="M4.925 19.067a10 10 0 0 1 0-14.134" /><path d="M7.753 16.239a6 6 0 0 1 0-8.478" /><circle cx="12" cy="12" r="2" /></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34" /><circle cx="11" cy="11" r="8" /></symbol>
+<symbol id="i-settings" viewBox="0 0 24 24"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" /><circle cx="12" cy="12" r="3" /></symbol>
+<symbol id="i-square" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2" /></symbol>
+<symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" /><path d="M12 2v2" /><path d="M12 20v2" /><path d="m4.93 4.93 1.41 1.41" /><path d="m17.66 17.66 1.41 1.41" /><path d="M2 12h2" /><path d="M20 12h2" /><path d="m6.34 17.66-1.41 1.41" /><path d="m19.07 4.93-1.41 1.41" /></symbol>
 <symbol id="i-triangle-alert" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" /><path d="M12 9v4" /><path d="M12 17h.01" /></symbol>
 <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></symbol>
 </svg>
 <!-- lucide-sprite:end -->
 
-<div class="lg-scope" id="topbar">
-  <div class="logo">
-    <svg class="logo-mark" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <rect width="16" height="16" rx="3.5" fill="#18181b"/>
-      <rect x="3" y="4" width="1" height="1" fill="#71717a"/>
-      <rect x="5" y="4" width="8" height="1" rx=".5" fill="#52525b"/>
-      <rect x="2" y="6" width="12" height="4" rx="1" fill="#7c3aed"/>
-      <circle cx="4" cy="8" r="1" fill="#f5f3ff"/>
-      <rect x="6" y="7" width="6" height="2" rx="1" fill="#f5f3ff"/>
-      <rect x="3" y="11" width="1" height="1" fill="#71717a"/>
-      <rect x="5" y="11" width="5" height="1" rx=".5" fill="#52525b"/>
-    </svg>
-    AppLogs<span>Viewer</span>
+<!-- App shell (roadmap P4): the sidebar beside the main column. #sidebarHeader and #topbar form the window's
+     drag band (DRAG_BANDS in assets/js/shell.js); every control in them is static markup matching
+     ALV.dom.INTERACTIVE, which tests/viewer/static.test.mjs checks. The legacy regions keep their markup. -->
+<div id="app">
+<aside id="sidebar" class="chrome-side" aria-label="Sidebar">
+  <div id="sidebarHeader"><span class="side-title">AppLogsViewer</span></div>
+  <nav id="sidebarBody" aria-label="Devices and sessions">
+    <!-- The command palette's trigger: a stub until P13 (aria-disabled, so it keeps its tooltip in WebKit). -->
+    <button type="button" id="cmdTrigger" class="side-cmd" aria-disabled="true"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-search"/></svg><span class="side-label">Search actions…</span></button>
+    <section class="side-sec" aria-labelledby="devHead">
+      <h2 class="side-sec-h"><button type="button" id="devHead" class="nav-group-head" aria-expanded="true" aria-controls="deviceList"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-chevron-down"/></svg><span class="section-label">Devices</span><span class="meta" id="devCount"></span></button></h2>
+      <ul id="deviceList" class="side-list"></ul>
+    </section>
+    <section class="side-sec" aria-labelledby="sessHead">
+      <h2 class="side-sec-h"><button type="button" id="sessHead" class="nav-group-head" aria-expanded="true" aria-controls="sessionList"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-chevron-down"/></svg><span class="section-label">Sessions</span><span class="meta" id="sessCount"></span></button></h2>
+      <ul id="sessionList" class="side-list">
+        <li><button type="button" id="sessLive" class="nav-item" aria-labelledby="sessLiveName"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-radio"/></svg><span class="side-label" id="sessLiveName">Live session</span><span class="meta" id="sessLiveCount" aria-hidden="true"></span></button></li>
+        <li id="sessFileItem" hidden><button type="button" id="sessFile" class="nav-item" aria-labelledby="sessFileName"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-file-text"/></svg><span class="side-label" id="sessFileName"></span><span class="meta" id="sessFileCount" aria-hidden="true"></span></button></li>
+        <li data-rail-hide><button type="button" id="openFileBtn" class="nav-item"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-folder-open"/></svg><span class="side-label">Open log file…</span><span class="kbd" id="openFileKbd"></span></button></li>
+      </ul>
+    </section>
+  </nav>
+  <div id="sidebarFooter">
+    <!-- Settings and Keyboard shortcuts open in P14 and P13: aria-disabled (not disabled) keeps their tooltips in WebKit. -->
+    <button type="button" id="settingsBtn" class="icon-btn" aria-label="Settings" aria-disabled="true"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-settings"/></svg></button>
+    <button type="button" id="shortcutsBtn" class="icon-btn" aria-label="Keyboard shortcuts" aria-disabled="true" data-rail-hide><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-keyboard"/></svg></button>
+    <button type="button" id="themeBtn" class="icon-btn" aria-label="Theme: Dark. Switch to Light"><svg class="icon" aria-hidden="true" focusable="false"><use id="themeIcon" href="#i-moon"/></svg></button>
   </div>
-  <button class="mode-tab"        id="tabFile" onclick="selectSession(fileSession)">📂 File Import</button>
-  <button class="mode-tab active" id="tabLive" onclick="selectSession(liveSession)">📱 Live Devices</button>
+</aside>
+<div id="main">
+<div class="lg-scope" id="topbar">
   <div class="topbar-spacer"></div>
   <div class="zoom-group">
     <button class="zoom-btn" onclick="setLogZoom(-1)" title="Zoom out (Ctrl+-)">A−</button>
     <button class="zoom-btn" onclick="setLogZoom(0)"  title="Reset zoom (Ctrl+0)">A</button>
     <button class="zoom-btn" onclick="setLogZoom(1)"  title="Zoom in (Ctrl++)">A+</button>
   </div>
-  <label class="theme-switch" title="Toggle light / dark theme">
-    <input type="checkbox" id="themeToggle" onchange="toggleTheme()">
-    <span class="theme-switch-track">
-      <span class="theme-switch-icon sun">☀</span>
-      <span class="theme-switch-icon moon">🌙</span>
-      <span class="theme-switch-thumb"></span>
-    </span>
-  </label>
   <label class="glass-switch" id="glassSwitch" title="Toggle Classic / Liquid Glass (macOS)">
     <input type="checkbox" id="glassSwitchInput">
     <span class="glass-switch-track">
@@ -235,6 +254,8 @@
   <button type="button" class="newer-pill" id="newerPill" onclick="jumpToLatest(event)" aria-label="" title="Jump to the newest line and turn auto-scroll back on"><span class="newer-count" id="newerPillCount"></span><span class="newer-sep" aria-hidden="true">·</span><span class="newer-action">Jump to latest ↓</span></button>
   <span id="readingWindowHint" class="reading-window-hint" title="The scrollbar covers only the loaded window of the history, not every line. Scroll near the top or bottom of the table to load more."></span>
 </div>
+</div><!-- #main -->
+</div><!-- #app -->
 
 <!-- Setup modal -->
 <div class="modal-overlay lg-scope" id="setupModal">
@@ -354,57 +375,9 @@ pkill -f idevicesyslog</pre>
 <script src="assets/js/dom.js"></script>
 <script src="assets/js/keys.js"></script>
 <script src="assets/js/ui.js"></script>
+<!-- App shell (roadmap P4): sidebar, drag bands, theme. ALV.createShell runs from the legacy script. -->
+<script src="assets/js/shell.js"></script>
 <script>
-// ─── Topbar drag-region (Tauri IPC) ──────────────────────────────────────
-// The macOS window uses titleBarStyle:Overlay + hiddenTitle, so the native
-// title bar that normally handles drag is gone. Tauri's CSS app-region needs
-// the `unstable` feature flag we don't enable; data-tauri-drag-region needs
-// the page to be served from tauri://localhost which we don't use (axum on
-// :8780). So drag is wired by hand: mousedown on the topbar background calls
-// the public window plugin via the global Tauri API.
-(function initTopbarDrag() {
-  const topbar = document.getElementById('topbar');
-  if (!topbar) return;
-  const INTERACTIVE = ALV.dom.INTERACTIVE;   // assets/js/dom.js: semantic roles, [data-no-drag], legacy topbar classes
-  // Drag is gesture-based: arm on mousedown, fire startDragging only when
-  // the cursor actually moves. This keeps dblclick clean — without the
-  // movement gate, calling startDragging() on the first mousedown enters
-  // OS drag tracking and the second click of a dblclick is swallowed.
-  let armed = null; // { x, y } when a potential drag is pending, else null
-  const DRAG_THRESHOLD_PX = 4;
-  topbar.addEventListener('mousedown', (e) => {
-    if (e.button !== 0) return;
-    if (e.target.closest(INTERACTIVE)) return;
-    if (e.detail >= 2) return; // second click of a dblclick — ignore
-    armed = { x: e.clientX, y: e.clientY };
-  });
-  window.addEventListener('mousemove', (e) => {
-    if (!armed) return;
-    if (Math.abs(e.clientX - armed.x) < DRAG_THRESHOLD_PX &&
-        Math.abs(e.clientY - armed.y) < DRAG_THRESHOLD_PX) return;
-    const tauri = window.__TAURI__;
-    armed = null;
-    if (!tauri || !tauri.window) return;
-    try {
-      tauri.window.getCurrentWindow().startDragging();
-    } catch (err) {
-      console.warn('startDragging failed', err);
-    }
-  });
-  window.addEventListener('mouseup', () => { armed = null; });
-  topbar.addEventListener('dblclick', (e) => {
-    if (e.target.closest(INTERACTIVE)) return;
-    armed = null;
-    const tauri = window.__TAURI__;
-    if (!tauri || !tauri.window) return;
-    try {
-      tauri.window.getCurrentWindow().toggleMaximize();
-    } catch (err) {
-      console.warn('toggleMaximize failed', err);
-    }
-  });
-})();
-
 // ─── Liquid Glass toggle (macOS only) ────────────────────────────────────
 // The material is stored by ALV.prefs (assets/js/prefs.js): set('material') writes data-material
 // and data-glass on <html> and mirrors the legacy glassMode key. This switch goes away in P4.
@@ -472,6 +445,14 @@ let filterGen = 0;   // bumped by queryChanged(); a session whose `query` differ
 // A session's DOM work is skipped while it is off screen: hidden window, or another session shown.
 function offscreen(s) { return s !== cur || document.hidden; }
 let wsAndroid = null, wsIos = null;
+let shell = null;   // the app shell (ALV.createShell, assets/js/shell.js), created before the first selectSession
+// What the sidebar device rows show (shellState): log lines received per platform (the rate meter, and what
+// ends a stall), the last setStatus per platform, the device the picker holds, and whether the iOS driver
+// check failed (Windows).
+const wsLines = { android: 0, ios: 0 };
+const liveStatus = { android: { state: 'disconnected', text: 'Disconnected' }, ios: { state: 'disconnected', text: 'Disconnected' } };
+const deviceInfo = { android: { id: '', name: '' }, ios: { id: '', name: '' } };
+let iosDriverMissing = false;
 let androidLive = false, iosLive = false;
 let livePaused = false;
 let pendingBatch = [], batchTimer = null;   // the live ingest queue: one drain, into the live session
@@ -571,16 +552,25 @@ LEVELS.forEach(lvl => {
 });
 
 // ── Platform toggles ──
+const platBtns = {};
 [['android','🤖 Android'],['ios','🍎 iOS']].forEach(([plat, label]) => {
   const btn = document.createElement('button');
   btn.className = 'plat-btn active'; btn.dataset.plat = plat; btn.textContent = label;
-  btn.onclick = () => { enabledPlatforms.has(plat) ? enabledPlatforms.delete(plat) : enabledPlatforms.add(plat); btn.classList.toggle('active', enabledPlatforms.has(plat)); queryChanged(); };
+  btn.onclick = () => togglePlatform(plat);
+  platBtns[plat] = btn;
   document.getElementById('platToggles').appendChild(btn);
 });
+// Shows or hides one platform's lines: the filter bar button and the sidebar device row (shell.js).
+function togglePlatform(plat) {
+  enabledPlatforms.has(plat) ? enabledPlatforms.delete(plat) : enabledPlatforms.add(plat);
+  platBtns[plat].classList.toggle('active', enabledPlatforms.has(plat));
+  queryChanged();
+  shellSync();
+}
 
 // ── Sessions ──
-// The File Import / Live Devices tabs pick the session on screen (the sidebar SESSIONS list replaces
-// them in P4). Each session keeps its own <tbody>: the shown one sits in #logTableEl with id="tbody",
+// The sidebar SESSIONS rows (assets/js/shell.js) and "Open log file…" pick the session on screen. Each
+// session keeps its own <tbody>: the shown one sits in #logTableEl with id="tbody",
 // the others stay detached with their rows, so switching back brings back the same window, its
 // selection and (through the saved anchor row) its scroll position. The live session keeps ingesting
 // while detached: following, its DOM work is skipped (domStale) and the tail is rebuilt on return;
@@ -596,8 +586,7 @@ function selectSession(next) {
     cur = next;
   }
   const live = next.kind === 'live';
-  document.getElementById('tabFile').classList.toggle('active', !live);
-  document.getElementById('tabLive').classList.toggle('active', live);
+  shellSync();
   ['autoScrollBtn','pauseBtn'].forEach(id => document.getElementById(id).style.display = live ? '' : 'none');
   document.getElementById('clearBtn').style.display = '';   // Clear empties the session on screen; on File it brings the dropzone back
   document.getElementById('autoScrollBtn').classList.toggle('active', next.follow);
@@ -692,6 +681,7 @@ async function loadDevices(platform) {
     menu.innerHTML = '';
     if (!list.length) {
       input.value = '';
+      deviceInfo[platform] = { id: '', name: '' };
       label.textContent = 'No device detected';
       const empty = document.createElement('div');
       empty.className = 'device-menu-empty';
@@ -708,6 +698,8 @@ async function loadDevices(platform) {
       item.textContent = _deviceLabel(d);
       item.onclick = () => {
         input.value = d.id || '';
+        deviceInfo[platform] = { id: d.id || '', name: d.name || d.id || '' };
+        shellSync();
         label.textContent = item.textContent;
         Array.from(menu.children).forEach(c => c.classList.remove('selected'));
         item.classList.add('selected');
@@ -719,11 +711,13 @@ async function loadDevices(platform) {
     // Pick previous selection if still present, else first device.
     const restored = list.find(d => d.id === prev) || list[0];
     input.value = restored.id || '';
+    deviceInfo[platform] = { id: restored.id || '', name: restored.name || restored.id || '' };
     label.textContent = _deviceLabel(restored);
     Array.from(menu.children).forEach(c => c.classList.toggle('selected', c.dataset.value === input.value));
   } catch (e) {
     console.warn(`[loadDevices ${platform}]`, e);
     input.value = '';
+    deviceInfo[platform] = { id: '', name: '' };
     label.textContent = 'Device discovery unavailable';
     menu.innerHTML = '';
     const unavailable = document.createElement('div');
@@ -734,8 +728,8 @@ async function loadDevices(platform) {
   }
 }
 
-function loadAndroidDevices() { return loadDevices('android'); }
-function loadIosDevices()      { checkIosDriverStatus(); return loadDevices('ios'); }
+function loadAndroidDevices() { return loadDevices('android').finally(shellSync); }
+function loadIosDevices()      { checkIosDriverStatus(); return loadDevices('ios').finally(shellSync); }
 
 /**
  * Probe the Rust backend's /ios-driver-status endpoint and toggle the
@@ -749,10 +743,13 @@ async function checkIosDriverStatus() {
     const r = await fetch('/ios-driver-status');
     const j = await r.json();
     banner.classList.toggle('visible', j && j.available === false);
+    iosDriverMissing = !!(j && j.available === false);
   } catch (e) {
     // Endpoint missing (older backend) — fail open, hide the banner.
     banner.classList.remove('visible');
+    iosDriverMissing = false;
   }
+  shellSync();
 }
 
 function refreshLiveView() {
@@ -792,26 +789,6 @@ function initResizeHandles() {
     });
   });
 }
-// ── Theme ──
-// Three states stored by ALV.prefs: Dark, Light and System (follows the OS live). The switch shows
-// the resolved theme; its tooltip names the current state and the next one. Replaced in P4.
-const THEME_LABEL = { dark: 'Dark', light: 'Light', system: 'System' };
-function _syncThemeButton() {
-  const cb = document.getElementById('themeToggle');
-  if (!cb) return;
-  const s = ALV.prefs.state();
-  cb.checked = s.themeResolved === 'light';
-  const now = s.theme === 'system' ? `System (${THEME_LABEL[s.themeResolved]})` : THEME_LABEL[s.theme];
-  const tip = `Theme: ${now}. Click for ${THEME_LABEL[ALV.prefs.nextTheme(s.theme)]}`;
-  cb.setAttribute('aria-label', tip);
-  cb.parentElement.title = tip;
-}
-function toggleTheme() {
-  ALV.prefs.set('theme', ALV.prefs.nextTheme(ALV.prefs.get('theme')));   // onChange re-syncs the switch
-}
-ALV.prefs.onChange(_syncThemeButton);
-_syncThemeButton();
-
 // ── Log-table zoom ──
 // Scales only the log table via --log-fs (written on <html> by ALV.prefs: 10–20 px, default 13,
 // persisted); chrome stays at its own size so the controls remain usable on small laptops.
@@ -862,7 +839,28 @@ document.getElementById('logTable').addEventListener('click', e => {
   }
 });
 
-// Open on the Live Devices tab — most common starting point for new sessions.
+// ── App shell (assets/js/shell.js): the sidebar and the window drag bands ──
+// The shell reads the page only through shellState() and acts only through these functions.
+shell = ALV.createShell({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, keys: ALV.keys, prefs: ALV.prefs, state: shellState,
+  actions: { selectSession, openFile: openLogFile, togglePlatform, toggleStream: p => (p === 'android' ? toggleAndroid() : toggleIos()),
+    repair: () => iosRepairFromHeader(), setup: p => showSetup(p) } });
+function shellState() {
+  return {
+    cur, sessions: [liveSession, fileSession],
+    live: { android: androidLive, ios: iosLive }, status: liveStatus, devices: deviceInfo, driverMissing: iosDriverMissing,
+    lines: wsLines, dropped: liveSession.dropped, enabled: enabledPlatforms,
+  };
+}
+function shellSync() { if (shell) shell.sync(); }
+// "Open log file…" (the SESSIONS row and ⌘O): the file session, then the picker. The picker is the
+// dropzone's file input, so a picked file loads exactly like a dropped one (handleFile).
+function openLogFile() {
+  if (document.querySelector('.modal-overlay.visible')) return;   // not over the legacy setup / stall modal
+  selectSession(fileSession);
+  document.getElementById('fileInput').click();
+}
+
+// Open on the Live session: the most common starting point.
 selectSession(liveSession);
 
 // ── File import ──
@@ -938,6 +936,8 @@ function handleFile(file) {
       discardBacklog(fileSession);
       ALV.session.reset(fileSession, msgs);
       fileSession.query = -1;   // not filtered yet: rendered below, or by selectSession if the user switched away meanwhile
+      if (file.name) fileSession.name = file.name;   // the SESSIONS row shows it
+      shellSync();
       setTimeout(() => { if (gen !== fileLoadGen || cur !== fileSession) return; applyFilters(); showOnly('logWrapper'); updateExportVisibility(); }, 50);
     } catch(err) {
       alert('Failed to parse file: ' + err.message);
@@ -1066,6 +1066,16 @@ function formatTs(ts) {
   return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(),3)}`;
 }
 
+// What the sidebar needs from a frame, read off its text before handleWsMsg parses it (serde writes the
+// "type" tag first): a log line moves the counter (rate; the only thing that ends a stall), and the iOS
+// bridge's stall hint marks the row stalled, paused or not (the pause only holds back the stall sheet).
+function noteFrame(e, platform) {
+  const d = e.data;
+  if (typeof d !== 'string') return;
+  if (d.startsWith('{"type":"log"')) wsLines[platform]++;
+  else if (platform === 'ios' && shell && d.startsWith('{"type":"error"') && d.toLowerCase().includes('stalled')) shell.markStalled('ios');
+}
+
 // ── WebSocket: Android ──
 function connectAndroid() {
   const sel = document.getElementById('androidDeviceSelect');
@@ -1074,7 +1084,7 @@ function connectAndroid() {
   document.getElementById('androidBtn').disabled = true;
   wsAndroid = new WebSocket('ws://localhost:8765');
   wsAndroid.onopen = () => { androidLive = true; setStatus('android','connected','Connected'); setConnectBtn('android', true); refreshLiveView(); };
-  wsAndroid.onmessage = e => handleWsMsg(e, 'android');
+  wsAndroid.onmessage = e => { noteFrame(e, 'android'); handleWsMsg(e, 'android'); };
   wsAndroid.onerror   = () => { setStatus('android','error','Error'); resetConnectBtn('android'); androidLive = false; };
   wsAndroid.onclose   = () => { if (androidLive) setStatus('android','disconnected','Disconnected'); resetConnectBtn('android'); androidLive = false; clearDeviceBadge('android'); refreshLiveView(); };
 }
@@ -1103,7 +1113,7 @@ function connectIos() {
   document.getElementById('iosBtn').disabled = true;
   wsIos = new WebSocket('ws://localhost:8766');
   wsIos.onopen = () => { iosLive = true; setStatus('ios','connected','Connected'); setConnectBtn('ios', true); refreshLiveView(); };
-  wsIos.onmessage = e => handleWsMsg(e, 'ios');
+  wsIos.onmessage = e => { noteFrame(e, 'ios'); handleWsMsg(e, 'ios'); };
   wsIos.onerror   = () => { setStatus('ios','error','Error'); resetConnectBtn('ios'); iosLive = false; };
   wsIos.onclose   = () => { if (iosLive) setStatus('ios','disconnected','Disconnected'); resetConnectBtn('ios'); iosLive = false; clearDeviceBadge('ios'); refreshLiveView(); };
 }
@@ -1150,6 +1160,7 @@ function updateDroppedIndicator(platform) {
   pill.title = `${n.toLocaleString()} ${platform === 'android' ? 'Android' : 'iOS'} ${n === 1 ? 'message' : 'messages'} (log lines, plus any device/status updates in the gap) never reached the viewer: ` +
     'this connection could not keep up with the stream, so the app\'s server-side buffer overflowed ' +
     'and the oldest unsent messages were dropped. The table and exports may have gaps where this happened (unless those lines were later discarded by the viewer\'s retention cap). Resets on Clear.';
+  shellSync();   // the sidebar row's "312 dropped"
 }
 
 function handleWsMsg(e, platform) {
@@ -1307,6 +1318,7 @@ function showStallModal(text) {
   // #overlayRoot (z 200) paints above the legacy .modal-overlay (z 100): an open Export menu would sit over the
   // modal and keep focus. Close it without moving focus into the page behind the modal.
   exportMenuCtl.close({ restoreFocus: false });
+  if (shell) shell.closeMenus();   // the sidebar's device menus live in the same overlay root
   const el = document.getElementById('stallModalText');
   if (el && text) el.textContent = text;
   const res = document.getElementById('stallRepairResult');
@@ -1496,7 +1508,9 @@ function setStatus(platform, state, text) {
     : { pill: 'iosStatus',     txt: 'iosStatusText'     };
   document.getElementById(ids.pill).className = 'status-pill ' + state;
   document.getElementById(ids.txt).textContent = text;
+  liveStatus[platform] = { state, text };
   updateLiveBar();
+  shellSync();
 }
 
 function updateLiveBar() {
@@ -1577,7 +1591,7 @@ function clearLogs() {
     fileLoadGen++;   // a load still reading or waiting to render is cancelled (see handleFile)
     showOnly('dropzone');   // Clear on File: the dropzone is the only way to load another file
   }
-  updateStats(); updateExportVisibility(); updateNewerPill();
+  updateStats(); updateExportVisibility(); updateNewerPill(); shellSync();
 }
 
 // ── Live retention ──
@@ -1637,7 +1651,7 @@ function trimPausedBacklog(s) {
 // Esc, an outside press or choosing a format, with focus back on the button. ⌘E / Ctrl+E toggles it from
 // anywhere, text fields included. refreshExportMenu fills the counts and the loss note on each open.
 // #overlayRoot (z 200) paints above the legacy .modal-overlay (z 100), so showStallModal and showSetup close the
-// menu when they open (an iOS stall can arrive while it is open); the ⌘E guard alone only blocks opening it.
+// menu (and the sidebar's device menus, shell.closeMenus) when they open (an iOS stall can arrive while it is open); the ⌘E guard alone only blocks opening it.
 function refreshExportMenu() {
   const s = cur;
   document.getElementById('exportFilteredCount').textContent = s.filtered.length.toLocaleString() + ' lines';
@@ -2027,6 +2041,7 @@ document.getElementById('logTable').addEventListener('scroll', function() {
 // ── Setup modal ──
 function showSetup(platform) {
   exportMenuCtl.close({ restoreFocus: false });   // as showStallModal: the menu would paint above this modal
+  if (shell) shell.closeMenus();
   document.getElementById('setupModal').classList.add('visible'); switchSetupTab(platform);
 }
 function hideSetup()         { document.getElementById('setupModal').classList.remove('visible'); }
