@@ -47,6 +47,7 @@ pub static FILES: &[(&str, &[u8])] = embed![
     "js/keys.js",
     "js/prefs.js",
     "js/session.js",
+    "js/ui.js",
 ];
 
 /// Files under `viewer/assets/` that are kept in the repo but never served.
