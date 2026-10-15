@@ -429,7 +429,7 @@ test('File tab: #stats and Export cover only the file; Live keeps its own counts
   assert.equal(v.text('stats'), '4 / 4 lines');
   assert.equal(display(v, 'exportWrap'), '');
   for (const scope of ['all', 'filtered']) {
-    v.doc.querySelector = () => ({ value: scope });
+    v.doc.querySelector = sel => (assert.equal(sel, '#exportMenu [aria-checked="true"]'), { value: scope });
     v.run('__saved = null');
     await v.api.doExport('txt');
     const lines = v.run('__saved').split('\n');

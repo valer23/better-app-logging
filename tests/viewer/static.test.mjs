@@ -112,6 +112,17 @@ test('the Export menu lives in the popover layer: one menu button, three formats
   const legacy = inlineScripts(html).at(-1).code;
   assert.doesNotMatch(legacy, /\bpositionExportMenu\b|name="exportScope"|getElementById\('exportMenu'\)\.classList/);
   assert.match(legacy, /ALV\.keys\.register\(\{ id: 'export\.menu', keys: 'Mod\+E', inText: true/);
+  // getExportData reads the scope from the one checked radio, so exactly one element must carry aria-checked="true" and a value.
+  const checked = elements(menu).filter(el => el.attrs['aria-checked'] === 'true');
+  assert.equal(checked.length, 1, 'exactly one aria-checked="true" item in #exportMenu');
+  assert.ok(checked[0].attrs.value, 'the checked item carries a value attribute');
+  assert.match(legacy, /document\.querySelector\('#exportMenu \[aria-checked="true"\]'\)\.value/);
+  // Wiring that no node test exercises: counts/note fill on open, the menu goes with its hidden button, and a legacy modal closes it.
+  assert.match(legacy, /ALV\.ui\.menu\(document\.getElementById\('exportBtn'\), document\.getElementById\('exportSurface'\), \{ onOpen: refreshExportMenu \}\)/);
+  assert.match(legacy, /function updateExportVisibility\(\) \{[^}]*exportMenuCtl\.close\(\{ restoreFocus: false \}\)/);
+  for (const fn of ['showStallModal', 'showSetup']) {
+    assert.match(legacy, new RegExp(`function ${fn}\\([^)]*\\) \\{[^}]*exportMenuCtl\\.close\\(\\{ restoreFocus: false \\}\\)`), `${fn} closes the Export menu`);
+  }
 });
 
 test('every [aria-haspopup] control has aria-expanded and an aria-controls that resolves', () => {

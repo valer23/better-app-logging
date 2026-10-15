@@ -1304,6 +1304,9 @@ function iosRepairFromStall() {
 }
 
 function showStallModal(text) {
+  // #overlayRoot (z 200) paints above the legacy .modal-overlay (z 100): an open Export menu would sit over the
+  // modal and keep focus. Close it without moving focus into the page behind the modal.
+  exportMenuCtl.close({ restoreFocus: false });
   const el = document.getElementById('stallModalText');
   if (el && text) el.textContent = text;
   const res = document.getElementById('stallRepairResult');
@@ -1633,6 +1636,8 @@ function trimPausedBacklog(s) {
 // button on open and on resize (the legacy placement arithmetic, now ALV.uiPure.place), closed by
 // Esc, an outside press or choosing a format, with focus back on the button. ⌘E / Ctrl+E toggles it from
 // anywhere, text fields included. refreshExportMenu fills the counts and the loss note on each open.
+// #overlayRoot (z 200) paints above the legacy .modal-overlay (z 100), so showStallModal and showSetup close the
+// menu when they open (an iOS stall can arrive while it is open); the ⌘E guard alone only blocks opening it.
 function refreshExportMenu() {
   const s = cur;
   document.getElementById('exportFilteredCount').textContent = s.filtered.length.toLocaleString() + ' lines';
@@ -2020,7 +2025,10 @@ document.getElementById('logTable').addEventListener('scroll', function() {
 });
 
 // ── Setup modal ──
-function showSetup(platform) { document.getElementById('setupModal').classList.add('visible'); switchSetupTab(platform); }
+function showSetup(platform) {
+  exportMenuCtl.close({ restoreFocus: false });   // as showStallModal: the menu would paint above this modal
+  document.getElementById('setupModal').classList.add('visible'); switchSetupTab(platform);
+}
 function hideSetup()         { document.getElementById('setupModal').classList.remove('visible'); }
 function switchSetupTab(t) {
   document.getElementById('tabAndroidSetup').classList.toggle('active', t === 'android');
