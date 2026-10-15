@@ -101,7 +101,7 @@
     ios: { badge: 'i', cls: 'plat plat-i', fallback: 'iPhone' },
   };
 
-  // createShell({ doc, win, dom, ui, keys, prefs, state, actions, now }) → { sync(), markStalled(platform) }.
+  // createShell({ doc, win, dom, ui, keys, prefs, state, actions, now }) → { sync(), markStalled(platform), closeMenus() }.
   // Called once, by the legacy script, before its first selectSession. state() returns what the shell shows
   // (the legacy shellState()); actions are the legacy functions it calls. Without `state` only the drag
   // bands are wired (the drag tests).
@@ -319,6 +319,9 @@
       // The iOS bridge reported a stall (the legacy onmessage, paused or not): the row says "Stalled 15 s"
       // until the next log line. Lines that arrived before the report are not that line.
       markStalled(p) { seen[p] = state().lines[p]; stalled[p] = true; sync(); },
+      // A legacy modal is about to open (the stall frame, not a press, opens it): a row menu is in #overlayRoot at
+      // z 200, above the modal's z 100, and would keep focus. Closed without moving focus into the page behind.
+      closeMenus() { for (const p of PLATFORMS) if (rows[p]) rows[p].menu.close({ restoreFocus: false }); },
     };
   }
 

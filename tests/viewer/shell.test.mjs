@@ -335,6 +335,19 @@ test('DEVICES: a new device rebuilds its row and destroys the old menu and toolt
   assert.equal(parts(row(p, 'android')).main, fresh.main, 'an unchanged device keeps its row');
 });
 
+test('DEVICES: closeMenus() closes an open row menu without moving focus (a modal opened by a frame must not sit under it)', () => {
+  const { p, shell } = shellPage({ st: { devices: { android: { id: 'a1', name: 'Pixel 8 Pro' }, ios: { id: 'u1', name: 'iPhone 15' } } } });
+  const a = parts(row(p, 'android'));
+  const i = parts(row(p, 'ios'));
+  i.more.click();
+  assert.deepEqual([i.more.getAttribute('aria-expanded'), p.keys.escDepth()], ['true', 1]);
+  const before = p.doc.activeElement;
+  shell.closeMenus();
+  assert.deepEqual([i.more.getAttribute('aria-expanded'), p.keys.escDepth(), p.doc.activeElement === before], ['false', 0, true]);
+  assert.equal(a.more.getAttribute('aria-expanded'), 'false');
+  assert.doesNotThrow(() => shell.closeMenus(), 'nothing open: a no-op');
+});
+
 // ---- Footer: the theme cycle (⇧⌘L) and the Windows caption ----
 
 const tipOf = (p, btn) => p.byId[btn.getAttribute('aria-describedby')];

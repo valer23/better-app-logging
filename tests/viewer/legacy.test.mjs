@@ -213,6 +213,15 @@ test('handleWsMsg still shows the stall sheet for the stall frame unless the str
   assert.equal(run('__sheet'), 1, 'paused: no sheet');
 });
 
+test('showStallModal and showSetup close the sidebar row menus: #overlayRoot (z 200) would paint them above the modal (P4)', () => {
+  const { run } = loadLegacy([], { document: stickyDocument() });
+  run(`globalThis.__closed = 0; shell = { closeMenus: () => { __closed++; }, sync() {} };`);
+  run(`showStallModal('x')`);
+  assert.equal(run('__closed'), 1, 'the stall modal is opened by a frame, so no pointerdown light dismiss runs');
+  run(`showSetup('ios')`);
+  assert.equal(run('__closed'), 2);
+});
+
 // The legacy side of the shell adapter, against the real legacy code: the fields shellState() returns are what
 // shell.js reads, so a typo here fails at runtime only.
 const settle = () => new Promise(r => setImmediate(r));
