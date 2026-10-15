@@ -837,7 +837,9 @@ const dropzone = document.getElementById('dropzone');
 dropzone.addEventListener('dragover',  e => { e.preventDefault(); dropzone.classList.add('drag-over'); });
 dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
 dropzone.addEventListener('drop',      e => { e.preventDefault(); dropzone.classList.remove('drag-over'); handleFile(e.dataTransfer.files[0]); });
-document.getElementById('fileInput').addEventListener('change', e => handleFile(e.target.files[0]));
+// The input is cleared after each pick: a browser fires 'change' only for a different value, so picking
+// the same file again (e.g. after Clear on File) would otherwise do nothing.
+document.getElementById('fileInput').addEventListener('change', e => { const file = e.target.files[0]; e.target.value = ''; handleFile(file); });
 dropzone.addEventListener('click', e => { if (!['LABEL','INPUT'].includes(e.target.tagName)) document.getElementById('fileInput').click(); });
 
 // A loaded file becomes the file session (P4 lists several; P2 has one slot, replaced on each load).

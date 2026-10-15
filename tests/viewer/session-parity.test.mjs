@@ -330,6 +330,26 @@ test('Clear then a second drop: the cancelled first read cannot replace the seco
   assert.equal(display(v, 'logWrapper'), '');
 });
 
+// The stub fires 'change' on every pick, so this pins the clearing itself, not the browser rule.
+test('Browse clears the file input after each pick, so the same file can be picked again after Clear on File', () => {
+  const v = boot();
+  const io = deferFileIo(v);
+  v.go('toFile');
+  const input = v.doc.getElementById('fileInput');
+  const pick = () => {
+    input.files = [{ text: fileText(3) }];
+    input.value = 'C:\\fakepath\\same.log';
+    for (const fn of v.doc.listeners.get('fileInput:change')) fn({ target: input });
+  };
+  pick(); io.finishRead(0); io.runTimers();
+  assert.equal(v.get('fileAll').length, 3);
+  assert.equal(input.value, '', 'cleared, so picking the same file fires change again');
+  v.api.clearLogs();
+  pick(); io.finishRead(1); io.runTimers();
+  assert.equal(v.get('fileAll').length, 3);
+  assert.equal(display(v, 'logWrapper'), '');
+});
+
 test('two overlapping drops: the later drop wins even when the earlier read finishes last', () => {
   const v = boot();
   const io = deferFileIo(v);
