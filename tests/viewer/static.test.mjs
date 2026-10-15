@@ -177,6 +177,24 @@ test('#toolbar centres its children: a stretched flex item of the 52 px band wou
     'every toolbar control is INTERACTIVE: stretched to the band, its margins neither draw nor drag like the control');
 });
 
+test('the streaming dot pulses on the compositor: #streamDot overrides the foundation box-shadow pulse with a transform + opacity ring', () => {
+  const css = read(path.join(ASSETS, 'css', 'shell.css'));
+  const rules = C.cssRules(css);
+  const decls = sel => rules.filter(r => r.selectors.includes(sel)).flatMap(r => C.declarations(r.body));
+  const base = decls('#streamDot.pulse');
+  assert.ok(base.some(d => d.prop === 'animation' && d.value === 'none'), 'the foundation .dot.pulse animation (box-shadow: main thread, every frame, forever) is switched off here');
+  assert.ok(base.some(d => d.prop === 'position' && d.value === 'relative'), 'the ring is positioned against the dot');
+  const ring = decls('#streamDot.pulse::after');
+  const anim = ring.find(d => d.prop === 'animation');
+  assert.ok(anim, 'the ring animates');
+  assert.match(anim.value, /var\(--t-pulse\)/, 'its duration is the --t-pulse token, so Reduce motion stops it');
+  const name = anim.value.split(/\s+/)[0];
+  const kf = css.match(new RegExp(`@keyframes\\s+${name}\\s*\\{([\\s\\S]*?\\}\\s*)\\}`));
+  assert.ok(kf, `@keyframes ${name} exists`);
+  const props = [...kf[1].matchAll(/([\w-]+)\s*:/g)].map(m => m[1]);
+  assert.ok(props.length >= 2 && props.every(p => p === 'transform' || p === 'opacity'), `only compositor properties animate, got ${props}`);
+});
+
 test('#sidebarBody scrolls, so its top padding keeps the 4 px focus ring of the first stop (#cmdTrigger) unclipped', () => {
   const decls = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')))
     .filter(r => r.selectors.includes('#sidebarBody')).flatMap(r => C.declarations(r.body));

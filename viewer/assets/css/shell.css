@@ -73,6 +73,13 @@
   .tb-right { display: flex; align-items: center; gap: 6px; flex: none; }
   .tb-title { min-width: 0; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 600; }
   #streamBadge { flex: none; font-variant-numeric: tabular-nums; }
+  /* The Streaming dot runs forever, so it must not cost a main-thread style + paint pass every frame inside the
+     backdrop-filtered .chrome band: the foundation's .dot.pulse animates box-shadow (not compositable). Replace
+     it here, keyed by id, with a ring that animates only transform and opacity. The duration is --t-pulse, so
+     Reduce motion still stops it. */
+  #streamDot.pulse { animation: none; position: relative; }
+  #streamDot.pulse::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: currentColor; pointer-events: none; animation: stream-ping var(--t-pulse) var(--ease) infinite; }
+  @keyframes stream-ping { 0% { transform: scale(1); opacity: .5; } 100% { transform: scale(2); opacity: 0; } }
   .tb-zoom { display: flex; align-items: center; gap: 2px; }
   #zoomResetBtn { min-width: 52px; font-variant-numeric: tabular-nums; }
   #exportWrap { display: flex; }
