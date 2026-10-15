@@ -364,6 +364,19 @@ test('theme button: icon, aria-label and tooltip per theme; a click and ⇧⌘L 
   assert.equal(prefs.get('theme'), 'dark');
 });
 
+test('⌘O and ⇧⌘L work from inside a text field (inText), and an unmodified key does not', () => {
+  const { p, prefs, calls } = shellPage();
+  const field = p.doc.createElement('input');
+  field.setAttribute('type', 'text');
+  const ev = (o, ctx) => ({ preventDefault() {}, ...o, ...ctx });
+  assert.equal(p.keys.dispatch(ev({ key: 'o', code: 'KeyO', metaKey: true }), field), 'session.open', '⌘O in the search box');
+  assert.equal(calls.at(-1)[0], 'openFile');
+  const was = prefs.get('theme');
+  assert.equal(p.keys.dispatch(ev({ key: 'L', code: 'KeyL', metaKey: true, shiftKey: true }), field), 'view.theme', '⇧⌘L in the search box');
+  assert.notEqual(prefs.get('theme'), was);
+  assert.equal(p.keys.dispatch(ev({ key: 'o', code: 'KeyO' }), field), null, 'a plain "o" is typed, not a command');
+});
+
 test('theme button: with System chosen, an OS appearance change updates the tooltip live (spec Open item 3)', () => {
   const { p, prefs, mm, $ } = shellPage();
   prefs.set('theme', 'system');
