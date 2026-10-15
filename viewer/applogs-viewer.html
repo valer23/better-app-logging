@@ -443,9 +443,10 @@ let filterGen = 0;   // bumped by queryChanged(); a session whose `query` differ
 function offscreen(s) { return s !== cur || document.hidden; }
 let wsAndroid = null, wsIos = null;
 let shell = null;   // the app shell (ALV.createShell, assets/js/shell.js), created before the first selectSession
-// What the sidebar device rows show (shellState): frames received per platform (the rate meter), the last
-// setStatus per platform, the device the picker holds, and whether the iOS driver check failed (Windows).
-const wsFrames = { android: 0, ios: 0 };
+// What the sidebar device rows show (shellState): log lines received per platform (the rate meter, and what
+// ends a stall), the last setStatus per platform, the device the picker holds, and whether the iOS driver
+// check failed (Windows).
+const wsLines = { android: 0, ios: 0 };
 const liveStatus = { android: { state: 'disconnected', text: 'Disconnected' }, ios: { state: 'disconnected', text: 'Disconnected' } };
 const deviceInfo = { android: { id: '', name: '' }, ios: { id: '', name: '' } };
 let iosDriverMissing = false;
@@ -864,7 +865,7 @@ function shellState() {
   return {
     cur, sessions: [liveSession, fileSession],
     live: { android: androidLive, ios: iosLive }, status: liveStatus, devices: deviceInfo, driverMissing: iosDriverMissing,
-    frames: wsFrames, dropped: liveSession.dropped, enabled: enabledPlatforms,
+    lines: wsLines, dropped: liveSession.dropped, enabled: enabledPlatforms,
   };
 }
 function shellSync() { if (shell) shell.sync(); }
@@ -1082,6 +1083,16 @@ function formatTs(ts) {
   return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(),3)}`;
 }
 
+// What the sidebar needs from a frame, read off its text before handleWsMsg parses it (serde writes the
+// "type" tag first): a log line moves the counter (rate; the only thing that ends a stall), and the iOS
+// bridge's stall hint marks the row stalled, paused or not (the pause only holds back the stall sheet).
+function noteFrame(e, platform) {
+  const d = e.data;
+  if (typeof d !== 'string') return;
+  if (d.startsWith('{"type":"log"')) wsLines[platform]++;
+  else if (platform === 'ios' && shell && d.startsWith('{"type":"error"') && d.toLowerCase().includes('stalled')) shell.markStalled('ios');
+}
+
 // ── WebSocket: Android ──
 function connectAndroid() {
   const sel = document.getElementById('androidDeviceSelect');
@@ -1090,7 +1101,7 @@ function connectAndroid() {
   document.getElementById('androidBtn').disabled = true;
   wsAndroid = new WebSocket('ws://localhost:8765');
   wsAndroid.onopen = () => { androidLive = true; setStatus('android','connected','Connected'); setConnectBtn('android', true); refreshLiveView(); };
-  wsAndroid.onmessage = e => { wsFrames.android++; handleWsMsg(e, 'android'); };   // the count feeds the sidebar rate
+  wsAndroid.onmessage = e => { noteFrame(e, 'android'); handleWsMsg(e, 'android'); };
   wsAndroid.onerror   = () => { setStatus('android','error','Error'); resetConnectBtn('android'); androidLive = false; };
   wsAndroid.onclose   = () => { if (androidLive) setStatus('android','disconnected','Disconnected'); resetConnectBtn('android'); androidLive = false; clearDeviceBadge('android'); refreshLiveView(); };
 }
@@ -1119,7 +1130,7 @@ function connectIos() {
   document.getElementById('iosBtn').disabled = true;
   wsIos = new WebSocket('ws://localhost:8766');
   wsIos.onopen = () => { iosLive = true; setStatus('ios','connected','Connected'); setConnectBtn('ios', true); refreshLiveView(); };
-  wsIos.onmessage = e => { wsFrames.ios++; handleWsMsg(e, 'ios'); };   // the count feeds the sidebar rate
+  wsIos.onmessage = e => { noteFrame(e, 'ios'); handleWsMsg(e, 'ios'); };
   wsIos.onerror   = () => { setStatus('ios','error','Error'); resetConnectBtn('ios'); iosLive = false; };
   wsIos.onclose   = () => { if (iosLive) setStatus('ios','disconnected','Disconnected'); resetConnectBtn('ios'); iosLive = false; clearDeviceBadge('ios'); refreshLiveView(); };
 }
@@ -1321,7 +1332,6 @@ function iosRepairFromStall() {
 }
 
 function showStallModal(text) {
-  if (shell) shell.markStalled('ios');   // the sidebar row says "Stalled N s" until frames move again
   // #overlayRoot (z 200) paints above the legacy .modal-overlay (z 100): an open Export menu would sit over the
   // modal and keep focus. Close it without moving focus into the page behind the modal.
   exportMenuCtl.close({ restoreFocus: false });

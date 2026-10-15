@@ -211,24 +211,53 @@ test('DEVICES: a row per platform (Android, then iOS) with badge, name, spec sta
   assert.equal(parts(row(p, 'ios')).status.textContent, 'Driver missing');
 });
 
-test('DEVICES: the rate comes from the frame counters on the tick, and a stall reads "Stalled N s" until frames move again', () => {
+test('DEVICES: the rate comes from the log-line counters on the tick', () => {
+  const { p, state } = shellPage({ st: { live: { android: false, ios: true }, devices: { android: { id: '', name: '' }, ios: { id: 'u1', name: 'iPhone 15' } } } });
+  const i = parts(row(p, 'ios'));
+  p.advance(500);
+  state.lines.ios = 421;
+  p.advance(500);
+  assert.equal(i.status.textContent, 'Streaming · 842/s', '421 lines in 0.5 s');
+  state.lines.ios = 2121;
+  p.advance(500);
+  assert.equal(i.status.textContent, 'Streaming · 2.1k/s', 'measured from the newest sample 1 s old (t=500, 0 lines)');
+});
+
+test('DEVICES: a stall reads the fixed threshold "Stalled 15 s", not a timer, and only the next log line ends it', () => {
   const { p, shell, state } = shellPage({ st: { live: { android: false, ios: true }, devices: { android: { id: '', name: '' }, ios: { id: 'u1', name: 'iPhone 15' } } } });
   const i = parts(row(p, 'ios'));
   p.advance(500);
-  state.frames.ios = 421;
+  state.lines.ios = 2121;
   p.advance(500);
-  assert.equal(i.status.textContent, 'Streaming · 842/s', '421 frames in 0.5 s');
-  state.frames.ios = 2121;
-  p.advance(500);
-  assert.equal(i.status.textContent, 'Streaming · 2.1k/s', 'measured from the newest sample 1 s old (t=500, 0 frames)');
-  state.frames.ios += 1;   // the stall error frame is counted by onmessage before showStallModal runs
+  state.lines.ios += 3;   // lines that arrived just before the report are not the line that ends the stall
   shell.markStalled('ios');
-  p.advance(15000);
-  assert.equal(i.status.textContent, 'Stalled 15 s', 'seconds since the last frame');
+  assert.deepEqual([i.status.textContent, row(p, 'ios').getAttribute('data-state')], ['Stalled 15 s', 'stalled'], 'at once, without waiting for a tick');
+  for (let n = 0; n < 40; n++) p.advance(500);   // 20 s of ticks: the bridge's respawn sends devices and error frames, which are not lines
+  assert.equal(i.status.textContent, 'Stalled 15 s', 'still the threshold after 20 s, not "Stalled 35 s"');
   assert.equal(row(p, 'ios').getAttribute('data-state'), 'stalled');
-  state.frames.ios = 2200;
+  state.lines.ios += 1;
   p.advance(500);
-  assert.match(i.status.textContent, /^Streaming · /, 'frames moved: the stall is over');
+  assert.match(i.status.textContent, /^Streaming · /, 'a log line arrived: the stall is over');
+  shell.markStalled('ios');
+  state.live.ios = false;
+  p.advance(500);
+  state.live.ios = true;
+  p.advance(500);
+  assert.match(i.status.textContent, /^Streaming · /, 'a stopped stream is not stalled when it starts again');
+});
+
+test('DEVICES: the toggle is named by the device alone; the status and drops lines describe it', () => {
+  const { p, state, shell } = shellPage({ st: { devices: { android: { id: 'a1', name: 'Pixel 8 Pro' }, ios: { id: '', name: '' } } } });
+  const a = parts(row(p, 'android'));
+  const labelledby = a.main.getAttribute('aria-labelledby');
+  assert.equal(p.byId[labelledby].textContent, 'Pixel 8 Pro', 'the name span');
+  assert.deepEqual(a.main.getAttribute('aria-describedby').split(' '), [a.status.getAttribute('id'), a.drops.getAttribute('id')]);
+  assert.equal(p.byId[a.status.getAttribute('id')], a.status);
+  assert.equal(p.byId[a.drops.getAttribute('id')], a.drops);
+  state.status.android = { state: 'connecting', text: 'Connecting…' };
+  state.dropped.android = 5;
+  shell.sync();
+  assert.deepEqual([a.main.getAttribute('aria-labelledby'), a.main.getAttribute('aria-label')], [labelledby, null], 'the name does not follow the status');
 });
 
 test('DEVICES: drops line, filter toggle (aria-pressed, aria-current when the only one shown), Start/Stop and the More menu', () => {

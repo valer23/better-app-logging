@@ -21,7 +21,7 @@
     return `${Math.round(v / 1000)}k/s`;
   }
 
-  // Frames per second per platform from cumulative counters sampled by a timer: measured from the newest
+  // Log lines per second per platform from cumulative counters sampled by a timer: measured from the newest
   // sample at least `windowMs` old (or the oldest kept), so a rate settles within a window.
   function createRateMeter(windowMs = 1000) {
     const samples = [];
@@ -39,7 +39,7 @@
   }
 
   // The status line of a sidebar device row (spec "Window frame and sidebar"), in spec copy.
-  // s: { live, state, text (setStatus), detected, driverMissing, stalledFor (s, or -1), rate, dropped }
+  // s: { live, state, text (setStatus), detected, driverMissing, stalledFor (the stall threshold in s, or -1), rate, dropped }
   // → { state: the shape the row shows, tone, text, drops: the second line or '' }
   function deviceStatus(s) {
     let state;
@@ -81,6 +81,9 @@
   const DRAG_BANDS = ['sidebarHeader', 'topbar'];
   const DRAG_THRESHOLD_PX = 4;
 
+  // The iOS bridge calls a stream stalled after this many seconds of silence (STREAM_STALL_TIMEOUT_SECS in
+  // src-tauri/src/bridge/ios.rs). The row says exactly this: spec "Stalled 15 s", not a running timer.
+  const STALL_SECONDS = 15;
   const TICK_MS = 500;   // the counts and rates refresh twice a second (spec: at most 4 times), off the drain
 
   // Diffed writes for the shell and the status bar (live.js): they refresh twice a second, so an unchanged
@@ -170,7 +173,10 @@
     const rows = {};
     const meter = createRateMeter(1000);
     let rates = { android: 0, ios: 0 };
-    const seen = { android: { frames: 0, at: now() }, ios: { frames: 0, at: now() } };   // last frame count change
+    // The log-line counter as the last tick (or markStalled) saw it. A stall ends only when it moves: devices,
+    // error and dropped frames are not lines (the bridge respawns idevicesyslog after a stall, and the
+    // respawn's "[connected:UDID]" arrives as a devices frame while the stream is still dead).
+    const seen = { android: 0, ios: 0 };
     const stalled = { android: false, ios: false };
     function act(p, what) {
       if (what === 'stream') actions.toggleStream(p);
@@ -181,13 +187,19 @@
       const P = PLATFORM[p];
       const name = dev.name || P.fallback;
       const r = { key, name, tips: [] };
-      r.status = dom.el('span', { class: 'side-label' });
+      // The toggle is named by the device alone; the status and drops lines describe it. The rate changes
+      // twice a second, and a focused button whose name changed would be re-announced at that pace.
+      const nameId = dom.uid('devname');
+      const statusId = dom.uid('devstatus');
+      const dropsId = dom.uid('devdrops');
+      r.status = dom.el('span', { class: 'side-label', id: statusId });
       r.dropsText = dom.el('span');
-      r.drops = dom.el('span', { class: 'dev-drops', hidden: true }, dom.icon('triangle-alert'), r.dropsText);
-      r.main = dom.el('button', { type: 'button', class: 'nav-item dev-main', on: { click: () => actions.togglePlatform(p) } },
+      r.drops = dom.el('span', { class: 'dev-drops', id: dropsId, hidden: true }, dom.icon('triangle-alert'), r.dropsText);
+      r.main = dom.el('button', { type: 'button', class: 'nav-item dev-main', 'aria-labelledby': nameId, 'aria-describedby': `${statusId} ${dropsId}`,
+        on: { click: () => actions.togglePlatform(p) } },
         dom.el('span', { class: P.cls, 'aria-hidden': 'true', text: P.badge }),
         dom.el('span', { class: 'dev-text' },
-          dom.el('span', { class: 'dev-name side-label', text: name }),
+          dom.el('span', { class: 'dev-name side-label', id: nameId, text: name }),
           dom.el('span', { class: 'dev-status' }, dom.el('span', { class: 'dev-dot', 'aria-hidden': 'true' }), r.status),
           r.drops));
       r.startIcon = dom.icon('play');
@@ -218,11 +230,11 @@
       old.li.remove();
       if (to) to.focus();
     }
-    function stalledFor(p, live, t) {
+    function stalledFor(p, live) {
       if (!live) stalled[p] = false;
-      return stalled[p] ? (t - seen[p].at) / 1000 : -1;
+      return stalled[p] ? STALL_SECONDS : -1;
     }
-    function syncDevices(st, t) {
+    function syncDevices(st) {
       let detected = 0;
       for (const p of PLATFORMS) {
         const dev = st.devices[p] || { id: '', name: '' };
@@ -238,7 +250,7 @@
         const live = !!st.live[p];
         const busy = st.status[p].state === 'connecting';
         const s = deviceStatus({ live, state: st.status[p].state, text: st.status[p].text, detected: !!dev.id,
-          driverMissing: p === 'ios' && st.driverMissing, stalledFor: stalledFor(p, live, t), rate: rates[p], dropped: st.dropped[p] });
+          driverMissing: p === 'ios' && st.driverMissing, stalledFor: stalledFor(p, live), rate: rates[p], dropped: st.dropped[p] });
         setAttr(r.li, 'data-state', s.state);
         setAttr(r.li, 'data-tone', s.tone);
         setText(r.status, s.text);
@@ -258,34 +270,32 @@
       setText($('devCount'), String(detected));
     }
 
-    function render(st, t) {
-      if (deviceList) syncDevices(st, t);
+    function render(st) {
+      if (deviceList) syncDevices(st);
       syncSessions(st);
     }
-    function sync() { render(state(), now()); }
-    // Twice a second, off the drain: sample the frame counters for the rates, notice frames arriving (which
+    function sync() { render(state()); }
+    // Twice a second, off the drain: sample the line counters for the rates, notice lines arriving (which
     // ends a stall), then refresh the rows and counts. Skipped while the window is hidden.
     function tick() {
       if (doc.hidden) return;
       const st = state();
-      const t = now();
-      rates = meter.sample(t, st.frames);
+      rates = meter.sample(now(), st.lines);
       for (const p of PLATFORMS) {
-        if (st.frames[p] !== seen[p].frames) { seen[p] = { frames: st.frames[p], at: t }; stalled[p] = false; }
+        if (st.lines[p] !== seen[p]) { seen[p] = st.lines[p]; stalled[p] = false; }
       }
-      render(st, t);
+      render(st);
     }
     win.setInterval(tick, TICK_MS);
     return {
       sync,
-      // The iOS bridge reported a stall (showStallModal): the row says "Stalled N s" until frames move again.
-      // The stall arrives as an error frame that onmessage has already counted, so that count is absorbed
-      // here; seen.at stays the time frames last moved.
-      markStalled(p) { const st = state(); seen[p] = { frames: st.frames[p], at: seen[p].at }; stalled[p] = true; sync(); },
+      // The iOS bridge reported a stall (the legacy onmessage, paused or not): the row says "Stalled 15 s"
+      // until the next log line. Lines that arrived before the report are not that line.
+      markStalled(p) { seen[p] = state().lines[p]; stalled[p] = true; sync(); },
     };
   }
 
   const ALV = g.ALV || (g.ALV = {});
-  ALV.shellPure = Object.freeze({ num, fmtRate, createRateMeter, deviceStatus, themeView, DRAG_BANDS, setText, setAttr, setHidden });
+  ALV.shellPure = Object.freeze({ num, fmtRate, createRateMeter, deviceStatus, themeView, DRAG_BANDS, STALL_SECONDS, setText, setAttr, setHidden });
   ALV.createShell = createShell;
 })(typeof window !== 'undefined' ? window : globalThis);
