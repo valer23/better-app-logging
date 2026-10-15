@@ -19,7 +19,8 @@
   const INTERACTIVE = 'button, input, select, textarea, a, label, [role=button], [role=switch], [role=radio], [role=tab], [role=slider], [role=combobox], [data-no-drag], .zoom-group, .theme-switch, .glass-switch';
   const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"]), [contenteditable="true"]';
   const SVG_NS = 'http://www.w3.org/2000/svg';
-  const HTML_PROPS = new Set(['innerHTML', 'outerHTML', 'html', 'srcdoc']);
+  // Compared lowercased: setAttribute lowercases names on HTML elements, so srcDoc / onClick would land as srcdoc / onclick.
+  const HTML_PROPS = new Set(['innerhtml', 'outerhtml', 'html', 'srcdoc']);
 
   function createDom(doc) {
     let seq = 0;
@@ -33,8 +34,9 @@
     function el(tag, props, ...children) {
       const node = doc.createElement(tag);
       for (const [k, v] of Object.entries(props || {})) {
-        if (HTML_PROPS.has(k)) throw new TypeError(`dom.el: "${k}" is not allowed; pass text or child nodes`);
-        if (/^on[a-z]/.test(k)) throw new TypeError(`dom.el: use on: { ${k.slice(2)}: fn } instead of "${k}"`);
+        const lk = k.toLowerCase();
+        if (HTML_PROPS.has(lk)) throw new TypeError(`dom.el: "${k}" is not allowed; pass text or child nodes`);
+        if (/^on./.test(lk)) throw new TypeError(`dom.el: use on: { ${k.slice(2)}: fn } instead of "${k}"`);
         if (v === null || v === undefined || v === false) continue;
         if (k === 'class') node.className = String(v);
         else if (k === 'text') node.textContent = String(v);

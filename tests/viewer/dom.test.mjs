@@ -63,6 +63,11 @@ test('el refuses HTML-string properties and on* attributes', () => {
   const d = ALV.createDom(fakeDocument());
   for (const k of ['innerHTML', 'outerHTML', 'html', 'srcdoc']) assert.throws(() => d.el('div', { [k]: '<b>x</b>' }), /not allowed/, k);
   assert.throws(() => d.el('button', { onclick: 'alert(1)' }), /on: \{ click: fn \}/);
+  // setAttribute lowercases names on HTML elements, so the React spellings must be refused too.
+  assert.throws(() => d.el('button', { onClick: () => {} }), /on: \{ Click: fn \}/);
+  assert.throws(() => d.el('div', { ONCLICK: 'x' }), /on: \{ CLICK: fn \}/);
+  for (const k of ['srcDoc', 'SRCDOC', 'OuterHTML', 'InnerHtml', 'HTML']) assert.throws(() => d.el('div', { [k]: '<b>x</b>' }), /not allowed/, k);
+  assert.equal(d.el('div', { on: { click() {} } }).tagName, 'DIV');
 });
 
 test('icon is an aria-hidden SVG that uses the sprite symbol #i-<name>', () => {
