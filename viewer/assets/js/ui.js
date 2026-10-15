@@ -319,6 +319,9 @@
       list.addEventListener('keydown', e => {
         const all = items();
         const at = all.indexOf(doc.activeElement);
+        // Holding Enter / Space on the trigger opens the menu on the first keydown and focuses its first
+        // item; the auto-repeats would then click that item. Prevented, they do nothing.
+        if (e.repeat && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); return; }
         if (e.key === 'Tab') {
           // Leave as if the menu sat next to its trigger: focus the trigger now, and the browser's own
           // Tab / Shift+Tab then moves on from there.

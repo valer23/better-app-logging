@@ -1084,3 +1084,17 @@ test('toasts: a dismissed focused toast with nowhere to return to leaves focus a
   assert.equal(live.children.length, 0);
   assert.equal(p.doc.activeElement, toastParts(n).dismiss, 'no known previous element: nothing to move to');
 });
+
+test('menu: auto-repeated Enter / Space on an item is ignored, so holding Enter on the trigger picks nothing (review F5)', () => {
+  const p = fakePage();
+  const trigger = p.dom.el('button');
+  p.byId.filterbar.appendChild(trigger);
+  const m = simpleMenu(p, trigger, ['Plain Text', 'CSV']);
+  trigger.fire('keydown', { key: 'ArrowDown' });
+  const hit = (key, extra) => { let prevented = false; m.list.children[0].fire('keydown', { key, preventDefault() { prevented = true; }, ...extra }); return prevented; };
+  assert.equal(hit('Enter', { repeat: true }), true, 'a repeated Enter is default-prevented, so no click follows');
+  assert.equal(hit(' ', { repeat: true }), true, 'and a repeated Space');
+  assert.equal(hit('Enter'), false, 'the first Enter is left alone: it clicks the item');
+  assert.equal(hit('ArrowDown', { repeat: true }), true, 'a held arrow key still roves');
+  assert.equal(p.doc.activeElement, m.list.children[1]);
+});
