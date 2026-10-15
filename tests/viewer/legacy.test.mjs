@@ -73,6 +73,14 @@ test('a sticky document hands out one stub per id, keeps what the legacy script 
   assert.equal(doc.getElementById('stats').textContent, '0 / 0 lines');
 });
 
+test('the page wires both window drag bands through the shell: one mousedown and one dblclick listener each', () => {
+  const doc = stickyDocument();
+  loadLegacy([], { document: doc });
+  for (const id of ['sidebarHeader', 'topbar']) {
+    for (const type of ['mousedown', 'dblclick']) assert.equal((doc.listeners.get(`${id}:${type}`) || []).length, 1, `${id}:${type}`);
+  }
+});
+
 test('csvCell quotes only cells with a comma, quote or newline', () => {
   assert.equal(api.csvCell('plain'), 'plain');
   assert.equal(api.csvCell('a,b'), '"a,b"');

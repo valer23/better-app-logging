@@ -212,6 +212,16 @@ test('INTERACTIVE is one literal, in dom.js, and the shell\'s drag bands read it
   assert.doesNotMatch(inlineScripts(html).at(-1).code, /INTERACTIVE|initTopbarDrag|startDragging/, 'the legacy script has no drag code left');
 });
 
+test('the macOS window entry (its windows[] replaces the base array) carries the base window\'s size and minimum size', () => {
+  const win = f => JSON.parse(read(path.join(ROOT, 'src-tauri', f))).app.windows.find(w => w.label === 'main');
+  const base = win('tauri.conf.json');
+  const mac = win('tauri.macos.conf.json');
+  for (const k of ['width', 'height', 'minWidth', 'minHeight']) {
+    assert.equal(typeof base[k], 'number', `base ${k}`);
+    assert.equal(mac[k], base[k], `macOS ${k}`);
+  }
+});
+
 test('the Lucide sprite is the first element of <body>: aria-hidden, zero-size, exactly the generator\'s icons', () => {
   const body = root.children.find(el => el.tag === 'html').children.find(el => el.tag === 'body');
   const sprite = body.children[0];
