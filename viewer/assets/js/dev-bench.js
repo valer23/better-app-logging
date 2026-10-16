@@ -133,7 +133,7 @@
       selectSession(fileSession); void t.scrollHeight;
       switchFileMsMax = Math.max(switchFileMsMax, performance.now() - t0);
     }
-    const after = firstVisible(), selRow = fileSession.tbody.querySelector('tr.selected');
+    const after = firstVisible(), selRow = fileSession.tbody.querySelector('tr[aria-selected="true"]');
     return {
       fileRowsMutated: fileMutations, fileLines: fileSession.all.length,
       fileHasLiveLines: fileSession.all.some(m => m.seq !== undefined),

@@ -418,7 +418,7 @@ test('every sprite symbol is used by the page or the JS', () => {
 
 test('no emoji in the primitives, the shell, the app-layer CSS, the overlay root, the sidebar or the Export button', () => {
   const EMOJI = /\p{Extended_Pictographic}/u;
-  for (const p of ['js/dom.js', 'js/keys.js', 'js/ui.js', 'js/shell.js', 'css/base.css', 'css/shell.css']) assert.doesNotMatch(read(path.join(ASSETS, p)), EMOJI, p);
+  for (const p of ['js/dom.js', 'js/keys.js', 'js/ui.js', 'js/shell.js', 'js/grid.js', 'css/base.css', 'css/shell.css', 'css/grid.css']) assert.doesNotMatch(read(path.join(ASSETS, p)), EMOJI, p);
   const lines = html.split('\n');
   for (const p of ['js/live.js']) assert.doesNotMatch(read(path.join(ASSETS, p)), EMOJI, p);
   for (const id of ['overlayRoot', 'exportWrap', 'sidebar', 'toolbar', 'statusBar']) {
@@ -738,7 +738,7 @@ test('pseudo-elements that set padding, a border or a percentage size declare th
 
 test('every legacy animation or transition is switched off by both Reduce motion rules', () => {
   const legacy = cssFiles.find(f => f.path === 'css/legacy.css').text;
-  // legacy.css shrinks with every region PR (P4b removes the top bar's switches and buttons: 18 left).
+  // legacy.css shrinks with every region PR (P4b removes the top bar's switches and buttons, P5a the table rows: 15 left).
   assert.ok(C.animatedSelectors(legacy).length >= 15, 'the legacy animation scan found too few selectors');
   assert.deepEqual(C.reducedMotionCoverageErrors(legacy, 'viewer/assets/css/legacy.css'), []);
 });
@@ -807,27 +807,64 @@ test('prefs.js is the only head script: first, synchronous, before every stylesh
   assert.ok(!('async' in scripts[0].attrs) && !('defer' in scripts[0].attrs) && !('type' in scripts[0].attrs));
 });
 
-test('legacy log columns 2-6 are sized in ch, so they follow the log text size', () => {
-  const colWidths = (r) => {
-    const cg = elements(r).find(el => el.attrs.id === 'colgroup');
-    assert.ok(cg, '#colgroup exists');
-    return cg.children.filter(el => el.tag === 'col').map(el => (el.attrs.style || '').match(/width:\s*([^;]+)/)?.[1].trim());
-  };
-  const isCh = (w) => /^calc\(\d+(\.\d+)?ch \+ 20px\)$/.test(w || '');
-  const widths = colWidths(root);
-  assert.equal(widths.length, 7);
-  assert.equal(widths[0], '28px');
-  widths.slice(1, 6).forEach((w, i) => assert.ok(isCh(w), `column ${i + 2} width ${w} is calc(Nch + 20px)`));
-  // Broken input: a px width must fail the same check.
-  const broken = parseHtml('<table><colgroup id="colgroup"><col style="width:28px"><col style="width:190px"></colgroup></table>').root;
-  assert.ok(!isCh(colWidths(broken)[1]), 'a px width is rejected');
+// ---- The log grid (roadmap P5) ----
+const gridCss = () => C.cssRules(read(path.join(ASSETS, 'css', 'grid.css')));
+const gridDecl = (sel, prop) => gridCss().filter(r => r.selectors.includes(sel)).flatMap(r => C.declarations(r.body)).find(d => d.prop === prop)?.value;
+
+test('log grid: the columns come in the D14 order, the header reads Time, Lvl, Tag, App / Device, PID–TID, Message', () => {
+  const cols = findById(root, 'colgroup').children.filter(el => el.tag === 'col');
+  assert.deepEqual(cols.map(el => el.attrs.class), ['k-plat', 'k-ts', 'k-lvl', 'k-tag', 'k-app', 'k-pid', 'k-msg']);
+  assert.ok(cols.every(el => !('style' in el.attrs)), 'no inline width: the defaults live in grid.css, and a reset removes the inline one');
+  const head = html.slice(html.indexOf('<tr id="headerRow">'), html.indexOf('</tr>', html.indexOf('<tr id="headerRow">')));
+  const labels = [...head.matchAll(/<th([^>]*)>(?:<span class="h">([^<]*)<\/span>)?<\/th>/g)].map(m => m[2] || '');
+  assert.deepEqual(labels, ['', 'Time', 'Lvl', 'Tag', 'App / Device', 'PID–TID', 'Message']);
+  const ths = findById(root, 'headerRow').children;
+  assert.equal(ths[0].attrs['aria-label'], 'Platform', 'the badge column is named, not labelled on screen');
+  assert.deepEqual(ths.map(th => th.attrs['data-col'] || null), [null, 'ts', 'lvl', 'tag', 'app', 'pid', null], 'the columns grid.js gives a resize handle');
+  const t = findById(root, 'logTableEl');
+  assert.deepEqual([t.attrs.class, t.attrs.role, t.attrs['aria-label']], ['lgrid', 'grid', 'Log lines']);
+  assert.match(html, /<link rel="stylesheet" href="assets\/css\/shell\.css">\n<link rel="stylesheet" href="assets\/css\/grid\.css">/);
+  assert.match(read(path.join(ASSETS, 'css', 'grid.css')), /^@layer app \{$/m);
 });
 
-test('legacy log table min-width keeps a Message floor that follows the log font', () => {
-  // 102ch = 78ch of sized columns 2-6 + a 24ch Message floor. 148px = 28px column 1 + 5x20px padding on
-  // columns 2-6 + 20px Message padding. Both terms scale with the table's own font, so the floor grows with the text.
-  const css = C.stripCss(read(path.join(ASSETS, 'css', 'legacy.css')));
-  const rules = [...css.matchAll(/(?:^|[\s}])table\s*\{([^}]*)\}/g)];
-  assert.equal(rules.length, 1, 'legacy.css has exactly one bare table rule');
-  assert.equal(rules[0][1].match(/min-width:\s*([^;]+);/)?.[1].trim(), 'max(960px, calc(102ch + 148px))');
+test('log grid: column widths are ch plus 12 px of cell padding, so they follow the log size and "15:54:26.290" fits', () => {
+  const w = k => gridDecl(`.lgrid > colgroup > col.k-${k}`, 'width');
+  assert.deepEqual(['ts', 'tag', 'app', 'pid'].map(w), ['calc(12ch + 12px)', 'calc(18ch + 12px)', 'calc(20ch + 12px)', 'calc(11ch + 12px)']);
+  assert.equal(w('lvl'), 'max(calc(1ch + 12px), 40px)', 'the LVL header needs 40 px at interface L');
+  assert.equal(w('plat'), 'calc(max(18px, var(--log-fs) * 1.3) + 10px)', 'spec: the badge column follows the badge');
+  assert.equal(w('msg'), undefined, 'Message takes the rest');
+});
+
+test('log grid: the table keeps a 24ch Message floor that follows the log font (it scrolls sideways at 20 px)', () => {
+  // 85ch = 12 + 18 + 20 + 11 ch of sized columns + a 24ch Message floor. 110px = the badge column's 10 px + Lvl's
+  // 40 px + 5 × 12 px of padding (Time, Tag, App, PID–TID, Message). Both terms scale with the table's own font.
+  assert.equal(gridDecl('.lgrid', 'min-width'), 'calc(max(18px, var(--log-fs) * 1.3) + 85ch + 110px)');
+  assert.equal(gridDecl('.lgrid', 'table-layout'), 'fixed');
+  assert.equal(gridDecl('.lgrid', '--row-h'), 'max(18px, calc(var(--log-fs) * var(--row-k)))', 'spec "Sizes": one row height for every row');
+});
+
+test('log grid: the log column never sizes to its content (P4a must-keep) and the grid is opaque in both materials', () => {
+  assert.equal(gridDecl('#logWrapper', 'flex'), '1 1 0');
+  assert.equal(gridDecl('#logWrapper', 'min-height'), '0');
+  assert.equal(gridDecl('#logTable', 'flex'), '1 1 0');
+  for (const sel of ['#logWrapper', '#logTable', '.lgrid']) assert.equal(gridDecl(sel, 'background'), 'var(--bg)', `${sel} is opaque`);
+  assert.ok(!gridCss().some(r => C.declarations(r.body).some(d => /backdrop-filter/.test(d.prop))), 'no blur on the grid (spec U4)');
+  assert.equal(findById(root, 'logWrapper').attrs.class, undefined, 'the grid left the legacy scope (.lg-scope)');
+});
+
+test('log grid: the legacy table rules are gone from legacy.css, and no stylesheet keys on [aria-rowcount]', () => {
+  const legacy = C.cssRules(read(path.join(ASSETS, 'css', 'legacy.css'))).flatMap(r => r.selectors);
+  const stale = legacy.filter(s => /(^|[\s>(])(table|thead|tbody|td|th|mark)\b|plat-badge|lvl-badge|col-resize-handle|new-row|plat-cell|lg-msg|lg-app|#logWrapper|\.(ts|pid|tag)(?![\w-])/.test(s));
+  assert.deepEqual(stale, []);
+  const keyed = cssFiles.flatMap(f => C.cssRules(f.text).flatMap(r => r.selectors)).filter(sel => /\[aria-row(count|index)/.test(sel));
+  assert.deepEqual(keyed, [], 'grid.js rewrites aria-rowcount: no style may depend on it');
+});
+
+test('buildRow sets no per-row tabindex, title, role or inline style, and grid.css animates nothing in P5a', () => {
+  const code = inlineScripts(html).at(-1).code;
+  const fn = code.slice(code.indexOf('\nfunction buildRow('), code.indexOf('\n}\n', code.indexOf('\nfunction buildRow(')));
+  assert.ok(fn.length > 200, 'buildRow found');
+  assert.doesNotMatch(fn, /tabindex|tabIndex|\.title\b|'title'|'role'|\.style\b|getBoundingClientRect|offset(Width|Height|Top)/);
+  assert.match(fn, /tr\.className = rowClass\(m\.lvl, m\.platform\)/, 'one className write carries level and platform');
+  assert.ok(!gridCss().some(r => C.declarations(r.body).some(d => /^(transition|animation)/.test(d.prop))), 'no transition on rows (spec: none per row)');
 });

@@ -16,6 +16,7 @@
 <link rel="stylesheet" href="assets/css/legacy.css">
 <link rel="stylesheet" href="assets/css/base.css">
 <link rel="stylesheet" href="assets/css/shell.css">
+<link rel="stylesheet" href="assets/css/grid.css">
 </head>
 <body>
 <!-- Lucide icon sprite (lucide-static 1.49.0, ISC: assets/icons/SOURCES.md, assets/icons/LICENSE-lucide.txt).
@@ -204,28 +205,23 @@
 <!-- Loading -->
 <div class="lg-scope" id="loading"><div class="spinner"></div><span id="loadingText">Parsing…</span></div>
 
-<!-- Log table -->
-<div class="lg-scope" id="logWrapper">
+<!-- Log grid (roadmap P5; spec "Log grid"): columns in the D14 order, their widths in assets/css/grid.css (in ch,
+     so they follow the log text size). Rows come from buildRow; assets/js/grid.js adds the resize separators. -->
+<div id="logWrapper">
   <div id="logTable">
-    <table id="logTableEl">
+    <table id="logTableEl" class="lgrid" role="grid" aria-label="Log lines">
       <colgroup id="colgroup">
-        <col style="width:28px">
-        <col style="width:calc(24ch + 20px)">
-        <col style="width:calc(11.5ch + 20px)">
-        <col style="width:calc(18ch + 20px)">
-        <col style="width:calc(22ch + 20px)">
-        <col style="width:calc(2.5ch + 20px)">
-        <col>
+        <col class="k-plat"><col class="k-ts"><col class="k-lvl"><col class="k-tag"><col class="k-app"><col class="k-pid"><col class="k-msg">
       </colgroup>
       <thead>
         <tr id="headerRow">
-          <th title="Platform"></th>
-          <th>Timestamp</th>
-          <th>PID-TID</th>
-          <th>Tag</th>
-          <th>App / Device</th>
-          <th>Lvl</th>
-          <th>Message</th>
+          <th aria-label="Platform"></th>
+          <th data-col="ts"><span class="h">Time</span></th>
+          <th data-col="lvl"><span class="h">Lvl</span></th>
+          <th data-col="tag"><span class="h">Tag</span></th>
+          <th data-col="app"><span class="h">App / Device</span></th>
+          <th data-col="pid"><span class="h">PID–TID</span></th>
+          <th><span class="h">Message</span></th>
         </tr>
       </thead>
       <tbody id="tbody"></tbody>
@@ -410,7 +406,10 @@ if (IS_MAC && ALV.prefs.get('material') === 'glass') postGlassMode(true).catch((
 
 // ── Constants ──
 const LEVELS     = ['VERBOSE','DEBUG','INFO','WARN','ERROR','ASSERT'];
-const LEVEL_CHAR = {VERBOSE:'V',DEBUG:'D',INFO:'I',WARN:'W',ERROR:'E',ASSERT:'A'};
+// The letter a row and a level toggle show. ASSERT reads F (spec D8, "Fatal / Assert"); the exports keep their
+// own 'A' (doExport's LVL, TXT_LEVEL_MAP), so files round-trip unchanged.
+const LEVEL_CHAR = {VERBOSE:'V',DEBUG:'D',INFO:'I',WARN:'W',ERROR:'E',ASSERT:'F'};
+const { rowClass, timeOf } = ALV.gridPure;   // the row's class and its time cell (assets/js/grid.js)
 const enabledLevels   = new Set(LEVELS);
 const enabledPlatforms = new Set(['android','ios']);
 
@@ -802,14 +801,14 @@ document.getElementById('logTable').addEventListener('click', e => {
   const tbody = tr.parentElement;
   if (s.sel === tr._message) {
     s.sel = null;
-    tr.classList.remove('selected');
+    tr.removeAttribute('aria-selected');
     return;
   }
-  // Clear any previously-selected row in the DOM.
-  const prev = tbody.querySelector('tr.selected');
-  if (prev) prev.classList.remove('selected');
+  // Clear any previously-selected row in the DOM (one per session until P9's multi-select).
+  const prev = tbody.querySelector('tr[aria-selected="true"]');
+  if (prev) prev.removeAttribute('aria-selected');
   s.sel = tr._message;
-  tr.classList.add('selected');
+  tr.setAttribute('aria-selected', 'true');
   // Stop auto-scroll so the view stays put around the selection.
   if (s.follow) {
     s.follow = false;
@@ -1901,52 +1900,49 @@ function buildMessageNodes(s, q) {
   return frag;
 }
 
+// One log row (spec "Log grid"): seven cells in the D14 order. The level and the platform are the row's class
+// (tint, stripe, letter colour and the platform badge, which is grid.css's td.c-plat::before), so a row is 14 nodes
+// where it was 17. No per-row tabindex, title, transition or layout read: this runs for every row the drain renders.
 function buildRow(m, isNew) {
-  const lc = LEVEL_CHAR[m.lvl] || 'V';
   const tr = document.createElement('tr');
-  tr.className = lc + (isNew ? ' new-row' : '') + (m === cur.sel ? ' selected' : '');
+  tr.className = rowClass(m.lvl, m.platform) + (isNew ? ' is-new' : '');
+  if (m === cur.sel) tr.setAttribute('aria-selected', 'true');
   tr._message = m; // keep reference so click handler + scroll-to-selection work after re-render
 
-  // Platform cell — static badge, no log-derived content.
+  // Platform cell: the badge is CSS, so the cell holds nothing.
   const platTd = document.createElement('td');
-  platTd.className = 'plat-cell';
-  const platSpan = document.createElement('span');
-  platSpan.className = m.platform === 'ios' ? 'plat-badge ios' : 'plat-badge android';
-  platSpan.textContent = m.platform === 'ios' ? 'i' : 'A';
-  platTd.appendChild(platSpan);
+  platTd.className = 'c-plat';
   tr.appendChild(platTd);
 
   // All log-derived fields below use textContent — XSS-safe even if the
   // device emits markup (e.g. a rooted Android shell or `adb shell log`).
   const tsTd = document.createElement('td');
-  tsTd.className = 'ts';
-  tsTd.textContent = m.ts == null ? '' : String(m.ts);
+  tsTd.className = 'c-ts';
+  tsTd.textContent = timeOf(m.ts);
   tr.appendChild(tsTd);
 
-  const pidTd = document.createElement('td');
-  pidTd.className = 'pid';
-  pidTd.textContent = String(m.pid) + (m.tid ? '-' + String(m.tid) : '');
-  tr.appendChild(pidTd);
+  const lvlTd = document.createElement('td');
+  lvlTd.className = 'c-lvl';
+  lvlTd.textContent = LEVEL_CHAR[m.lvl] || 'V';
+  tr.appendChild(lvlTd);
 
   const tagTd = document.createElement('td');
-  tagTd.className = 'tag';
+  tagTd.className = 'c-tag';
   tagTd.textContent = m.tag == null ? '' : String(m.tag);
   tr.appendChild(tagTd);
 
   const appTd = document.createElement('td');
-  appTd.className = 'lg-app';
+  appTd.className = 'c-app';
   appTd.textContent = m.app == null ? '' : String(m.app);
   tr.appendChild(appTd);
 
-  const lvlTd = document.createElement('td');
-  const lvlSpan = document.createElement('span');
-  lvlSpan.className = 'lvl-badge';
-  lvlSpan.textContent = lc;
-  lvlTd.appendChild(lvlSpan);
-  tr.appendChild(lvlTd);
+  const pidTd = document.createElement('td');
+  pidTd.className = 'c-pid';
+  pidTd.textContent = String(m.pid) + (m.tid ? '-' + String(m.tid) : '');
+  tr.appendChild(pidTd);
 
   const msgTd = document.createElement('td');
-  msgTd.className = 'lg-msg';
+  msgTd.className = 'c-msg';
   msgTd.appendChild(buildMessageNodes(m.msg, currentSearch));
   tr.appendChild(msgTd);
 

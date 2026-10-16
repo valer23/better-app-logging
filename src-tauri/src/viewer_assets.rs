@@ -28,6 +28,7 @@ macro_rules! embed {
 pub static FILES: &[(&str, &[u8])] = embed![
     "css/base.css",
     "css/foundation.css",
+    "css/grid.css",
     "css/legacy.css",
     "css/shell.css",
     "fonts/OFL-atkinson-hyperlegible-mono.txt",

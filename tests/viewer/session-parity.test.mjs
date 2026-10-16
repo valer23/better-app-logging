@@ -461,15 +461,16 @@ test('File tab: the line count and Export cover only the file; Live keeps its ow
 
 // Change 4: each tab keeps its own selection and Follow. The delegated row click on #logTable reads the
 // shown session (_load.mjs records the listeners the page registers), so a click on File cannot touch Live.
+// P5a: the selection is the row's aria-selected (the grid's state), not a class. Returns the row's attributes.
 function clickRow(v, message) {
-  const rowClass = new Set();
+  const attrs = new Map();
   const tr = {
     _message: message,
     parentElement: { querySelector: () => null },
-    classList: { add: c => rowClass.add(c), remove: c => rowClass.delete(c) },
+    setAttribute: (k, val) => attrs.set(k, String(val)), removeAttribute: k => attrs.delete(k),
   };
   for (const fn of v.doc.listeners.get('logTable:click')) fn({ target: { closest: () => tr }, detail: 1 });
-  return rowClass;
+  return attrs;
 }
 
 test('a row click on File selects in the file session and leaves live Follow and selection alone', () => {
@@ -479,11 +480,11 @@ test('a row click on File selects in the file session and leaves live Follow and
   v.go('toFile');
   v.api.handleFile({ text: fileText(4) });
   const msg = v.run('fileSession.all[1]');
-  assert.ok(clickRow(v, msg).has('selected'));
+  assert.equal(clickRow(v, msg).get('aria-selected'), 'true');
   assert.equal(v.run('fileSession.sel === fileSession.all[1]'), true);
   assert.equal(v.run('liveSession.sel'), null);
   assert.equal(v.run('liveSession.follow'), true, 'the click stopped no live auto-scroll');
-  assert.equal(clickRow(v, msg).has('selected'), false, 'a second click deselects');
+  assert.equal(clickRow(v, msg).has('aria-selected'), false, 'a second click deselects');
   assert.equal(v.run('fileSession.sel'), null);
 });
 
