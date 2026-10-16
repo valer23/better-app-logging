@@ -1,7 +1,7 @@
 // The log grid (roadmap P5): ALV.gridPure in an empty vm context, and the DOM side (createGrid) on the fake page.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadPureModules, pageScriptSrcs, loadLegacy, stickyDocument } from './_load.mjs';
+import { loadPureModules, pageScriptSrcs, loadLegacy, stickyDocument, read, HTML_PATH } from './_load.mjs';
 import { fakePage, mount } from './_fake.mjs';
 
 const G = loadPureModules('shell.js', 'grid.js').gridPure;
@@ -110,9 +110,16 @@ test('buildRow: log text stays text (XSS), and no row of any shape exceeds 14 no
 });
 
 // ---- createGrid on the fake page, with the page's #logWrapper mounted ----
-function gridPage() {
+// The fake mount drops text between tags; `headerText` puts back the header texts the page's markup carries.
+function gridPage({ headerText = false } = {}) {
   const p = fakePage({ files: ['prefs.js', 'dom.js', 'keys.js', 'ui.js', 'shell.js', 'grid.js'] });
   mount(p, 'logWrapper');
+  if (headerText) {
+    const texts = [...read(HTML_PATH).match(/<tr id="headerRow">[\s\S]*?<\/tr>/)[0].matchAll(/<span class="h">([^<]*)<\/span>/g)].map(m => m[1]);
+    const hs = p.byId.headerRow.children.map(th => th.children.find(c => c.className === 'h')).filter(Boolean);
+    assert.equal(hs.length, texts.length);
+    hs.forEach((h, i) => { h.textContent = texts[i]; });
+  }
   const grid = p.ALV.createGrid({ doc: p.doc, dom: p.dom });
   const ths = p.byId.headerRow.children;
   const cols = p.byId.colgroup.children;
@@ -134,6 +141,17 @@ test('resize handles: one separator per boundary after Time, Lvl, Tag, App / Dev
     assert.deepEqual([s.className, s.attrs.tabindex, s.attrs['aria-orientation'], s.attrs['aria-valuemin'], s.attrs['aria-valuemax']],
       ['col-sep', '0', 'vertical', '40', '400']);
   }
+});
+
+test('resize handles: a header cell that hosts a separator keeps its own name, not the handle label', () => {
+  const { ths, seps } = gridPage({ headerText: true });
+  const hosts = seps.map(s => s.parent);
+  assert.deepEqual(hosts.map(h => h.attrs['aria-label']), ['Lvl', 'Tag', 'App / Device', 'PID–TID', 'Message']);
+  for (const h of hosts) {
+    const text = h.children.find(c => c.className === 'h').textContent;
+    assert.equal(h.attrs['aria-label'], text, 'the explicit name equals the visible header text');
+  }
+  assert.equal(ths[0].attrs['aria-label'], 'Platform', 'a name the markup already gives is kept');
 });
 
 test('resize handles: focus reports the width; ←/→ 8 px, ⇧ 32 px, clamped to 40–400; Enter and Home reset; modified keys pass', () => {

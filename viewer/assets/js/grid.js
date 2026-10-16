@@ -92,7 +92,14 @@
         sep.addEventListener('pointerup', up);
         sep.addEventListener('pointercancel', up);
       });
-      ths[i + 1].appendChild(sep);
+      // A columnheader is named from its content, and that would include the separator's aria-label ("Lvl Resize Time
+      // column", read for every cell). Name the host from its visible text first; a name the markup gives is kept.
+      const host = ths[i + 1];
+      if (host.getAttribute('aria-label') === null) {
+        const h = host.querySelector('.h');
+        host.setAttribute('aria-label', (h || host).textContent.trim());
+      }
+      host.appendChild(sep);
     }
     return {};
   }
