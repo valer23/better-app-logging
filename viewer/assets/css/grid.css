@@ -19,7 +19,10 @@
     min-width: calc(max(18px, var(--log-fs) * 1.3) + 85ch + 114px);
     font: 400 var(--log-fs)/var(--row-k) var(--font-log); color: var(--text); background: var(--bg);
   }
-  .lgrid:focus-visible { outline-offset: -2px; }
+  /* The grid's focus ring is on #logWrapper (below), a box that does not scroll: this table is up to 6 000 rows tall and
+     can be wider than its scroller, so an outline on it has its edges off screen. grid.js sets .grid-focus. */
+  .lgrid:focus-visible { outline: none; }
+  #logWrapper.grid-focus::after { content: ""; position: absolute; inset: 0; z-index: 3; pointer-events: none; box-shadow: inset 0 0 0 2px var(--ring); }
 
   /* Columns (spec D14): content width in ch plus the cell's 12 px of padding. The spec's bare 13ch for Time clips
      "15:54:26.290" by a few pixels at every size, so the padding is added instead, plus 2 px of slack on Time and PID–TID (the only columns whose text must not be cut:
@@ -91,6 +94,7 @@
 
   /* Windows High Contrast drops backgrounds and shadows: selection becomes an outline, the stripe a border. */
   @media (forced-colors: active) {
+    #logWrapper.grid-focus::after { box-shadow: none; outline: 2px solid Highlight; outline-offset: -2px; }
     .lgrid > tbody > tr[aria-selected="true"] { outline: 2px solid Highlight; outline-offset: -2px; }
     .lgrid > tbody > tr.l-w > td.c-plat, .lgrid > tbody > tr.l-e > td.c-plat, .lgrid > tbody > tr.l-f > td.c-plat { box-shadow: none; border-left: 3px solid CanvasText; }
   }

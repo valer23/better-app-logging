@@ -110,6 +110,20 @@
       host.appendChild(sep);
     }
 
+    // ---- The focus ring (spec: 2 px --ring, inset, visible inside scroll regions). The table is up to 6 000 rows tall
+    // and can be wider than its scroller, so a ring on it has its edges off screen; #logWrapper does not scroll, and
+    // grid.css paints the ring on its ::after while it has this class. Read on focus, blur and a key (Chromium may
+    // start matching :focus-visible on a table focused by a press when a key follows) and on every tick, so a grid that
+    // was hidden while focused keeps no stale ring. A write only when it changed. ----
+    const wrapper = $('logWrapper');
+    const ring = () => {
+      const on = table.matches(':focus-visible');
+      if (wrapper.classList.contains('grid-focus') !== on) wrapper.classList.toggle('grid-focus', on);
+    };
+    table.addEventListener('focus', ring);
+    table.addEventListener('blur', () => wrapper.classList.remove('grid-focus'));
+    table.addEventListener('keydown', ring);
+
     // ---- The full timestamp, with its date, as the time cell's title: set on the first hover, never in buildRow. ----
     scroller.addEventListener('pointerover', e => {
       const td = e.target && e.target.closest ? e.target.closest('td') : null;
@@ -122,6 +136,7 @@
     // shell's tick (twice a second), never from the drain, and only when it changed. ----
     function sync() {
       setAttr(table, 'aria-rowcount', String(state().cur.filtered.length + 1));
+      ring();
     }
     shell.onTick(sync);
     return { sync };

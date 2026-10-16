@@ -865,6 +865,19 @@ test('log grid: the log column never sizes to its content (P4a must-keep) and th
   assert.equal(findById(root, 'logWrapper').attrs.class, undefined, 'the grid left the legacy scope (.lg-scope)');
 });
 
+test('log grid: the focus ring is drawn on #logWrapper (it does not scroll), not on the table', () => {
+  assert.equal(gridDecl('.lgrid:focus-visible', 'outline'), 'none', 'the table\'s own ring would sit outside what is on screen');
+  assert.equal(gridDecl('.lgrid:focus-visible', 'outline-offset'), undefined);
+  const decls = sel => Object.fromEntries(gridCss().filter(r => r.selectors.includes(sel) && !r.atRules.some(a => /^@media/.test(a))).flatMap(r => C.declarations(r.body)).map(d => [d.prop, d.value]));
+  const ring = decls('#logWrapper.grid-focus::after');
+  assert.deepEqual([ring.content, ring.position, ring.inset, ring['pointer-events'], ring['box-shadow']],
+    ['""', 'absolute', '0', 'none', 'inset 0 0 0 2px var(--ring)'], 'spec: 2 px --ring, inset');
+  assert.ok(Number(ring['z-index']) > 2, 'over the sticky header (z-index 2) and under the newer pill (6)');
+  assert.ok(Number(ring['z-index']) < 6);
+  const hc = gridCss().find(r => r.selectors.includes('#logWrapper.grid-focus::after') && r.atRules.some(a => /^@media \(forced-colors: active\)/.test(a)));
+  assert.ok(hc && C.declarations(hc.body).some(d => d.prop === 'outline' && /Highlight/.test(d.value)), 'forced colours drop box-shadow: an outline');
+});
+
 test('log grid: the legacy table rules are gone from legacy.css, and no stylesheet keys on [aria-rowcount]', () => {
   const legacy = C.cssRules(read(path.join(ASSETS, 'css', 'legacy.css'))).flatMap(r => r.selectors);
   const stale = legacy.filter(s => /(^|[\s>(])(table|thead|tbody|td|th|mark)\b|plat-badge|lvl-badge|col-resize-handle|new-row|plat-cell|lg-msg|lg-app|#logWrapper|\.(ts|pid|tag)(?![\w-])/.test(s));

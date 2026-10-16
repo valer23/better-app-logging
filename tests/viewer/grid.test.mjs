@@ -244,6 +244,32 @@ test('aria-rowcount: filtered lines plus the header row, written on sync and on 
   assert.deepEqual([t.attrs['aria-rowcount'], writes], ['1', 2]);
 });
 
+// The ring is drawn on #logWrapper (grid.css), a box that does not scroll: on the table itself it spans up to 6 000 rows
+// and the full width of the scrolled table, so its edges are off screen.
+test('the focus ring: #logWrapper carries grid-focus while the table is focus-visible, and only then', () => {
+  const { p, ticks } = gridPage();
+  const t = p.byId.logTableEl;
+  const wrap = p.byId.logWrapper;
+  const fire = type => { for (const fn of t.listeners[type] || []) fn({}); };
+  const on = () => wrap.classList.contains('grid-focus');
+  assert.equal(on(), false);
+  p.setFocusVisible(true);
+  fire('focus');
+  assert.equal(on(), true, 'Tab into the grid');
+  fire('blur');
+  assert.equal(on(), false, 'Tab out of it');
+  p.setFocusVisible(false);
+  fire('focus');
+  assert.equal(on(), false, 'a mouse press focuses the table without :focus-visible: no ring');
+  p.setFocusVisible(true);
+  fire('keydown');
+  assert.equal(on(), true, 'a key pressed after that press shows it');
+  p.setFocusVisible(false);
+  ticks[0]();
+  assert.equal(on(), false, 'a hidden or detached grid cannot keep a stale ring: the shell tick re-reads it');
+  assert.equal(wrap.className, '', 'the class is the only thing written');
+});
+
 test('the time cell gets the full timestamp (with its date) as a title on its first hover, never before', () => {
   const { p } = gridPage();
   const tr = p.doc.createElement('tr');
