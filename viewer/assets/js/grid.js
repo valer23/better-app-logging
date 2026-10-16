@@ -1,6 +1,8 @@
 /* The log grid (roadmap P5; spec "Log grid", "Accessibility requirements"). Classic script, loaded after
    live.js. ALV.gridPure is pure (the tests run it in an empty vm context): the time cell, the row classes and
-   the column resize steps. buildRow (legacy script) builds the rows with them. */
+   the column resize steps. buildRow (legacy script) builds the rows with them. ALV.createGrid wires the grid's
+   header to the page; the legacy script calls it once, right after createLive. Nothing here runs per row or per
+   flush. */
 (function (g) {
   'use strict';
 
@@ -41,6 +43,61 @@
     return null;
   }
 
+  // ---- DOM ----
+
+  // createGrid({ doc, dom }) → {}. Adds a resize separator on each RESIZABLE boundary of #headerRow.
+  function createGrid({ doc, dom }) {
+    const $ = id => doc.getElementById(id);
+    // ---- Column resize. Layout is read only on a user action (focus, a key, a press), never per flush. ----
+    const ths = Array.from($('headerRow').children);
+    const cols = Array.from($('colgroup').children);
+    for (const [key, label] of RESIZABLE) {
+      const i = ths.findIndex(th => th.getAttribute('data-col') === key);
+      if (i < 0 || !ths[i + 1]) continue;
+      const th = ths[i];
+      const col = cols[i];
+      // The handle sits on the boundary, in the NEXT header cell: each sticky th paints over the one before it,
+      // so a handle reaching right out of its own cell would be half covered.
+      const sep = dom.el('span', { class: 'col-sep', role: 'separator', tabindex: '0', 'aria-orientation': 'vertical',
+        'aria-label': `Resize ${label} column`, 'aria-valuemin': String(COL_MIN), 'aria-valuemax': String(COL_MAX) });
+      const width = () => Math.round(th.offsetWidth);
+      const show = () => sep.setAttribute('aria-valuenow', String(width()));
+      const set = px => { col.style.width = px === null ? '' : `${clampCol(px)}px`; show(); };
+      sep.addEventListener('focus', show);
+      sep.addEventListener('keydown', e => {
+        if (e.metaKey || e.ctrlKey || e.altKey) return;
+        const step = resizeKey(e.key, e.shiftKey);
+        if (step === null) return;
+        e.preventDefault();   // the shortcut registry skips a handled key: Home here never jumps the stream (P5b)
+        set(step === 'reset' ? null : width() + step);
+      });
+      sep.addEventListener('pointerdown', e => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        const x0 = e.clientX;
+        const w0 = width();
+        if (sep.setPointerCapture) sep.setPointerCapture(e.pointerId);
+        sep.setAttribute('data-drag', '');
+        // A move only writes the width: reading it back (show()) would lay out the whole table, up to 6 000 rows, on
+        // every pointermove, and WKWebView can deliver several a frame. The value is read once, on release.
+        const move = ev => { col.style.width = `${clampCol(w0 + ev.clientX - x0)}px`; };
+        const up = () => {
+          sep.removeEventListener('pointermove', move);
+          sep.removeEventListener('pointerup', up);
+          sep.removeEventListener('pointercancel', up);
+          sep.removeAttribute('data-drag');
+          show();
+        };
+        sep.addEventListener('pointermove', move);
+        sep.addEventListener('pointerup', up);
+        sep.addEventListener('pointercancel', up);
+      });
+      ths[i + 1].appendChild(sep);
+    }
+    return {};
+  }
+
   const ALV = g.ALV || (g.ALV = {});
   ALV.gridPure = Object.freeze({ timeOf, rowClass, ROW_CLASS, LEVEL_CLASS: Object.freeze(LEVEL_CLASS), RESIZABLE, COL_MIN, COL_MAX, clampCol, resizeKey });
+  ALV.createGrid = createGrid;
 })(typeof window !== 'undefined' ? window : globalThis);

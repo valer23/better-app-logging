@@ -428,6 +428,7 @@ function offscreen(s) { return s !== cur || document.hidden; }
 let wsAndroid = null, wsIos = null;
 let shell = null;   // the app shell (ALV.createShell, assets/js/shell.js), created before the first selectSession
 let liveUi = null;  // the toolbar and status bar (ALV.createLive, assets/js/live.js), created right after it
+let grid = null;    // the log grid's header and ARIA (ALV.createGrid, assets/js/grid.js), created right after that
 // What the sidebar device rows show (shellState): log lines received per platform (the rate meter, and what
 // ends a stall), the last setStatus per platform, the device the picker holds, and whether the iOS driver
 // check failed (Windows).
@@ -747,26 +748,6 @@ function showOnly(id) {
   });
 }
 
-// ── Column resize ──
-function initResizeHandles() {
-  const ths = document.querySelectorAll('#headerRow th');
-  const cols = document.querySelectorAll('#colgroup col');
-  ths.forEach((th, i) => {
-    if (i === ths.length - 1) return;
-    // NOTE: do NOT set `th.style.position = 'relative'` — it overrides CSS
-    // `position: sticky`. Sticky already establishes a positioning context
-    // for the absolute-positioned `.col-resize-handle` child.
-    const h = document.createElement('div'); h.className = 'col-resize-handle'; th.appendChild(h);
-    let startX, startW;
-    h.addEventListener('mousedown', e => {
-      e.preventDefault(); startX = e.clientX; startW = th.offsetWidth; h.classList.add('dragging');
-      document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none';
-      const move = e => { cols[i].style.width = Math.max(20, startW + e.clientX - startX) + 'px'; };
-      const up = () => { h.classList.remove('dragging'); document.body.style.cursor = document.body.style.userSelect = ''; document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
-      document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
-    });
-  });
-}
 // ── Log-table zoom ──
 // Scales only the log table via --log-fs (written on <html> by ALV.prefs: 10–20 px, default 13,
 // persisted); chrome stays at its own size so the controls remain usable on small laptops.
@@ -785,8 +766,6 @@ window.addEventListener('keydown', (e) => {
   else if (e.key === '-' || e.key === '_') { e.preventDefault(); setLogZoom(-1); }
   else if (e.key === '0')                  { e.preventDefault(); setLogZoom(0);  }
 });
-
-initResizeHandles();
 
 // Row selection — click toggles selection, persists across filter changes
 // (handler in applyFilters scrolls the selected row back into view). Delegated from #logTable:
@@ -824,6 +803,7 @@ shell = ALV.createShell({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, 
     repair: () => iosRepairFromHeader(), setup: p => showSetup(p) } });
 liveUi = ALV.createLive({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, keys: ALV.keys, prefs: ALV.prefs, shell, state: shellState,
   actions: { togglePause, toggleAutoScroll, clear: clearLogs, zoom: setLogZoom, openFile: openLogFile, setGlass, togglePlatform } });
+grid = ALV.createGrid({ doc: document, dom: ALV.dom });
 function shellState() {
   return {
     cur, sessions: [liveSession, fileSession],

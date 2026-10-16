@@ -870,3 +870,10 @@ test('buildRow sets no per-row tabindex, title, role or inline style, and grid.c
   assert.match(fn, /tr\.className = rowClass\(m\.lvl, m\.platform\)/, 'one className write carries level and platform');
   assert.ok(!gridCss().some(r => C.declarations(r.body).some(d => /^(transition|animation)/.test(d.prop))), 'no transition on rows (spec: none per row)');
 });
+
+test('column resize lives in grid.js: the legacy initResizeHandles and its .col-resize-handle are gone', () => {
+  const code = inlineScripts(html).at(-1).code;
+  assert.doesNotMatch(code, /initResizeHandles|col-resize-handle/);
+  assert.match(code, /\ngrid = ALV\.createGrid\(\{/, 'the page creates the grid once, after the toolbar and status bar');
+  assert.ok(gridCss().some(r => r.selectors.includes('.lgrid > thead > tr > th > .col-sep') && C.declarations(r.body).some(d => d.prop === 'width' && d.value === '24px')), 'a 24 px hit area (spec)');
+});

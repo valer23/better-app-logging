@@ -41,6 +41,12 @@
     font: 600 var(--ui-fs-xs)/1 var(--font-ui); letter-spacing: .04em; text-transform: uppercase; color: var(--text-2);
   }
   .lgrid > thead > tr > th > .h { display: block; overflow: hidden; text-overflow: ellipsis; }
+  /* Column resize separators (grid.js): a 24 px hit area centred on the boundary, inside the next header cell; a
+     1 px --border line on hover, keyboard focus or drag (spec "Log grid"). */
+  .lgrid > thead > tr > th > .col-sep { position: absolute; top: 0; bottom: 0; left: -12px; width: 24px; cursor: col-resize; touch-action: none; }
+  .lgrid > thead > tr > th > .col-sep::after { content: ""; position: absolute; top: 6px; bottom: 6px; left: 11px; width: 1px; }
+  .lgrid > thead > tr > th > .col-sep:hover::after, .lgrid > thead > tr > th > .col-sep:focus-visible::after, .lgrid > thead > tr > th > .col-sep[data-drag]::after { background: var(--border); }
+  .lgrid > thead > tr > th > .col-sep:focus-visible { outline-offset: -2px; }
 
   /* Rows: one line each, cut with an ellipsis. Time, App / Device and PID–TID are meta; the message is --text
      (spec D15: whole-line colour is opt-in, P14). */

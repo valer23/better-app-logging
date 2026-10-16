@@ -2,6 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadPureModules, pageScriptSrcs, loadLegacy, stickyDocument } from './_load.mjs';
+import { fakePage, mount } from './_fake.mjs';
 
 const G = loadPureModules('shell.js', 'grid.js').gridPure;
 
@@ -106,4 +107,87 @@ test('buildRow: log text stays text (XSS), and no row of any shape exceeds 14 no
     assert.ok(k.count(tr) <= 14, `row ${i}: ${k.count(tr)} nodes`);
     assert.match(tr.className, /^l-[vdiwef] p-[ai]$/);
   }
+});
+
+// ---- createGrid on the fake page, with the page's #logWrapper mounted ----
+function gridPage() {
+  const p = fakePage({ files: ['prefs.js', 'dom.js', 'keys.js', 'ui.js', 'shell.js', 'grid.js'] });
+  mount(p, 'logWrapper');
+  const grid = p.ALV.createGrid({ doc: p.doc, dom: p.dom });
+  const ths = p.byId.headerRow.children;
+  const cols = p.byId.colgroup.children;
+  const seps = ths.flatMap(th => th.children.filter(c => c.attrs.role === 'separator'));
+  const key = (sep, k, o = {}) => {
+    const ev = { key: k, shiftKey: false, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, ...o };
+    for (const fn of sep.listeners.keydown || []) fn(ev);
+    return ev;
+  };
+  return { p, grid, ths, cols, seps, key };
+}
+
+test('resize handles: one separator per boundary after Time, Lvl, Tag, App / Device and PID–TID, inside the next header cell', () => {
+  const { ths, seps } = gridPage();
+  assert.deepEqual(seps.map(s => s.attrs['aria-label']),
+    ['Resize Time column', 'Resize Lvl column', 'Resize Tag column', 'Resize App / Device column', 'Resize PID–TID column']);
+  assert.deepEqual(seps.map(s => ths.indexOf(s.parent)), [2, 3, 4, 5, 6], 'the handle of column n sits in header cell n + 1');
+  for (const s of seps) {
+    assert.deepEqual([s.className, s.attrs.tabindex, s.attrs['aria-orientation'], s.attrs['aria-valuemin'], s.attrs['aria-valuemax']],
+      ['col-sep', '0', 'vertical', '40', '400']);
+  }
+});
+
+test('resize handles: focus reports the width; ←/→ 8 px, ⇧ 32 px, clamped to 40–400; Enter and Home reset; modified keys pass', () => {
+  const { ths, cols, seps, key } = gridPage();
+  const tag = seps[2];
+  const th = ths[3];
+  th.offsetWidth = 150;
+  for (const fn of tag.listeners.focus) fn({});
+  assert.equal(tag.attrs['aria-valuenow'], '150', 'read on focus (a user action), never per flush');
+  assert.equal(key(tag, 'ArrowRight').defaultPrevented, true);
+  assert.equal(cols[3].style.width, '158px');
+  key(tag, 'ArrowLeft', { shiftKey: true });
+  assert.equal(cols[3].style.width, '118px');
+  th.offsetWidth = 395;
+  key(tag, 'ArrowRight', { shiftKey: true });
+  assert.equal(cols[3].style.width, '400px');
+  th.offsetWidth = 45;
+  key(tag, 'ArrowLeft', { shiftKey: true });
+  assert.deepEqual([cols[3].style.width, tag.attrs['aria-valuenow']], ['40px', '45'], 'aria-valuenow is the width the cell now has');
+  assert.equal(key(tag, 'Home').defaultPrevented, true);
+  assert.equal(cols[3].style.width, '', 'Home resets to the ch default in grid.css');
+  key(tag, 'ArrowRight');
+  key(tag, 'Enter');
+  assert.equal(cols[3].style.width, '', 'so does Enter');
+  for (const o of [{ metaKey: true }, { ctrlKey: true }, { altKey: true }]) assert.equal(key(tag, 'ArrowRight', o).defaultPrevented, false, JSON.stringify(o));
+  assert.equal(key(tag, 'End').defaultPrevented, false, 'End is not a resize key');
+});
+
+test('resize handles: Home on a handle never reaches the shortcut registry (P5b binds Home to the oldest line)', () => {
+  const { p, seps, key } = gridPage();
+  let ran = 0;
+  p.keys.register({ id: 'test.home', keys: 'Home', run: () => { ran++; } });
+  const ev = key(seps[0], 'Home');
+  assert.equal(p.keys.dispatch(ev, seps[0]), null, 'the handle handled it (defaultPrevented)');
+  assert.equal(p.keys.dispatch({ key: 'Home', preventDefault() {} }, seps[0]), null, 'and a separator owns its keys anyway');
+  assert.equal(ran, 0);
+});
+
+test('resize handles: a drag sets the width from the press, clamped, and ends cleanly on release', () => {
+  const { ths, cols, seps } = gridPage();
+  const ts = seps[0];
+  ths[1].offsetWidth = 106;
+  ts.fire('pointerdown', { button: 0, clientX: 300, pointerId: 1 });
+  assert.equal(ts.getAttribute('data-drag'), '');
+  ts.fire('pointermove', { clientX: 344 });
+  assert.equal(cols[1].style.width, '150px');
+  assert.equal(ts.getAttribute('aria-valuenow'), null, 'a move only writes the width: no layout read per pointermove');
+  ts.fire('pointermove', { clientX: 0 });
+  assert.equal(cols[1].style.width, '40px');
+  ts.fire('pointerup', {});
+  assert.equal(ts.getAttribute('data-drag'), null);
+  assert.equal(ts.getAttribute('aria-valuenow'), '106', 'the value is read once, on release');
+  ts.fire('pointermove', { clientX: 500 });
+  assert.equal(cols[1].style.width, '40px', 'no listener left after the release');
+  ts.fire('pointerdown', { button: 2, clientX: 300 });
+  assert.equal(ts.getAttribute('data-drag'), null, 'a right press does not start a drag');
 });
