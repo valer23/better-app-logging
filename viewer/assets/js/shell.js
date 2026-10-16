@@ -181,19 +181,28 @@
     let wasCollapsed = rail();
     function syncSidebar() {
       const collapsed = rail();
-      if (collapsed !== wasCollapsed) { wasCollapsed = collapsed; for (const fn of sidebarFns) fn(collapsed); }
+      const flipped = collapsed !== wasCollapsed;
+      if (flipped) { wasCollapsed = collapsed; for (const fn of sidebarFns) fn(collapsed); }
       const label = collapsed ? 'Show sidebar' : 'Hide sidebar';
       setAttr(toggle, 'aria-label', label);
       setAttr(toggle, 'aria-expanded', String(!collapsed));
       if (toggleTip) toggleTip.setText(label);
-      if (!collapsed) return;
-      // Focus on something the rail hides (a row's Start/Stop or More, or its open menu) would be lost: it
-      // goes to the toggle (one element, never moved), and a row menu anchored to a hidden More closes.
+      if (!flipped) return;   // a theme or size change leaves an open row menu alone
+      // The flip moves every row's More (in the rail it sits under the badge; Start/Stop is its menu's first item and
+      // the row's own Start/Stop button is hidden there), so an open row menu, placed against the old layout, closes.
+      // Focus that was in it, or on a Start/Stop the rail hides, goes to that row's More; focus on another item the
+      // rail hides (a section head, Open log file…) goes to the toggle (one element, never moved).
       const f = doc.activeElement;
-      const inRowMenu = PLATFORMS.some(p => rows[p] && f && rows[p].surface.contains(f));
-      for (const p of PLATFORMS) if (rows[p]) rows[p].menu.close({ restoreFocus: false });
-      const hidden = f && $('sidebar') && $('sidebar').contains(f) && f.closest('[data-rail-hide], .side-sec-h, .dev-actions');
-      if (toggle && (inRowMenu || hidden)) toggle.focus();
+      let to = null;
+      for (const p of PLATFORMS) {
+        const r = rows[p];
+        if (!r) continue;
+        if (f && (r.surface.contains(f) || (collapsed && f === r.start))) to = r.more;
+        r.menu.close({ restoreFocus: false });
+      }
+      const hidden = collapsed && f && $('sidebar') && $('sidebar').contains(f) && f.closest('[data-rail-hide], .side-sec-h');
+      if (to) to.focus();
+      else if (toggle && hidden) toggle.focus();
     }
     prefs.onChange(syncSidebar);
     syncSidebar();
@@ -255,7 +264,7 @@
           dom.el('span', { class: 'dev-status' }, dom.el('span', { class: 'dev-dot', 'aria-hidden': 'true' }), r.status),
           r.drops));
       r.startIcon = dom.icon('play');
-      r.start = dom.el('button', { type: 'button', class: 'icon-btn sm', on: { click: () => { if (r.start.getAttribute('aria-disabled') !== 'true') act(p, 'stream'); } } }, r.startIcon);
+      r.start = dom.el('button', { type: 'button', class: 'icon-btn sm dev-start', on: { click: () => { if (r.start.getAttribute('aria-disabled') !== 'true') act(p, 'stream'); } } }, r.startIcon);
       r.more = dom.el('button', { type: 'button', class: 'icon-btn sm', 'aria-label': `More for ${name}` }, dom.icon('ellipsis'));
       r.li = dom.el('li', { class: 'dev-row', dataset: { platform: p } }, r.main, dom.el('span', { class: 'dev-actions' }, r.start, r.more));
       const item = (what, text) => dom.el('button', { type: 'button', class: 'menu-item', role: 'menuitem', tabindex: '-1', dataset: { act: what } }, text);
@@ -269,7 +278,8 @@
         onClose: () => r.li.removeAttribute('data-menu'),
       });
       r.startTip = ui.tooltip(r.start, { text: '' });
-      r.tips.push(r.startTip, ui.tooltip(r.more, { text: `More for ${name}` }), railTip(r.main, name));
+      // More stays in the rail (under the badge), so its tooltip moves to the right there, like the other rail items.
+      r.tips.push(r.startTip, ui.tooltip(r.more, { text: `More for ${name}`, side: sideOf }), railTip(r.main, name));
       return r;
     }
     // The old row goes: its menu and tooltips are destroyed, and focus that was in it (or in its open menu)

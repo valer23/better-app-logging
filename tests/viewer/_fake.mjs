@@ -42,6 +42,16 @@ export function fakePage({ files = ['dom.js', 'keys.js', 'ui.js'], platform = 'm
       focus() { focused = this; },
       click() { this.fire('click'); },
       get isConnected() { return true; },
+      // The few classList calls the page makes, over the className string.
+      get classList() {
+        const el = this, list = () => String(el.className).split(/\s+/).filter(Boolean);
+        return {
+          contains: c => list().includes(c),
+          add: c => { if (!list().includes(c)) el.className = [...list(), c].join(' '); },
+          remove: c => { el.className = list().filter(x => x !== c).join(' '); },
+          toggle(c, force) { const on = force === undefined ? !list().includes(c) : !!force; if (on) this.add(c); else this.remove(c); return on; },
+        };
+      },
     };
     return n;
   };
