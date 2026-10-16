@@ -69,15 +69,15 @@ function bandPage(tauri) {
   const p = fakePage({ files: SHELL_FILES, tauri: tauri && tauri.api });
   for (const id of ALV.shellPure.DRAG_BANDS) p.doc.body.appendChild(p.dom.el('div', { id }));
   const ctl = p.dom.el('button', { text: 'A+' });
-  p.byId.topbar.appendChild(ctl);
+  p.byId.toolbar.appendChild(ctl);
   p.ALV.createShell({ doc: p.doc, win: p.win, dom: p.dom });
   const move = (x, y) => p.win.listeners.mousemove.forEach(fn => fn({ clientX: x, clientY: y }));
   const up = () => p.win.listeners.mouseup.forEach(fn => fn({}));
   return { p, ctl, move, up };
 }
 
-test('drag bands: the sidebar header and the top bar; one window listener pair for both', () => {
-  assert.deepEqual([...ALV.shellPure.DRAG_BANDS], ['sidebarHeader', 'topbar']);
+test('drag bands: the sidebar header and the toolbar; one window listener pair for both', () => {
+  assert.deepEqual([...ALV.shellPure.DRAG_BANDS], ['sidebarHeader', 'toolbar']);
   const { p } = bandPage(fakeTauri());
   assert.deepEqual([p.win.listeners.mousemove.length, p.win.listeners.mouseup.length], [1, 1]);
   for (const id of ALV.shellPure.DRAG_BANDS) assert.deepEqual([p.byId[id].listeners.mousedown.length, p.byId[id].listeners.dblclick.length], [1, 1], id);
@@ -92,15 +92,15 @@ test('drag bands: a press on the background arms, 4 px of movement drags once; c
   move(104, 20);
   move(140, 20);
   assert.deepEqual(t.calls, ['drag'], 'startDragging once');
-  p.byId.topbar.fire('mousedown', { button: 0, detail: 1, clientX: 100, clientY: 20 });
+  p.byId.toolbar.fire('mousedown', { button: 0, detail: 1, clientX: 100, clientY: 20 });
   up();
   move(200, 20);
   assert.deepEqual(t.calls, ['drag'], 'mouseup disarms');
   ctl.fire('mousedown', { button: 0, detail: 1, clientX: 100, clientY: 20 });
   move(200, 20);
-  p.byId.topbar.fire('mousedown', { button: 2, detail: 1, clientX: 100, clientY: 20 });
+  p.byId.toolbar.fire('mousedown', { button: 2, detail: 1, clientX: 100, clientY: 20 });
   move(200, 20);
-  p.byId.topbar.fire('mousedown', { button: 0, detail: 2, clientX: 100, clientY: 20 });
+  p.byId.toolbar.fire('mousedown', { button: 0, detail: 2, clientX: 100, clientY: 20 });
   move(200, 20);
   assert.deepEqual(t.calls, ['drag'], 'not from a control, a right button or a double-click');
 });
@@ -113,10 +113,32 @@ test('drag bands: a double-click on the background toggles maximise, on a contro
   assert.deepEqual(t.calls, ['max']);
   const bare = bandPage(null);
   assert.doesNotThrow(() => {
-    bare.p.byId.topbar.fire('mousedown', { button: 0, detail: 1, clientX: 0, clientY: 0 });
+    bare.p.byId.toolbar.fire('mousedown', { button: 0, detail: 1, clientX: 0, clientY: 0 });
     bare.move(50, 50);
-    bare.p.byId.topbar.fire('dblclick', {});
+    bare.p.byId.toolbar.fire('dblclick', {});
   });
+});
+
+// A double-click is counted by the OS by time and position, not by DOM node: pressing the sidebar toggle twice
+// changes the layout on the first click (248 px sidebar <-> 52 px rail), so the second press lands on whatever
+// is under the pointer now (the toolbar's background, or the sidebar header's title) and the dblclick goes there.
+test('drag bands: a double-click whose first press was on a control never maximises, even when the second press lands on a background (review F2)', () => {
+  const t = fakeTauri();
+  const { p, ctl } = bandPage(t);
+  ctl.fire('mousedown', { button: 0, detail: 1, clientX: 225, clientY: 26 });
+  p.byId.toolbar.fire('mousedown', { button: 0, detail: 2, clientX: 225, clientY: 26 });   // the layout moved: now over the toolbar background
+  p.byId.toolbar.fire('dblclick', {});
+  assert.deepEqual(t.calls, [], 'the first press was on a control: not a window double-click');
+  // The other direction: the toolbar control is pressed, the second press lands in the sidebar header band.
+  ctl.fire('mousedown', { button: 0, detail: 1, clientX: 26, clientY: 26 });
+  p.byId.sidebarHeader.fire('mousedown', { button: 0, detail: 2, clientX: 26, clientY: 26 });
+  p.byId.sidebarHeader.fire('dblclick', {});
+  assert.deepEqual(t.calls, [], 'the guard is shared by both bands');
+  // A new sequence on the background is a window double-click again.
+  p.byId.toolbar.fire('mousedown', { button: 0, detail: 1, clientX: 400, clientY: 26 });
+  p.byId.toolbar.fire('mousedown', { button: 0, detail: 2, clientX: 400, clientY: 26 });
+  p.byId.toolbar.fire('dblclick', {});
+  assert.deepEqual(t.calls, ['max']);
 });
 
 // ---- DOM side: the sidebar, built from the page's real markup (shellPage in _fake.mjs) ----
@@ -268,7 +290,7 @@ test('DEVICES: the toggle is named by the device alone; the status and drops lin
   const a = parts(row(p, 'android'));
   const labelledby = a.main.getAttribute('aria-labelledby');
   assert.equal(p.byId[labelledby].textContent, 'Pixel 8 Pro', 'the name span');
-  assert.deepEqual(a.main.getAttribute('aria-describedby').split(' '), [a.status.getAttribute('id'), a.drops.getAttribute('id')]);
+  assert.deepEqual(a.main.getAttribute('aria-describedby').split(' '), [a.status.getAttribute('id'), a.drops.getAttribute('id')], 'and nothing else: the rail tooltip repeats the name, so it is not a description (review F6)');
   assert.equal(p.byId[a.status.getAttribute('id')], a.status);
   assert.equal(p.byId[a.drops.getAttribute('id')], a.drops);
   state.status.android = { state: 'connecting', text: 'Connecting…' };
@@ -350,7 +372,7 @@ test('DEVICES: closeMenus() closes an open row menu without moving focus (a moda
 
 // ---- Footer: the theme cycle (⇧⌘L) and the Windows caption ----
 
-const tipOf = (p, btn) => p.byId[btn.getAttribute('aria-describedby')];
+const tipOf = (p, btn) => p.byId[btn.getAttribute('aria-describedby').split(' ').at(-1)];   // the tooltip is the last token
 
 test('theme button: icon, aria-label and tooltip per theme; a click and ⇧⌘L cycle Dark → Light → System', () => {
   const { p, prefs, $ } = shellPage();
@@ -410,4 +432,119 @@ test('footer: Settings and Keyboard shortcuts are aria-disabled until P14 and P1
   for (const [id, name] of [['settingsBtn', 'Settings'], ['shortcutsBtn', 'Keyboard shortcuts']]) {
     assert.deepEqual([$(id).getAttribute('aria-disabled'), $(id).getAttribute('aria-label'), texts(tipOf(p, $(id)))], ['true', name, name]);
   }
+});
+
+// ---- The collapsed rail (⌘B; spec Open item 5 for macOS) ----
+
+test('rail: the header toggle and ⌘B collapse and expand the sidebar through prefs; label, aria-expanded and tooltip follow', () => {
+  const { p, prefs, $ } = shellPage();
+  const t = $('sidebarToggle');
+  assert.deepEqual([t.getAttribute('aria-label'), t.getAttribute('aria-expanded'), t.getAttribute('aria-controls'), texts(tipOf(p, t))],
+    ['Hide sidebar', 'true', 'sidebarBody', 'Hide sidebar⌘B']);
+  p.focus(t);
+  t.click();
+  assert.deepEqual([prefs.get('sidebar'), t.getAttribute('aria-label'), t.getAttribute('aria-expanded'), texts(tipOf(p, t))],
+    ['collapsed', 'Show sidebar', 'false', 'Show sidebar⌘B']);
+  assert.equal(p.doc.activeElement, t, 'one toggle element, so focus never jumps');
+  assert.equal(p.keys.dispatch({ key: 'b', code: 'KeyB', metaKey: true, preventDefault() {} }, p.byId.filterbar), 'view.sidebar');
+  assert.equal(prefs.get('sidebar'), 'expanded');
+});
+
+test('rail: focus on an item the rail hides (or in a row menu) moves to the toggle and the menu closes; focus on a rail item stays', () => {
+  const { p, prefs, $ } = shellPage();
+  p.focus($('openFileBtn'));
+  prefs.set('sidebar', 'collapsed');
+  assert.equal(p.doc.activeElement, $('sidebarToggle'));
+  prefs.set('sidebar', 'expanded');
+  p.focus($('sessHead'));
+  prefs.set('sidebar', 'collapsed');
+  assert.equal(p.doc.activeElement, $('sidebarToggle'), 'section heads are not in the rail either');
+  prefs.set('sidebar', 'expanded');
+  p.focus($('sessLive'));
+  prefs.set('sidebar', 'collapsed');
+  assert.equal(p.doc.activeElement, $('sessLive'));
+  prefs.set('sidebar', 'expanded');
+  const a = parts(row(p, 'android'));
+  p.focus(a.start);
+  prefs.set('sidebar', 'collapsed');
+  assert.equal(p.doc.activeElement, $('sidebarToggle'), 'a row\'s Start/Stop and More are not in the rail');
+  prefs.set('sidebar', 'expanded');
+  a.more.click();
+  assert.equal(p.keys.escDepth(), 1, 'the row menu is open, focus in it');
+  prefs.set('sidebar', 'collapsed');
+  assert.deepEqual([a.more.getAttribute('aria-expanded'), p.keys.escDepth(), p.doc.activeElement], ['false', 0, $('sidebarToggle')],
+    'the menu anchored to the hidden More closes; its focus goes to the toggle');
+});
+
+// The rail tip repeats the item's name (its visually hidden label), so it is not wired to aria-describedby: a
+// hidden element a describedby points to still counts toward the description, and the expanded sidebar would
+// read every name twice ("Live session, button, Live session"; review F6). The tip is found by its text.
+const railTipFor = (p, text) => p.byId.ovTips.children.find(t => t.attrs.role === 'tooltip' && texts(t) === text);
+
+test('rail: nav items and device rows get a tooltip on the right, shown only while collapsed', () => {
+  const { p, prefs, $ } = shellPage({ st: { devices: { android: { id: 'a1', name: 'Pixel 8 Pro' }, ios: { id: '', name: '' } } } });
+  const live = $('sessLive');
+  const dev = parts(row(p, 'android')).main;
+  for (const [el, text] of [[live, 'Live session'], [dev, 'Pixel 8 Pro']]) {
+    el.fire('pointerenter', { pointerType: 'mouse' });
+    p.advance(400);
+    assert.equal(railTipFor(p, text).hidden, true, 'expanded: the label is visible, no tooltip');
+    el.fire('pointerleave');
+    p.advance(100);
+  }
+  prefs.set('sidebar', 'collapsed');
+  for (const [el, text] of [[live, 'Live session'], [dev, 'Pixel 8 Pro'], [$('cmdTrigger'), 'Search actions']]) {
+    const tip = railTipFor(p, text);
+    el.fire('pointerenter', { pointerType: 'mouse' });
+    p.advance(400);
+    assert.deepEqual([tip.hidden, texts(tip), tip.style.left], [false, text, '586px'], `${text}: to the right`);
+    el.fire('pointerleave');
+    p.advance(100);
+  }
+});
+
+test('rail: the rail tooltips are not descriptions, so the expanded sidebar reads each name once (review F6)', () => {
+  const { p, $ } = shellPage({ st: { devices: { android: { id: 'a1', name: 'Pixel 8 Pro' }, ios: { id: '', name: '' } } } });
+  const tipIds = new Set(p.byId.ovTips.children.map(t => t.attrs.id));
+  const described = el => (el.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean);
+  for (const el of [$('sessLive'), $('cmdTrigger'), parts(row(p, 'android')).main, parts(row(p, 'ios')).main]) {
+    assert.deepEqual(described(el).filter(id => tipIds.has(id)), [], `${el.getAttribute('id') || el.textContent}: no tooltip in its description`);
+  }
+  assert.equal($('sessLive').getAttribute('aria-describedby'), null);
+  assert.deepEqual(described($('themeBtn')).filter(id => tipIds.has(id)).length, 1, 'a tooltip that adds information (the theme\'s) still describes its button');
+});
+
+// One rule for every sidebar-owned tooltip: expanded, it sits below its trigger (never beside it: in the
+// footer row a right tip would cover the next button, and a tip is hoverable); collapsed, it sits to the right
+// (spec). The toggle carries aria-expanded as a disclosure, so it must show in both states.
+test('tooltips: the toggle and the footer buttons show in both states, below when expanded and to the right in the rail', () => {
+  const { p, prefs, $ } = shellPage();
+  const shownAt = btn => {
+    btn.fire('pointerenter', { pointerType: 'mouse' });
+    p.advance(400);
+    const tip = tipOf(p, btn);
+    const at = [tip.hidden, tip.style.left];
+    btn.fire('pointerleave');
+    p.advance(100);
+    return at;
+  };
+  for (const [state, onRight] of [['expanded', false], ['collapsed', true]]) {
+    prefs.set('sidebar', state);
+    for (const id of ['sidebarToggle', 'settingsBtn', 'themeBtn']) {
+      const [hidden, left] = shownAt($(id));
+      assert.equal(hidden, false, `${state}: #${id} has a tooltip`);
+      assert.equal(left === '586px', onRight, `${state}: #${id} ${onRight ? 'to the right' : 'not beside it'} (left ${left})`);
+    }
+  }
+});
+
+test('rail: ⌘B does nothing over the legacy setup or stall modal (collapsing would move focus behind it)', () => {
+  const { p, prefs } = shellPage();
+  const modal = p.doc.createElement('div');
+  modal.className = 'modal-overlay visible';
+  p.doc.body.appendChild(modal);
+  const cmdB = () => p.keys.dispatch({ key: 'b', code: 'KeyB', metaKey: true, preventDefault() {} }, p.byId.filterbar);
+  assert.deepEqual([cmdB(), prefs.get('sidebar')], [null, 'expanded']);
+  modal.className = 'modal-overlay';
+  assert.deepEqual([cmdB(), prefs.get('sidebar')], ['view.sidebar', 'collapsed'], 'a closed modal does not block it');
 });

@@ -77,22 +77,16 @@
   [data-glass="on"] #livePanel { background: var(--lg-bg); }
   /* Chrome text gains a 1px shadow against the bg color so it stays legible
      when the blurred desktop behind is bright/noisy. */
-  [data-glass="on"] #topbar,
   [data-glass="on"] #filterbar,
-  [data-glass="on"] #liveBar,
   [data-glass="on"] .modal,
   [data-glass="on"] .connect-card { text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25); }
-  [data-glass="on"][data-theme="light"] #topbar,
   [data-glass="on"][data-theme="light"] #filterbar,
-  [data-glass="on"][data-theme="light"] #liveBar,
   [data-glass="on"][data-theme="light"] .modal,
   [data-glass="on"][data-theme="light"] .connect-card { text-shadow: 0 1px 1px rgba(255, 255, 255, 0.55); }
 
   /* Apply backdrop-filter only to chrome surfaces when glass is on.
      Log rows + tbody intentionally stay opaque for readability. */
-  [data-glass="on"] #topbar,
   [data-glass="on"] #filterbar,
-  [data-glass="on"] #liveBar,
   [data-glass="on"] thead th,
   [data-glass="on"] .modal,
   [data-glass="on"] .connect-card,
@@ -108,50 +102,8 @@
     -webkit-backdrop-filter: blur(20px);
   }
 
-  .topbar-spacer { flex: 1; }
-  /* Zoom controls — scale the log table content via --log-fs.
-     Only affects the table; UI chrome (buttons, tabs) stays at native
-     pixel size so the controls remain usable on small laptops. */
-  .zoom-group { display: inline-flex; align-items: center; gap: 0; margin-right: 10px; border: 1px solid var(--lg-border); border-radius: 5px; overflow: hidden; }
-  .zoom-btn { background: transparent; border: 0; color: var(--lg-muted); font-family: var(--font-ui); font-size: 11px; font-weight: 600; padding: 4px 9px; cursor: pointer; transition: color .15s, background .15s; }
-  .zoom-btn:hover { color: var(--lg-text); background: var(--lg-surface2); }
-  .zoom-btn + .zoom-btn { border-left: 1px solid var(--lg-border); }
-
-  /* Liquid Glass mode pill — same affordance as the theme switch.
-     Hidden on non-macOS platforms via .platform-mac class (set by JS). */
-  .glass-switch { position: relative; display: none; align-items: center; cursor: pointer; user-select: none; margin-left: 8px; }
-  .glass-switch.platform-mac { display: inline-flex; }
-  .glass-switch input { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
-  .glass-switch-track {
-    position: relative; width: 110px; height: 28px;
-    background: var(--lg-surface2); border: 1px solid var(--lg-muted);
-    border-radius: 999px;
-    display: inline-flex; align-items: center; justify-content: space-between;
-    padding: 0 10px; box-sizing: border-box;
-    font-family: var(--font-ui); font-size: 11px; font-weight: 600;
-    color: var(--lg-muted);
-    transition: background .2s, border-color .2s, color .2s;
-  }
-  .glass-switch:hover .glass-switch-track { border-color: var(--lg-accent); }
-  .glass-switch-label { z-index: 1; transition: color .2s; }
-  .glass-switch input:checked + .glass-switch-track .glass-switch-label.glass { color: var(--lg-text); }
-  .glass-switch input:not(:checked) + .glass-switch-track .glass-switch-label.classic { color: var(--lg-text); }
-  .glass-switch-thumb {
-    position: absolute; top: 2px; left: 2px;
-    width: 50px; height: 22px;
-    background: var(--lg-text); opacity: 0.18;
-    border-radius: 999px;
-    transition: transform .25s cubic-bezier(.4, 0, .2, 1);
-  }
-  .glass-switch input:checked + .glass-switch-track .glass-switch-thumb {
-    transform: translateX(54px);
-  }
-
   html, body, :where(.lg-scope, .lg-scope *) { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: var(--lg-bg); color: var(--lg-text); font-family: var(--font-ui); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
-
-  /* ── Top bar ── */
-  #topbar { background: var(--lg-surface); border-bottom: 1px solid var(--lg-border); display: flex; align-items: stretch; padding: 0 16px; flex-shrink: 0; }
 
   /* ── Filter bar ── */
   #filterbar { background: var(--lg-surface); border-bottom: 1px solid var(--lg-border); padding: 8px 16px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex-shrink: 0; }
@@ -184,23 +136,9 @@
   .sep { width: 1px; height: 20px; background: var(--lg-border); flex-shrink: 0; }
   .bar-spacer { flex: 1; }
 
-  .lg-icon-btn { background: transparent; border: 1px solid var(--lg-border); border-radius: 5px; color: var(--lg-muted); font-size: 12px; padding: 4px 10px; cursor: pointer; display: flex; align-items: center; gap: 5px; transition: color .15s, border-color .15s; white-space: nowrap; font-family: var(--font-ui); }
-  .lg-icon-btn:hover  { color: var(--lg-text); border-color: var(--lg-muted); }
-  .lg-icon-btn.active { color: var(--lg-green); border-color: var(--lg-green); }
-  .lg-icon-btn.lg-danger { color: var(--lg-red); border-color: var(--lg-red); }
-  .lg-icon-btn.paused { color: var(--lg-yellow); border-color: var(--lg-yellow); }
-
   /* `tabular-nums` keeps digit widths uniform so the counter doesn't
-     jitter glyph-by-glyph as the value grows (e.g. 9,999 → 10,000).
-     Right-pinning lives on the `.stats-export` wrapper below — keeping
-     it there (instead of on `.stats` itself) guarantees stats + Export
-     wrap together as a single unit when #filterbar wraps. */
+     jitter glyph-by-glyph as the value grows (e.g. 9 999 → 10 000). */
   .stats { font-size: 11px; color: var(--lg-muted); font-family: var(--font-log); white-space: nowrap; font-variant-numeric: tabular-nums; }
-  /* Single inline-flex row that holds [stats][Export]. `flex-wrap: nowrap`
-     stops Export from breaking onto its own line when stats fattens up;
-     `margin-left: auto` pins the whole cluster to the right edge of
-     #filterbar (and of the wrapped row when the toolbar itself wraps). */
-  .stats-export { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
 
   /* ── Drop Zone ── */
   #dropzone { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; border: 2px dashed var(--lg-border); margin: 24px; border-radius: 12px; cursor: pointer; transition: border-color .2s, background .2s; }
@@ -269,10 +207,6 @@
   .status-pill.connecting   { color: var(--lg-yellow); border-color: var(--lg-yellow); background: #e3b34110; }
   .status-pill.connected    { color: var(--lg-green);  border-color: var(--lg-green);  background: #56d36415; }
   .status-pill.error        { color: var(--lg-red);    border-color: var(--lg-red);    background: #ff7b7215; }
-  /* Server-side frame drops (ws `dropped` frames). Warning tint like
-     .connecting, but static: it is a persistent fact, not an in-progress state. */
-  .status-pill.dropped { color: var(--lg-yellow); border-color: var(--lg-yellow); background: #e3b34110; display: none; cursor: help; }
-  .status-pill.dropped.visible { display: inline-flex; }
   /* "N lines below" pill over the bottom of the log table (live mode, auto-scroll off). A sibling of the
      scroller, so repainting it never relayouts the rows or changes #logTable.scrollHeight. bottom: 18px
      also clears the horizontal scrollbar shown below 960px. No transition: nothing animates per flush. */
@@ -291,25 +225,12 @@
      last line), not the count, so the content end does not jump as the count crosses 0. While armed the
      200px end-detection in extendReadingWindow and the scroll handler is effectively ~144px from the last row. */
   #logTable.newer-room::after { content: ''; display: block; height: 56px; }
-  /* "lines X–Y of Z" (updateReadingWindowHint) over the right end of the sticky header. A sibling of the
-     scroller like .newer-pill, so its per-flush text change never relayouts the rows; inside the header's
-     height it can't cover row text, and the header's own surface/muted pair keeps it legible in every theme.
-     top 4px + 18px tall fits the fixed-size header (~27px, independent of the log zoom); right 14px clears
-     the vertical scrollbar. */
-  .reading-window-hint { position: absolute; top: 4px; right: 14px; z-index: 6; display: none; padding: 1px 8px; line-height: 14px; border: 1px solid var(--lg-border); border-radius: 999px; background: var(--lg-surface); color: var(--lg-muted); font-family: var(--font-log); font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; cursor: help; }
-  .reading-window-hint.visible { display: inline-block; }
   .status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
   .status-pill.connecting .status-dot { animation: blink 1s ease-in-out infinite; }
   @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
 
   .device-badge { background: var(--lg-surface2); border: 1px solid var(--lg-border); border-radius: 6px; padding: 7px 10px; font-family: var(--font-log); font-size: 10px; color: var(--lg-muted); line-height: 1.6; display: none; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 96px; overflow-y: auto; }
   .device-badge.visible { display: block; }
-
-  /* ── Live status bar (shown above log table in live mode) ── */
-  #liveBar { background: var(--lg-surface); border-bottom: 1px solid var(--lg-border); padding: 6px 16px; display: none; align-items: center; gap: 16px; flex-shrink: 0; flex-wrap: wrap; }
-  #liveBar.visible { display: flex; }
-  .live-bar-item { display: flex; align-items: center; gap: 8px; font-size: 12px; }
-  .live-bar-platform { font-weight: 600; font-size: 12px; display: flex; align-items: center; gap: 5px; }
 
   /* ── Setup modal ── */
   .modal-overlay { position: fixed; inset: 0; background: #000000cc; z-index: 100; display: none; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
@@ -353,7 +274,7 @@
   .ts-manual pre .cmt { color: var(--lg-muted); }
 
   /* ── Log table ── */
-  #logWrapper { flex: 1; overflow: hidden; display: none; flex-direction: column; position: relative; /* anchor for .newer-pill and .reading-window-hint */ }
+  #logWrapper { flex: 1; overflow: hidden; display: none; flex-direction: column; position: relative; /* anchor for .newer-pill */ }
   #logWrapper.visible { display: flex; }
   #logTable { flex: 1; overflow-y: auto; overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--lg-border) transparent; }
   /* `--log-fs` is set on `:root` by prefs.js (zoom buttons, keyboard
@@ -407,15 +328,10 @@
      never a universal selector; tests/viewer/static.test.mjs fails if a legacy rule animates and is
      missing here. !important because several selectors above out-rank a single class. */
   @media (prefers-reduced-motion: reduce) {
-    :where(.app:not([data-motion="off"])) .zoom-btn,
-    :where(.app:not([data-motion="off"])) .glass-switch-track,
-    :where(.app:not([data-motion="off"])) .glass-switch-label,
-    :where(.app:not([data-motion="off"])) .glass-switch-thumb,
     :where(.app:not([data-motion="off"])) input[type="text"],
     :where(.app:not([data-motion="off"])) .lvl-btn,
     :where(.app:not([data-motion="off"])) .search-mod,
     :where(.app:not([data-motion="off"])) .plat-btn,
-    :where(.app:not([data-motion="off"])) .lg-icon-btn,
     :where(.app:not([data-motion="off"])) #dropzone,
     :where(.app:not([data-motion="off"])) .ios-driver-warning a,
     :where(.app:not([data-motion="off"])) .ios-driver-warning button,
@@ -431,15 +347,10 @@
     :where(.app:not([data-motion="off"])) tr.new-row,
     :where(.app:not([data-motion="off"])) .spinner { animation: none !important; transition: none !important; }
   }
-  .app[data-motion="reduce"] .zoom-btn,
-  .app[data-motion="reduce"] .glass-switch-track,
-  .app[data-motion="reduce"] .glass-switch-label,
-  .app[data-motion="reduce"] .glass-switch-thumb,
   .app[data-motion="reduce"] input[type="text"],
   .app[data-motion="reduce"] .lvl-btn,
   .app[data-motion="reduce"] .search-mod,
   .app[data-motion="reduce"] .plat-btn,
-  .app[data-motion="reduce"] .lg-icon-btn,
   .app[data-motion="reduce"] #dropzone,
   .app[data-motion="reduce"] .ios-driver-warning a,
   .app[data-motion="reduce"] .ios-driver-warning button,

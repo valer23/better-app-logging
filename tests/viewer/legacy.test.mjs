@@ -72,13 +72,28 @@ test('a sticky document hands out one stub per id, keeps what the legacy script 
   assert.equal(doc.hidden, false);
   const { run } = loadLegacy([], { document: doc });
   run('updateStats()');
-  assert.equal(doc.getElementById('stats').textContent, '0 / 0 lines');
+  assert.equal(doc.getElementById('filterCount').textContent, '0 of 0 lines');
+});
+
+test('updateStats (every flush) writes the line count and the Retained text only when they change (P4b)', () => {
+  const { run } = loadLegacy([], { document: stickyDocument() });
+  const writes = run(`(() => {
+    const seen = { filterCount: 0, retainedText: 0 }, get = document.getElementById;
+    const els = { filterCount: { set textContent(v) { seen.filterCount++; } }, retainedText: { title: '', set textContent(v) { seen.retainedText++; } } };
+    document.getElementById = id => els[id] || get(id);
+    updateStats(); updateStats(); updateStats();
+    liveSession.all.push({}); liveSession.filtered.push({});
+    updateStats();
+    document.getElementById = get;
+    return JSON.stringify(seen);
+  })()`);
+  assert.equal(writes, '{"filterCount":2,"retainedText":2}', 'one write per change, none for a repeat');
 });
 
 test('the page wires both window drag bands through the shell: one mousedown and one dblclick listener each', () => {
   const doc = stickyDocument();
   loadLegacy([], { document: doc });
-  for (const id of ['sidebarHeader', 'topbar']) {
+  for (const id of ['sidebarHeader', 'toolbar']) {
     for (const type of ['mousedown', 'dblclick']) assert.equal((doc.listeners.get(`${id}:${type}`) || []).length, 1, `${id}:${type}`);
   }
 });
@@ -213,13 +228,13 @@ test('handleWsMsg still shows the stall sheet for the stall frame unless the str
   assert.equal(run('__sheet'), 1, 'paused: no sheet');
 });
 
-test('showStallModal and showSetup close the sidebar row menus: #overlayRoot (z 200) would paint them above the modal (P4)', () => {
+test('showStallModal and showSetup close the sidebar row menus and the toolbar / status-bar menus: #overlayRoot (z 200) would paint them above the modal (P4)', () => {
   const { run } = loadLegacy([], { document: stickyDocument() });
-  run(`globalThis.__closed = 0; shell = { closeMenus: () => { __closed++; }, sync() {} };`);
+  run(`globalThis.__closed = []; shell = { closeMenus: () => { __closed.push('shell'); }, sync() {} }; liveUi = { closeMenus: () => { __closed.push('live'); }, sync() {} };`);
   run(`showStallModal('x')`);
-  assert.equal(run('__closed'), 1, 'the stall modal is opened by a frame, so no pointerdown light dismiss runs');
+  assert.equal(run('__closed.join()'), 'shell,live', 'the stall modal is opened by a frame, so no pointerdown light dismiss runs');
   run(`showSetup('ios')`);
-  assert.equal(run('__closed'), 2);
+  assert.equal(run('__closed.join()'), 'shell,live,shell,live');
 });
 
 // The legacy side of the shell adapter, against the real legacy code: the fields shellState() returns are what
@@ -229,7 +244,7 @@ const settle = () => new Promise(r => setImmediate(r));
 test('shellState has the shape the shell reads: live, status, devices, driverMissing, lines, dropped and enabled', () => {
   const { run } = loadLegacy([], { document: stickyDocument() });
   const st = run('shellState()');
-  assert.deepEqual(Object.keys(st).sort(), ['cur', 'devices', 'driverMissing', 'dropped', 'enabled', 'lines', 'live', 'sessions', 'status']);
+  assert.deepEqual(Object.keys(st).sort(), ['buffered', 'cur', 'devices', 'driverMissing', 'dropped', 'enabled', 'lines', 'live', 'maxRetained', 'paused', 'sessions', 'status']);
   assert.deepEqual([st.cur === run('liveSession'), st.sessions[0] === run('liveSession'), st.sessions[1] === run('fileSession')], [true, true, true]);
   assert.equal(st.dropped, run('liveSession.dropped'), 'the same object, so a drop shows without a copy');
   assert.equal(st.lines, run('wsLines'));
@@ -282,4 +297,39 @@ test('loadDevices fills deviceInfo on the list, restore, empty and error paths; 
   await run('loadIosDevices()');
   await settle();
   assert.deepEqual([info().ios, run('shellState().driverMissing')], [NONE, false], 'a failed discovery clears the device; a missing endpoint fails open');
+});
+
+// ---- The Liquid Glass switch moved into the toolbar's More menu (P4b): setGlass and its startup re-sync ----
+
+// A fetch that records the requests and answers 200.
+function glassPage(o) {
+  const calls = [];
+  const fetchImpl = (url, init) => { calls.push([url, init.method, init.headers['Content-Type'], init.body]); return Promise.resolve({ ok: true, status: 200 }); };
+  const page = loadLegacy(['setGlass'], { document: stickyDocument(), fetchImpl, ...o });
+  return { ...page, calls, prefs: page.run('ALV.prefs') };
+}
+
+test('setGlass stores the material and, on macOS, POSTs it to /window/glass-mode as {enabled}', () => {
+  const { api, calls, prefs } = glassPage({ platform: 'mac' });
+  assert.deepEqual(calls, [], 'solid at startup: nothing to sync');
+  api.setGlass(true);
+  assert.equal(prefs.get('material'), 'glass');
+  assert.deepEqual(calls, [['/window/glass-mode', 'POST', 'application/json', '{"enabled":true}']]);
+  api.setGlass(false);
+  assert.equal(prefs.get('material'), 'solid');
+  assert.deepEqual(calls.at(-1), ['/window/glass-mode', 'POST', 'application/json', '{"enabled":false}']);
+  assert.equal(calls.length, 2);
+});
+
+test('setGlass never calls the window endpoint off macOS (the preference is still kept)', () => {
+  const { api, calls, prefs } = glassPage({ platform: 'win32' });
+  api.setGlass(true);
+  assert.deepEqual([prefs.get('material'), calls], ['glass', []]);
+});
+
+test('a saved Glass material re-syncs the native window at startup on macOS only (the macOS conf starts with no effects)', () => {
+  const saved = { stored: { 'applogs-viewer.material': 'glass' } };
+  assert.deepEqual(glassPage({ platform: 'mac', ...saved }).calls, [['/window/glass-mode', 'POST', 'application/json', '{"enabled":true}']]);
+  assert.deepEqual(glassPage({ platform: 'mac', stored: { 'applogs-viewer.material': 'solid' } }).calls, [], 'solid: nothing to sync');
+  assert.deepEqual(glassPage({ platform: 'win32', ...saved }).calls, [], 'not macOS: no native effect');
 });

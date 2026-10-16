@@ -6,9 +6,11 @@
   .app[data-material="glass"] { --app-bg: transparent; }
 
   /* Overlay root (roadmap P3). A direct child of <body>: an ancestor with backdrop-filter (the glass
-     #topbar / #filterbar, P4's .chrome toolbar) would become the containing block of a position: fixed
-     surface and misplace it. Above legacy .modal-overlay (100). Only the surfaces take pointer events. */
-  #overlayRoot { position: fixed; inset: 0; z-index: 200; pointer-events: none; --toast-right: 16px; --toast-bottom: 16px; }
+     #filterbar, the .chrome toolbar and status bar) would become the containing block of a position: fixed
+     surface and misplace it. Above legacy .modal-overlay (100). Only the surfaces take pointer events.
+     Toasts sit 16 px above the status bar and left of an open drawer (spec "Toasts"): P9 sets --drawer-w here
+     while the detail drawer is open. */
+  #overlayRoot { position: fixed; inset: 0; z-index: 200; pointer-events: none; --drawer-w: 0px; --toast-right: calc(16px + var(--drawer-w)); --toast-bottom: calc(var(--status-h) + 16px); }
   .ov { position: fixed; top: 0; left: 0; pointer-events: auto; }
   .toast-region { position: fixed; right: var(--toast-right); bottom: var(--toast-bottom); display: flex; flex-direction: column; gap: 8px; pointer-events: auto; }
   .toast-stack { display: flex; flex-direction: column; gap: 8px; }
@@ -21,7 +23,7 @@
   /* Primitives (assets/js/ui.js). The foundation's .menu, .tooltip, .toast, .kbd and .btn set display,
      which beats the UA [hidden] rule, so hidden ones need display: none back (a toast without an action
      keeps a hidden .btn). */
-  .menu[hidden], .tooltip[hidden], .toast[hidden], .kbd[hidden], .dialog-host[hidden], .btn[hidden] { display: none; }
+  .menu[hidden], .tooltip[hidden], .toast[hidden], .kbd[hidden], .dialog-host[hidden], .btn[hidden], .menu-item[hidden] { display: none; }
   /* Menu items take real focus (APG menu button) and aria-selected is not valid on a menuitem, so the
      foundation's 2 px active-item bar is keyed on :focus. Radio items show their check only when checked. */
   .menu-item:focus { background: var(--fill-hover); box-shadow: inset 2px 0 0 var(--accent); }

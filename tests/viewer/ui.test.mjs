@@ -912,12 +912,30 @@ test('tooltip: hiding or destroying it pops its Esc entry; it stays hidden while
   assert.equal(tip2.hidden, false, 'keyboard focus shows it at once');
   btn.fire('blur');
   assert.deepEqual([tip2.hidden, p.keys.escDepth()], [true, 0]);
+  btn.setAttribute('aria-haspopup', 'menu');
   btn.setAttribute('aria-expanded', 'true');
   btn.fire('focus');
   btn.fire('pointerenter', { pointerType: 'mouse' });
   p.advance(500);
   assert.equal(tip2.hidden, true, 'no tooltip while the trigger has its menu open');
   t2.destroy();
+});
+
+test('tooltip: a disclosure button (aria-expanded without aria-haspopup) keeps its tooltip while expanded; `side` may be a function read on each show', () => {
+  const p = fakePage();
+  const btn = p.dom.el('button', { 'aria-expanded': 'true' });
+  p.byId.filterbar.appendChild(btn);
+  let side = 'bottom';
+  const t = p.ui.tooltip(btn, { text: 'Hide sidebar', side: () => side });
+  const tip = p.byId[btn.attrs['aria-describedby']];
+  const hover = () => { btn.fire('pointerenter', { pointerType: 'mouse' }); p.advance(400); const at = [tip.hidden, tip.style.left, tip.style.top]; btn.fire('pointerleave'); p.advance(100); return at; };
+  const below = hover();
+  assert.equal(below[0], false, 'expanded, not a popup trigger: the tooltip shows');
+  side = 'right';
+  const beside = hover();
+  assert.deepEqual([beside[0], beside[1]], [false, '586px'], 'the function is resolved at show time: now to the right of the anchor');
+  assert.notEqual(beside[1], below[1]);
+  t.destroy();
 });
 
 
@@ -1219,6 +1237,26 @@ test('tooltip: shows on an aria-disabled trigger, and `when` keeps it hidden whi
   p.advance(400);
   assert.equal(tip.hidden, false, 'aria-disabled does not stop the tooltip (WebKit gives a disabled button no pointer events)');
   t.destroy();
+});
+
+// A hidden element that aria-describedby points to still counts toward the description, so a tip that only
+// repeats the control's name (a rail item's) must not be wired in: the name would be read twice (review F6).
+test('tooltip: describe: false leaves aria-describedby alone, and the tip still shows', () => {
+  const p = fakePage();
+  const btn = p.dom.el('button', { 'aria-label': 'Live session' });
+  const other = p.dom.el('button', { 'aria-describedby': 'status' });
+  p.byId.filterbar.appendChild(btn);
+  p.byId.filterbar.appendChild(other);
+  const t = p.ui.tooltip(btn, { text: 'Live session', describe: false });
+  const t2 = p.ui.tooltip(other, { text: 'Other', describe: false });
+  assert.deepEqual([btn.getAttribute('aria-describedby'), other.getAttribute('aria-describedby')], [null, 'status'], 'nothing added, an existing description untouched');
+  const tip = p.byId.ovTips.children.at(-2);
+  assert.equal(texts(tip), 'Live session');
+  btn.fire('pointerenter', { pointerType: 'mouse' });
+  p.advance(400);
+  assert.equal(tip.hidden, false, 'it still shows on hover');
+  t.destroy(); t2.destroy();
+  assert.deepEqual([btn.getAttribute('aria-describedby'), other.getAttribute('aria-describedby')], [null, 'status'], 'destroy has nothing to remove');
 });
 
 test('Esc ranking: a hover tooltip waits for a keyboard-focused menu; a keyboard tooltip goes first (review follow-up d)', () => {

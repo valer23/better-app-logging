@@ -47,6 +47,7 @@ pub static FILES: &[(&str, &[u8])] = embed![
     "js/dev-bench.js",
     "js/dom.js",
     "js/keys.js",
+    "js/live.js",
     "js/prefs.js",
     "js/session.js",
     "js/shell.js",

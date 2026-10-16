@@ -22,16 +22,17 @@ const jsText = allJs.map(s => s.code).join('\n');
 const cssFiles = assetFiles.filter(p => p.endsWith('.css')).map(p => ({ path: p, text: read(path.join(ASSETS, p)) }));
 // Ids that JS creates at runtime (createElement + id) and therefore are not in the HTML. None today.
 const DYNAMIC_IDS = [];
-// Ids the JS resolves through getElementById but only as indirect string literals (arrays passed to
-// forEach / showOnly / runPairAction, a status-pill map, 'liveBar' + platform + 'Dropped'), which
-// referencedIds cannot see. Listed by hand so renaming one in a redesign still fails CI.
+// Ids the JS resolves only as indirect string literals (arrays passed to forEach / showOnly /
+// runPairAction, a status-pill map, the shell's [id, text] tables and live.js's template literals such as
+// `${id}Name`), which referencedIds cannot see. Listed by hand so renaming one in a redesign still fails CI.
 const INDIRECT_IDS = [
   'autoScrollBtn', 'pauseBtn', 'clearBtn',
   'dropzone', 'livePanel', 'loading', 'logWrapper',
   'iosRepairBtn', 'setupRepairBtn', 'setupUnpairBtn', 'setupPairBtn', 'stallRepairBtn',
   'androidStatus', 'androidStatusText', 'iosStatus', 'iosStatusText',
   'settingsBtn', 'shortcutsBtn',   // shell.js: tooltips over an [id, text] array
-  'liveBarAndroidDropped', 'liveBarAndroidDroppedText', 'liveBarIosDropped', 'liveBarIosDroppedText',
+  'sbAndroid', 'sbIos', 'sbAndroidName', 'sbAndroidRate', 'sbIosName', 'sbIosRate',   // live.js status bar
+  'dropsAndroid', 'dropsIos', 'dropsAndroidTitle', 'dropsAndroidDesc', 'dropsIosTitle', 'dropsIosDesc',
 ];
 
 test('page HTML is well formed: tags balance, no duplicate attributes', () => {
@@ -77,6 +78,30 @@ test('drag bands: every control inside each band in shell.js DRAG_BANDS matches 
   assert.deepEqual(C.dragErrors(root, jsText, DRAG_BANDS), []);
 });
 
+test('toolbar and status bar are fixed-height flex: none children of #main under size containment, so neither can size the log column (P4a perf fix, must-keep)', () => {
+  const rules = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')));
+  const decls = sel => rules.filter(r => r.selectors.includes(sel)).flatMap(r => C.declarations(r.body));
+  for (const sel of ['#toolbar', '#statusBar']) {
+    assert.ok(decls(sel).some(d => d.prop === 'flex' && d.value === 'none'), `${sel} is flex: none`);
+    assert.ok(decls(sel).some(d => d.prop === 'contain' && d.value === 'size layout style'), `${sel} keeps contain: size layout style (its text changes at the flush cadence)`);
+  }
+  const main = decls('#main');
+  assert.ok(main.some(d => d.prop === 'flex-direction' && d.value === 'column') && main.some(d => d.prop === 'min-height' && d.value === '0'), '#main is a min-height: 0 flex column');
+});
+
+test('the page passes every action that shell.js and live.js call (the fake pages answer any action name, so a missing one only throws on a real click)', () => {
+  const code = inlineScripts(html).at(-1).code;
+  for (const [file, factory] of [['shell.js', 'createShell'], ['live.js', 'createLive']]) {
+    const used = [...new Set([...read(path.join(ASSETS, 'js', file)).matchAll(/\bactions\.(\w+)/g)].map(m => m[1]))];
+    const call = code.slice(code.indexOf(`ALV.${factory}(`));
+    const open = call.indexOf('actions: {') + 'actions: '.length;
+    let depth = 0, end = open;
+    for (; end < call.length; end++) { if (call[end] === '{') depth++; else if (call[end] === '}' && --depth === 0) break; }
+    const given = call.slice(open, end + 1);
+    for (const name of used) assert.match(given, new RegExp(`[{,]\\s*${name}\\s*[:,}]`), `${factory}: the page passes actions.${name}`);
+  }
+});
+
 test('app grid: #app holds aside#sidebar (labelled, with the #sidebarHeader band) and #main, which holds every legacy region', () => {
   const body = root.children.find(el => el.tag === 'html').children.find(el => el.tag === 'body');
   const app = findById(root, 'app');
@@ -85,7 +110,7 @@ test('app grid: #app holds aside#sidebar (labelled, with the #sidebarHeader band
   const side = findById(root, 'sidebar');
   assert.deepEqual([side.tag, side.attrs['aria-label']], ['aside', 'Sidebar']);
   assert.equal(findById(root, 'sidebarHeader').parent, side);
-  for (const id of ['topbar', 'filterbar', 'dropzone', 'livePanel', 'liveBar', 'loading', 'logWrapper']) {
+  for (const id of ['toolbar', 'filterbar', 'dropzone', 'livePanel', 'loading', 'logWrapper', 'statusBar']) {
     assert.equal(findById(root, id).parent.attrs.id, 'main', `#${id} is a child of #main`);
   }
   for (const id of ['setupModal', 'stallModal', 'overlayRoot']) assert.equal(findById(root, id).parent, body, `#${id} stays on <body>`);
@@ -133,6 +158,115 @@ test('sidebar: "Search actions…" is an aria-disabled stub, SESSIONS rows are b
   assert.ok(hides.includes('.side-list[hidden]'), '.side-list sets display: flex, so a folded list needs [hidden] back');
 });
 
+test('toolbar: the legacy top bar and its glass switch are gone; the controls moved from the filter bar', () => {
+  const tb = findById(root, 'toolbar');
+  assert.deepEqual([tb.tag, tb.attrs.class], ['header', 'chrome']);
+  for (const id of ['pauseBtn', 'autoScrollBtn', 'zoomGroup', 'exportWrap', 'moreBtn', 'clearBtn', 'streamBadge', 'sessionTitle']) {
+    assert.ok(closestWithin(findById(root, id), '[id=toolbar]', root), `#${id} is in the toolbar`);
+  }
+  assert.equal(findById(root, 'autoScrollBtn').attrs['aria-pressed'], 'true', 'Follow is a toggle button');
+  assert.equal(findById(root, 'pauseBtn').attrs['aria-pressed'], undefined, 'Pause swaps its label instead (APG: never both)');
+  for (const id of ['topbar', 'glassSwitch', 'glassSwitchInput']) assert.equal(findById(root, id), null, `#${id} is gone`);
+  const legacy = read(path.join(ASSETS, 'css', 'legacy.css'));
+  assert.doesNotMatch(legacy, /#topbar|\.zoom-group|\.zoom-btn|\.glass-switch|\.topbar-spacer|\.lg-icon-btn/);
+  assert.doesNotMatch(read(path.join(ASSETS, 'js', 'dom.js')), /\.zoom-group|\.glass-switch/, 'INTERACTIVE drops the deleted classes');
+  assert.doesNotMatch(inlineScripts(html).at(-1).code, /initGlassToggle|glassSwitch/);
+  const more = findById(root, 'moreMenu');
+  assert.equal(more.attrs.role, 'menu');
+  assert.equal(findById(root, 'moreSurface').parent.attrs.id, 'ovPopovers');
+  assert.deepEqual(elements(more).filter(el => el.attrs.role).map(el => el.attrs.role), ['menuitem', 'separator', 'menuitemcheckbox']);
+});
+
+test('status bar: devices, drops (with its popover in the popover layer), the moved #58 hint, Retained and Follow; the live bar and #stats are gone', () => {
+  const sb = findById(root, 'statusBar');
+  assert.deepEqual([sb.tag, sb.attrs.class, sb.parent.attrs.id], ['footer', 'chrome', 'main']);
+  assert.equal(findById(root, 'main').children.at(-1), sb, 'last in the main column');
+  for (const id of ['sbAndroid', 'sbIos', 'dropsBtn', 'readingWindowHint', 'retainedText', 'followState']) {
+    assert.ok(closestWithin(findById(root, id), '[id=statusBar]', root), `#${id} is in the status bar`);
+  }
+  assert.equal(findById(root, 'dropsPopover').parent.attrs.id, 'ovPopovers');
+  assert.ok(closestWithin(findById(root, 'filterCount'), '[id=filterbar]', root), 'the line count waits in the filter bar for P6');
+  for (const id of ['liveBar', 'stats', 'liveBarAndroidDropped', 'liveBarIosDropped']) assert.equal(findById(root, id), null, `#${id} is gone`);
+  const legacy = read(path.join(ASSETS, 'css', 'legacy.css'));
+  assert.doesNotMatch(legacy, /#liveBar|\.live-bar|\.reading-window-hint|\.stats-export|status-pill\.dropped/);
+  assert.doesNotMatch(inlineScripts(html).at(-1).code, /updateLiveBar|liveBar|getElementById\('stats'\)/);
+  const tiers = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css'))).filter(r => r.atRules.some(a => a.startsWith('@container')));
+  assert.deepEqual([...new Set(tiers.flatMap(r => r.atRules.filter(a => a.startsWith('@container'))))].sort(),
+    ['@container statusbar (max-width: 975px)', '@container toolbar (max-width: 1011px)', '@container toolbar (max-width: 1151px)'],
+    'the spec\'s tiers, as border-box widths minus the padding');
+  assert.deepEqual(tiers.filter(r => r.atRules.includes('@container statusbar (max-width: 975px)')).flatMap(r => r.selectors), ['#retainedText', '#retainedNote:not(:empty)'],
+    'the narrow tier swaps the plain count for the #45 note alone; the #58 hint is never hidden (the legacy hint showed at every width), and the note itself is never hidden');
+  const right = findById(root, 'readingWindowHint').parent;
+  assert.deepEqual(right.children.map(c => c.attrs.id), ['readingWindowHint', 'retainedText', 'retainedNote', 'followState'], 'the note sits beside the plain count, in the right group');
+  const shellRules = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')));
+  const declsOf = sel => shellRules.filter(r => r.selectors.includes(sel) && !r.atRules.some(a => a.startsWith('@container'))).flatMap(r => C.declarations(r.body));
+  const sbDev = declsOf('.sb-dev');
+  assert.ok(!sbDev.some(d => d.prop === 'height'), '.btn-sm sets the height: at least the 24×24 target');
+  assert.ok(!sbDev.some(d => d.prop === 'overflow'), 'the button is not clipped: its focus ring is outside its box');
+  // Overflow at the minimum window (a 852 px bar): the device name, free text from the bridge, is the part that
+  // gives way; only its inner span is clipped; the left group shrinks before the right one.
+  const nameDecls = declsOf('.sb-name');
+  const has = (ds, prop, value) => ds.some(d => d.prop === prop && d.value === value);
+  assert.ok(has(nameDecls, 'max-width', '160px') && has(nameDecls, 'overflow', 'hidden') && has(nameDecls, 'text-overflow', 'ellipsis') && has(nameDecls, 'min-width', '0'),
+    'the name span is clipped with an ellipsis at 160 px');
+  // Nothing may be drawn over its neighbour at any width (the Retained text and its note are long at the 1100 px
+  // minimum window, with the drops button and the devices next to them): the right group shrinks twice as fast as
+  // the left one, so the Retained text gives way first, but the device names still give way before the #58 hint or
+  // Following would be clipped (weight 8 clipped Following by 4 px in the 1100×700 worst case, measured in Chromium).
+  assert.ok(has(declsOf('.sb-left'), 'flex', '0 1 auto') && has(declsOf('.sb-right'), 'flex', '0 2 auto') && has(declsOf('.sb-right'), 'overflow', 'hidden'),
+    'the right group shrinks at weight 2 (not 8) and only clips as a last resort; the left one gives way next');
+  for (const sel of ['#retainedText', '#retainedNote']) {
+    const ds = declsOf(sel);
+    assert.ok(has(ds, 'min-width', '0') && has(ds, 'overflow', 'hidden') && has(ds, 'text-overflow', 'ellipsis'), `${sel} ends in an ellipsis instead of overflowing`);
+  }
+  assert.ok(has(declsOf('#readingWindowHint'), 'flex', 'none') && has(declsOf('#followState'), 'flex', 'none'), 'the #58 hint and Following keep their width');
+  for (const id of ['sbAndroid', 'sbIos']) {
+    const b = findById(root, id);
+    assert.deepEqual([b.attrs['aria-labelledby'], b.attrs['aria-describedby']], [`${id}Name`, `${id}Rate`], `#${id} is named by the device, described by the rate`);
+    assert.equal(findById(root, `${id}Name`).attrs.class, 'sb-name');
+    assert.ok(closestWithin(findById(root, `${id}Name`), `[id=${id}]`, root));
+  }
+});
+
+// #statusBar is the last child of the full-height #main column, so its bottom edge is the viewport's. Its
+// .btn-sm controls (24/24/28 px) sit in a 26/28/30 px bar with 0.5-2 px below them: the global 2 px ring with a
+// 2 px offset would be drawn past the window edge and lose its bottom side (also in forced-colours mode).
+test('status bar: focus rings are inset, the bar being flush with the bottom of the window', () => {
+  const rules = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')));
+  const ring = rules.filter(r => r.selectors.includes('#statusBar button:focus-visible')).flatMap(r => C.declarations(r.body));
+  assert.ok(ring.some(d => d.prop === 'outline-offset' && d.value === '-2px'), 'inset like a log row (spec Focus: inset -2 px where it would be cut)');
+  assert.ok(!ring.some(d => d.prop === 'outline'), 'only the offset changes: the ring colour, width and forced-colours Highlight stay the foundation\'s');
+  assert.match(read(path.join(ASSETS, 'css', 'foundation.css')), /^@layer foundation, legacy, app;/m, 'the app layer, where the override sits, wins over the foundation\'s ring in both modes');
+});
+
+test('rail: the header toggle, the 52 px rail column, and on macOS a full 52 px band above the rail (spec Open item 5)', () => {
+  const t = findById(root, 'sidebarToggle');
+  assert.deepEqual([t.tag, t.parent.attrs.id, t.attrs['aria-controls'], t.attrs['aria-expanded'], t.attrs['aria-label']],
+    ['button', 'sidebarHeader', 'sidebarBody', 'true', 'Hide sidebar']);
+  const rules = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')));
+  const decl = sel => rules.filter(r => r.selectors.includes(sel)).flatMap(r => C.declarations(r.body));
+  assert.ok(decl('.app[data-sidebar="collapsed"] #app').some(d => d.prop === 'grid-template-columns' && /^52px /.test(d.value)));
+  assert.deepEqual(decl('.app[data-sidebar="collapsed"] #app').map(d => d.prop), ['grid-template-columns'],
+    'the rail changes the columns only: #app keeps flex: 1 1 0 and its minmax(0, 1fr) row (P4a perf fix)');
+  assert.ok(decl('.app[data-platform="mac"][data-sidebar="collapsed"] #sidebarHeader').some(d => d.prop === 'padding-top' && d.value === 'var(--titlebar-h)'),
+    'the lights get the whole 52 px band; the toggle wraps below it');
+  assert.ok(decl('.app[data-platform="mac"][data-sidebar="collapsed"] #toolbar').some(d => d.prop === 'padding-left' && d.value === 'calc(78px - 52px + 16px)'),
+    'and the toolbar starts past the lights');
+  for (const id of ['openFileBtn', 'shortcutsBtn', 'sessFile']) assert.ok(closestWithin(findById(root, id), '[data-rail-hide]', root), `#${id} is not in the rail`);
+  const gone = rules.filter(r => C.declarations(r.body).some(d => d.prop === 'display' && d.value === 'none')).flatMap(r => r.selectors);
+  assert.ok(!gone.some(s => s.endsWith('.side-label')), 'a rail label is the item\'s accessible name: visually hidden, never display: none');
+  assert.ok(decl('.app[data-sidebar="collapsed"] .side-label').some(d => d.prop === 'clip-path' && d.value === 'inset(50%)'));
+});
+
+test('rail: a folded section still shows its list in the rail (the rail hides the fold buttons)', () => {
+  const rules = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')));
+  const decl = sel => rules.filter(r => r.selectors.includes(sel)).flatMap(r => C.declarations(r.body));
+  assert.ok(decl('.app[data-sidebar="collapsed"] .side-sec-h').length || rules.some(r => r.selectors.some(s => s.includes('.side-sec-h') && s.includes('collapsed'))), 'precondition: the rail hides the section heads');
+  assert.ok(decl('.app[data-sidebar="collapsed"] .side-list[hidden]').some(d => d.prop === 'display' && d.value === 'flex'),
+    'the rail overrides .side-list[hidden] { display: none }: folding is an expanded-only preference');
+  for (const id of ['deviceList', 'sessionList']) assert.ok(String(findById(root, id).attrs.class).split(/\s+/).includes('side-list'), `#${id} is a .side-list`);
+});
+
 test('window chrome: the macOS traffic-light inset is on #sidebarHeader, no longer on #topbar', () => {
   const shellRules = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')));
   const inset = shellRules.filter(r => r.selectors.includes('.app[data-platform="mac"] #sidebarHeader')).flatMap(r => C.declarations(r.body));
@@ -150,12 +284,30 @@ test('#app never sizes to its content: flex-basis 0 and a minmax(0, 1fr) row, so
     'an implicit auto row sizes the grid to the log table\'s full height');
 });
 
-test('#topbar centres its children: the 52 px band must not stretch .zoom-group or .glass-switch into dead (non-dragging) boxes', () => {
+test('#toolbar centres its children: a stretched flex item of the 52 px band would be a dead (non-dragging) box', () => {
   const rules = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')));
-  const decls = rules.filter(r => r.selectors.includes('#topbar')).flatMap(r => C.declarations(r.body));
-  assert.ok(decls.some(d => d.prop === 'min-height' && d.value === 'var(--titlebar-h)'), 'the band is --titlebar-h tall');
+  const decls = rules.filter(r => r.selectors.includes('#toolbar')).flatMap(r => C.declarations(r.body));
+  assert.ok(decls.some(d => d.prop === 'height' && d.value === 'var(--titlebar-h)'), 'the band is --titlebar-h tall');
   assert.ok(decls.some(d => d.prop === 'align-items' && d.value === 'center'),
-    'legacy.css sets #topbar to align-items: stretch; at 52 px that stretches the zoom group and the glass label (both INTERACTIVE) to the full band height');
+    'every toolbar control is INTERACTIVE: stretched to the band, its margins neither draw nor drag like the control');
+});
+
+test('the streaming dot pulses on the compositor: #streamDot overrides the foundation box-shadow pulse with a transform + opacity ring', () => {
+  const css = read(path.join(ASSETS, 'css', 'shell.css'));
+  const rules = C.cssRules(css);
+  const decls = sel => rules.filter(r => r.selectors.includes(sel)).flatMap(r => C.declarations(r.body));
+  const base = decls('#streamDot.pulse');
+  assert.ok(base.some(d => d.prop === 'animation' && d.value === 'none'), 'the foundation .dot.pulse animation (box-shadow: main thread, every frame, forever) is switched off here');
+  assert.ok(base.some(d => d.prop === 'position' && d.value === 'relative'), 'the ring is positioned against the dot');
+  const ring = decls('#streamDot.pulse::after');
+  const anim = ring.find(d => d.prop === 'animation');
+  assert.ok(anim, 'the ring animates');
+  assert.match(anim.value, /var\(--t-pulse\)/, 'its duration is the --t-pulse token, so Reduce motion stops it');
+  const name = anim.value.split(/\s+/)[0];
+  const kf = css.match(new RegExp(`@keyframes\\s+${name}\\s*\\{([\\s\\S]*?\\}\\s*)\\}`));
+  assert.ok(kf, `@keyframes ${name} exists`);
+  const props = [...kf[1].matchAll(/([\w-]+)\s*:/g)].map(m => m[1]);
+  assert.ok(props.length >= 2 && props.every(p => p === 'transform' || p === 'opacity'), `only compositor properties animate, got ${props}`);
 });
 
 test('#sidebarBody scrolls, so its top padding keeps the 4 px focus ring of the first stop (#cmdTrigger) unclipped', () => {
@@ -183,10 +335,20 @@ test('#overlayRoot is a direct child of <body>, the last element before the scri
   assert.ok(body.children.indexOf(ov) < body.children.indexOf(scripts[0]), '#overlayRoot comes before the scripts');
 });
 
+test('toasts sit 16 px above the status bar and left of an open drawer (spec "Toasts"; P3 follow-up c)', () => {
+  const root_ = C.cssRules(read(path.join(ASSETS, 'css', 'base.css'))).filter(r => r.selectors.includes('#overlayRoot')).flatMap(r => C.declarations(r.body));
+  const v = prop => (root_.find(d => d.prop === prop) || {}).value;
+  assert.deepEqual([v('--toast-bottom'), v('--toast-right'), v('--drawer-w')], ['calc(var(--status-h) + 16px)', 'calc(16px + var(--drawer-w))', '0px'],
+    'P9 sets --drawer-w on #overlayRoot while the drawer is open');
+  const region = C.cssRules(read(path.join(ASSETS, 'css', 'base.css'))).filter(r => r.selectors.includes('.toast-region')).flatMap(r => C.declarations(r.body));
+  assert.deepEqual(['right', 'bottom'].map(p => region.find(d => d.prop === p).value), ['var(--toast-right)', 'var(--toast-bottom)']);
+});
+
 test('hidden overlay surfaces really hide: base.css gives [hidden] back to every foundation class that sets display', () => {
   const rules = C.cssRules(read(path.join(ASSETS, 'css', 'base.css')));
   const hiddenSelectors = rules.filter(r => C.declarations(r.body).some(d => d.prop === 'display' && d.value === 'none')).flatMap(r => r.selectors);
-  for (const cls of ['menu', 'tooltip', 'toast', 'kbd', 'dialog-host', 'btn']) {
+  // menu-item (P4b): the More menu hides its Glass item off macOS, and .menu-item sets display: flex.
+  for (const cls of ['menu', 'tooltip', 'toast', 'kbd', 'dialog-host', 'btn', 'menu-item']) {
     assert.ok(hiddenSelectors.includes(`.${cls}[hidden]`), `.${cls}[hidden] { display: none } is missing`);
   }
 });
@@ -208,7 +370,7 @@ test('a tall dialog scrolls inside the viewport instead of being clipped by the 
 
 test('the Export menu lives in the popover layer: one menu button, three formats, two scope radios, the note outside the menu', () => {
   const btn = findById(root, 'exportBtn');
-  assert.ok(closestWithin(btn, '[id=filterbar]', root), '#exportBtn stays in #filterbar (P4 re-parents it)');
+  assert.ok(closestWithin(btn, '[id=toolbar]', root), '#exportBtn is in the toolbar (P4b)');
   assert.deepEqual([btn.attrs['aria-haspopup'], btn.attrs['aria-expanded'], btn.attrs['aria-controls'], btn.attrs.onclick], ['menu', 'false', 'exportMenu', undefined]);
   const surface = findById(root, 'exportSurface');
   assert.equal(surface.parent.attrs.id, 'ovPopovers');
@@ -258,7 +420,8 @@ test('no emoji in the primitives, the shell, the app-layer CSS, the overlay root
   const EMOJI = /\p{Extended_Pictographic}/u;
   for (const p of ['js/dom.js', 'js/keys.js', 'js/ui.js', 'js/shell.js', 'css/base.css', 'css/shell.css']) assert.doesNotMatch(read(path.join(ASSETS, p)), EMOJI, p);
   const lines = html.split('\n');
-  for (const id of ['overlayRoot', 'exportWrap', 'sidebar']) {
+  for (const p of ['js/live.js']) assert.doesNotMatch(read(path.join(ASSETS, p)), EMOJI, p);
+  for (const id of ['overlayRoot', 'exportWrap', 'sidebar', 'toolbar', 'statusBar']) {
     const el = findById(root, id);
     const last = elements(el).at(-1);
     const text = lines.slice(el.line - 1, (last ? last.line : el.line)).join('\n');
@@ -278,7 +441,9 @@ test('INTERACTIVE is one literal, in dom.js, and the shell\'s drag bands read it
   const literals = allJs.filter(s => /const INTERACTIVE\s*=\s*'/.test(s.code)).map(s => s.filename);
   assert.deepEqual(literals, ['viewer/assets/js/dom.js']);
   assert.equal((jsText.match(/const INTERACTIVE\s*=\s*'/g) || []).length, 1);
-  assert.equal((read(path.join(ASSETS, 'js', 'shell.js')).match(/\.closest\(dom\.INTERACTIVE\)/g) || []).length, 2, 'mousedown and dblclick');
+  const shellJs = read(path.join(ASSETS, 'js', 'shell.js'));
+  assert.equal((shellJs.match(/\.closest\(dom\.INTERACTIVE\)/g) || []).length, 1, 'one onControl(e) test ...');
+  assert.ok(/mousedown'[^]*?onControl\(e\)[^]*?dblclick'[^]*?onControl\(e\)/.test(shellJs), '... used by mousedown and dblclick');
   assert.doesNotMatch(inlineScripts(html).at(-1).code, /INTERACTIVE|initTopbarDrag|startDragging/, 'the legacy script has no drag code left');
 });
 
@@ -573,7 +738,8 @@ test('pseudo-elements that set padding, a border or a percentage size declare th
 
 test('every legacy animation or transition is switched off by both Reduce motion rules', () => {
   const legacy = cssFiles.find(f => f.path === 'css/legacy.css').text;
-  assert.ok(C.animatedSelectors(legacy).length >= 20, 'the legacy animation scan found too few selectors');
+  // legacy.css shrinks with every region PR (P4b removes the top bar's switches and buttons: 18 left).
+  assert.ok(C.animatedSelectors(legacy).length >= 15, 'the legacy animation scan found too few selectors');
   assert.deepEqual(C.reducedMotionCoverageErrors(legacy, 'viewer/assets/css/legacy.css'), []);
 });
 

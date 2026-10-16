@@ -6,16 +6,16 @@
      out the whole table at its full height (300-row build +13 %, layout CPU +31 % in Chromium). */
   #app { flex: 1 1 0; min-height: 0; display: grid; grid-template-columns: var(--side-w) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
   #main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-  /* contain: layout keeps the sidebar's twice-a-second text updates from relaying out the log column. */
+  /* contain: layout makes the sidebar the layout root of its own content. It is not size containment: the fixed
+     grid column (--side-w, 52 px as the rail) is what keeps its twice-a-second text updates from resizing the
+     log column. */
   #sidebar { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--hairline); contain: layout; }
 
   /* Drag bands (DRAG_BANDS in shell.js): the sidebar header and the top bar are one 52 px band. */
-  #sidebarHeader, #topbar { -webkit-user-select: none; user-select: none; }
+  #sidebarHeader, #toolbar { -webkit-user-select: none; user-select: none; }
   #sidebarHeader { display: flex; align-items: center; gap: 8px; height: var(--titlebar-h); padding: 0 8px 0 16px; flex: none; }
-  /* align-items: center overrides legacy's stretch: at 52 px the zoom group and the glass switch would stretch to the
-     full band, and both are INTERACTIVE, so the empty band around the pill or the buttons would not drag. */
-  #topbar { min-height: var(--titlebar-h); align-items: center; }
-  .side-title { font-size: 13px; font-weight: 600; white-space: nowrap; }
+  .side-title { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; white-space: nowrap; }
+  #sidebarToggle { margin-left: auto; }
   /* macOS: the traffic lights sit over the left of the band (titleBarStyle Overlay), so no title there. */
   .app[data-platform="mac"] #sidebarHeader { padding-left: 78px; }
   .app[data-platform="mac"] .side-title { display: none; }
@@ -65,4 +65,95 @@
 
   /* Footer (spec: 44 px, top hairline): Settings, Keyboard shortcuts, Theme. */
   #sidebarFooter { display: flex; align-items: center; gap: 4px; height: 44px; padding: 0 8px; flex: none; border-top: 1px solid var(--hairline); }
+
+  /* Collapsed rail (⌘B; spec: 52 px): icons only, every item with a tooltip on the right (shell.js). The
+     labels, counts, section heads and [data-rail-hide] items leave; a device keeps its badge and shape. */
+  .app[data-sidebar="collapsed"] #app { grid-template-columns: 52px minmax(0, 1fr); }
+  .app[data-sidebar="collapsed"] .side-title, .app[data-sidebar="collapsed"] .side-sec-h,
+  .app[data-sidebar="collapsed"] [data-rail-hide], .app[data-sidebar="collapsed"] .nav-item .meta, .app[data-sidebar="collapsed"] .dev-drops,
+  .app[data-sidebar="collapsed"] .dev-actions { display: none; }
+  /* A rail item's label is its accessible name (the icons are aria-hidden; the rail tooltip is a visual hint only, not wired to aria-describedby),
+     so it is hidden visually, never with display: none. */
+  .app[data-sidebar="collapsed"] .side-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .app[data-sidebar="collapsed"] #sidebarHeader { justify-content: center; padding: 0; }
+  .app[data-sidebar="collapsed"] #sidebarToggle { margin: 0; }
+  .app[data-sidebar="collapsed"] .nav-item, .app[data-sidebar="collapsed"] .side-cmd { justify-content: center; padding: 0; }
+  .app[data-sidebar="collapsed"] .side-cmd { width: var(--ctl-h); margin: 0 auto 8px; border-color: transparent; background: transparent; }
+  .app[data-sidebar="collapsed"] .side-sec { margin-top: 8px; }
+  /* Folding is an expanded-only preference: the rail hides the section heads, so a folded list would have no
+     way back. It shows every list (device badges, Live) whatever the fold state. */
+  .app[data-sidebar="collapsed"] .side-list[hidden] { display: flex; }
+  .app[data-sidebar="collapsed"] #sidebarFooter { flex-direction: column; height: auto; padding: 8px 0; }
+  /* macOS (spec Open item 5): the 52 px rail is narrower than the traffic lights, so the lights keep the whole
+     52 px band and the toggle wraps below it; the toolbar starts past the lights. */
+  .app[data-platform="mac"][data-sidebar="collapsed"] #sidebarHeader { flex-direction: column; justify-content: flex-start; height: auto; padding-top: var(--titlebar-h); padding-bottom: 4px; }
+  .app[data-platform="mac"][data-sidebar="collapsed"] #toolbar { padding-left: calc(78px - 52px + 16px); }
+
+  /* Toolbar (spec "Toolbar": 52, .chrome, bottom hairline, padding 0 12 0 16, gap 8; a size container).
+     Its height is fixed, so size and layout containment keep the badge's text updates inside it (no paint
+     containment: it would clip focus rings). */
+  #toolbar { display: flex; align-items: center; gap: 8px; height: var(--titlebar-h); padding: 0 12px 0 16px; flex: none; border-bottom: 1px solid var(--hairline); container: toolbar / inline-size; contain: size layout style; }
+  .tb-left { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+  .tb-right { display: flex; align-items: center; gap: 6px; flex: none; }
+  .tb-title { min-width: 0; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 600; }
+  #streamBadge { flex: none; font-variant-numeric: tabular-nums; }
+  /* The Streaming dot runs forever, so it must not cost a main-thread style + paint pass every frame inside the
+     backdrop-filtered .chrome band: the foundation's .dot.pulse animates box-shadow (not compositable). Replace
+     it here, keyed by id, with a ring that animates only transform and opacity. The duration is --t-pulse, so
+     Reduce motion still stops it. */
+  #streamDot.pulse { animation: none; position: relative; }
+  #streamDot.pulse::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: currentColor; pointer-events: none; animation: stream-ping var(--t-pulse) var(--ease) infinite; }
+  @keyframes stream-ping { 0% { transform: scale(1); opacity: .5; } 100% { transform: scale(2); opacity: 0; } }
+  .tb-zoom { display: flex; align-items: center; gap: 2px; }
+  #zoomResetBtn { min-width: 52px; font-variant-numeric: tabular-nums; }
+  #exportWrap { display: flex; }
+  /* Collapse tiers (spec): border-box widths minus the toolbar's 28 px of padding. Kbd hints (1291px) arrive
+     with P5's Space / End; until then the toolbar shows none. */
+  @container toolbar (max-width: 1151px) { #exportBtn .tb-label, #exportBtn .tb-chev { display: none; } }
+  @container toolbar (max-width: 1011px) { #zoomGroup, .tb-zoom-div { display: none; } }
+
+  /* Status bar (spec: --status-h, .chrome, top hairline, padding 0 12, gap 12). Its height is fixed, so size
+     and layout containment keep the Retained text and the #58 hint, written on every flush, inside it (no
+     paint containment: it would clip focus rings). */
+  #statusBar { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: var(--status-h); padding: 0 12px; flex: none; border-top: 1px solid var(--hairline); font-size: var(--ui-fs-sm); color: var(--text-2); container: statusbar / inline-size; contain: size layout style; }
+  /* The bar is flush with the bottom of the window and its buttons nearly fill it, so the global ring (2 px
+     outside a 2 px offset) would be drawn past the window edge: inset it, as for a log row. */
+  #statusBar button:focus-visible { outline-offset: -2px; }
+  .sb-left, .sb-right { display: flex; align-items: center; gap: 12px; min-width: 0; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  /* Overflow rule: nothing may be drawn over its neighbour. The Retained text gives way first (it is the long
+     one, its full wording is its title and Following's tooltip), then the device names. The right group shrinks
+     twice as fast as the left one (weight 2; at 8 it clipped Following by 4 px in the 1100×700 worst case) and
+     clips only as a last resort (it holds no control, so no focus ring is cut); inside it only the Retained text
+     and the note shrink, to an ellipsis, while the #58 hint and Following keep their width. A device name is
+     free text from the bridge: it is clipped to 160 px, and further when the bar is
+     narrower, on the inner span only (clipping the button would cut its focus ring). The platform badge and the
+     rate never shrink. */
+  .sb-left { flex: 0 1 auto; }
+  .sb-right { flex: 0 2 auto; overflow: hidden; }
+  #readingWindowHint, #followState { flex: none; }
+  #retainedText, #retainedNote { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .sb-dev { gap: 6px; min-width: 0; }   /* .btn-sm's --ctl-h-sm (24/24/28 px): at least the 24×24 target (WCAG 2.5.8) */
+  .sb-dev .plat, .sb-dev .sb-rate { flex: none; }
+  .sb-dev .plat { width: 16px; height: 16px; }
+  .sb-name { min-width: 0; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+  .sb-dev[data-state="streaming"] .sb-rate { color: var(--ok); }
+  .sb-dev[data-state="stalled"] .sb-rate { color: var(--warn); }
+  #dropsBtn { color: var(--warn); }
+  #readingWindowHint:not(.visible), #retainedText:empty, #retainedNote { display: none; }
+  #followState { display: inline-flex; align-items: center; gap: 6px; }
+  #followState[hidden] { display: none; }
+  #followState .dot { color: var(--text-3); }
+  #followState[data-on="true"] .dot { color: var(--ok); }
+  /* Below the tier the plain count gives way to the #45 discard note alone (#retainedNote, written by
+     updateStats): it is the only place that warning lives (#45 parity). The #58 hint is never hidden, at any
+     width: without it the scrollbar thumb misleads while the table holds a partial window. Where hint, note and
+     Following do not fit next to the devices, the note ends in an ellipsis (see the overflow rule above). */
+  @container statusbar (max-width: 975px) {
+    #retainedText { display: none; }
+    #retainedNote:not(:empty) { display: block; }
+  }
+  .drops-pop { width: 320px; max-width: calc(100vw - 16px); padding: 12px; display: flex; flex-direction: column; gap: 12px; background: var(--raised); border: 1px solid var(--hairline); border-radius: 8px; box-shadow: var(--shadow-md); }
+  .drops-pop[hidden] { display: none; }
+  .drops-title { font-weight: 600; }
+  .drops-desc { margin: 4px 0 0; color: var(--text-2); font-size: var(--ui-fs-sm); }
 }

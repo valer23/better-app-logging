@@ -78,7 +78,7 @@
   // starting the OS drag on the first press would swallow the second click. A press on anything matching
   // ALV.dom.INTERACTIVE never drags. Every control in a band is static markup, so the drag lint in
   // tests/viewer/static.test.mjs (which reads this literal) covers it.
-  const DRAG_BANDS = ['sidebarHeader', 'topbar'];
+  const DRAG_BANDS = ['sidebarHeader', 'toolbar'];
   const DRAG_THRESHOLD_PX = 4;
 
   // The iOS bridge calls a stream stalled after this many seconds of silence (STREAM_STALL_TIMEOUT_SECS in
@@ -101,7 +101,7 @@
     ios: { badge: 'i', cls: 'plat plat-i', fallback: 'iPhone' },
   };
 
-  // createShell({ doc, win, dom, ui, keys, prefs, state, actions, now }) → { sync(), markStalled(platform), closeMenus() }.
+  // createShell({ doc, win, dom, ui, keys, prefs, state, actions, now }) → { sync(), devices(), onTick(fn), onSidebar(fn), markStalled(platform), closeMenus() }.
   // Called once, by the legacy script, before its first selectSession. state() returns what the shell shows
   // (the legacy shellState()); actions are the legacy functions it calls. Without `state` only the drag
   // bands are wired (the drag tests).
@@ -115,14 +115,21 @@
       try { t.window.getCurrentWindow()[name](); } catch (err) { warn(`${name} failed`, err); }
     }
     let armed = null;   // { x, y } of the press while a drag is pending
+    // Whether the first press of the current click sequence was on a control. The OS counts a double-click by
+    // time and position, not by node, and a control can move the layout on its first click (the sidebar toggle
+    // swaps a 248 px column for the 52 px rail), so the second press may land on a background: that dblclick
+    // is the control's, not the window's. Shared by both bands (the second press may land in the other one).
+    let firstOnControl = false;
+    const onControl = e => !!e.target.closest(dom.INTERACTIVE);
     function initDragBand(el) {
       if (!el) return;
       el.addEventListener('mousedown', e => {
-        if (e.button !== 0 || e.target.closest(dom.INTERACTIVE) || e.detail >= 2) return;   // detail 2: a double-click's second press
+        if (e.detail === 1) firstOnControl = onControl(e);
+        if (e.button !== 0 || onControl(e) || e.detail >= 2) return;   // detail 2: a double-click's second press
         armed = { x: e.clientX, y: e.clientY };
       });
       el.addEventListener('dblclick', e => {
-        if (e.target.closest(dom.INTERACTIVE)) return;
+        if (firstOnControl || onControl(e)) return;
         armed = null;
         windowCall('toggleMaximize');
       });
@@ -147,6 +154,50 @@
       });
     }
 
+    // ---- The collapsed rail (⌘B). prefs keeps it (data-sidebar on <html>); a rail item's tooltip shows only
+    // while collapsed, on the right (spec). ----
+    const rail = () => prefs.get('sidebar') === 'collapsed';
+    // describe: false: the tip repeats the item's name (its visually hidden label), and a hidden element that
+    // aria-describedby points to still counts toward the description: the name would be read twice.
+    const railTip = (el, text) => (el ? ui.tooltip(el, { text, side: 'right', when: rail, describe: false }) : null);
+    // The sidebar's own controls keep the expanded layout's placement (below: a right tip would cover the next
+    // 28 px button of the footer row and, being hoverable, trap the pointer) and go to the right in the rail.
+    const sideOf = () => (rail() ? 'right' : 'bottom');
+    const toggle = $('sidebarToggle');
+    const toggleSidebar = () => prefs.set('sidebar', rail() ? 'expanded' : 'collapsed');
+    // Not over the legacy setup or stall modal (the rule ⌘E and ⌘O follow): collapsing moves focus to the
+    // toggle behind the modal.
+    const modalOpen = () => !!doc.querySelector('.modal-overlay.visible');
+    keys.register({ id: 'view.sidebar', keys: 'Mod+B', inText: true, when: () => !modalOpen(), run: toggleSidebar });
+    const toggleTip = toggle ? ui.tooltip(toggle, { text: 'Hide sidebar', shortcut: 'view.sidebar', side: sideOf }) : null;
+    if (toggle) toggle.addEventListener('click', toggleSidebar);
+    railTip($('cmdTrigger'), 'Search actions');
+    railTip($('sessLive'), 'Live session');
+    // The DEVICES rows by platform (filled below). Declared here: syncSidebar runs now, at creation.
+    const rows = {};
+    // Called when the rail state flips (not on creation or any other preference): the status bar's left group
+    // moves with the grid column, and a popup is placed on open and on resize only (live.js re-places its own).
+    const sidebarFns = [];
+    let wasCollapsed = rail();
+    function syncSidebar() {
+      const collapsed = rail();
+      if (collapsed !== wasCollapsed) { wasCollapsed = collapsed; for (const fn of sidebarFns) fn(collapsed); }
+      const label = collapsed ? 'Show sidebar' : 'Hide sidebar';
+      setAttr(toggle, 'aria-label', label);
+      setAttr(toggle, 'aria-expanded', String(!collapsed));
+      if (toggleTip) toggleTip.setText(label);
+      if (!collapsed) return;
+      // Focus on something the rail hides (a row's Start/Stop or More, or its open menu) would be lost: it
+      // goes to the toggle (one element, never moved), and a row menu anchored to a hidden More closes.
+      const f = doc.activeElement;
+      const inRowMenu = PLATFORMS.some(p => rows[p] && f && rows[p].surface.contains(f));
+      for (const p of PLATFORMS) if (rows[p]) rows[p].menu.close({ restoreFocus: false });
+      const hidden = f && $('sidebar') && $('sidebar').contains(f) && f.closest('[data-rail-hide], .side-sec-h, .dev-actions');
+      if (toggle && (inRowMenu || hidden)) toggle.focus();
+    }
+    prefs.onChange(syncSidebar);
+    syncSidebar();
+
     // ---- SESSIONS: "Live session" first, the opened file, "Open log file…" (spec) ----
     keys.register({ id: 'session.open', keys: 'Mod+O', inText: true, run: () => actions.openFile() });
     setText($('openFileKbd'), keys.label('session.open'));
@@ -170,7 +221,6 @@
     // the row is the device the platform's picker holds; a new device gets a new row (key: platform, id and
     // name), and the old row's menu and tooltips are destroyed with it. ----
     const deviceList = $('deviceList');
-    const rows = {};
     const meter = createRateMeter(1000);
     let rates = { android: 0, ios: 0 };
     // The log-line counter as the last tick (or markStalled) saw it. A stall ends only when it moves: devices,
@@ -178,6 +228,8 @@
     // respawn's "[connected:UDID]" arrives as a devices frame while the stream is still dead).
     const seen = { android: 0, ios: 0 };
     const stalled = { android: false, ios: false };
+    const devState = { android: null, ios: null };   // what each row shows, for the status bar (live.js)
+    const tickFns = [];
     function act(p, what) {
       if (what === 'stream') actions.toggleStream(p);
       else if (what === 'repair') actions.repair(p);
@@ -217,7 +269,7 @@
         onClose: () => r.li.removeAttribute('data-menu'),
       });
       r.startTip = ui.tooltip(r.start, { text: '' });
-      r.tips.push(r.startTip, ui.tooltip(r.more, { text: `More for ${name}` }));
+      r.tips.push(r.startTip, ui.tooltip(r.more, { text: `More for ${name}` }), railTip(r.main, name));
       return r;
     }
     // The old row goes: its menu and tooltips are destroyed, and focus that was in it (or in its open menu)
@@ -251,6 +303,7 @@
         const busy = st.status[p].state === 'connecting';
         const s = deviceStatus({ live, state: st.status[p].state, text: st.status[p].text, detected: !!dev.id,
           driverMissing: p === 'ios' && st.driverMissing, stalledFor: stalledFor(p, live), rate: rates[p], dropped: st.dropped[p] });
+        devState[p] = { state: s.state, rate: rates[p], name: r.name };
         setAttr(r.li, 'data-state', s.state);
         setAttr(r.li, 'data-tone', s.tone);
         setText(r.status, s.text);
@@ -271,11 +324,11 @@
     }
 
     // ---- Footer: Settings and Keyboard shortcuts wait for P14 and P13; the theme cycle (spec) ----
-    for (const [id, text] of [['settingsBtn', 'Settings'], ['shortcutsBtn', 'Keyboard shortcuts']]) if ($(id)) ui.tooltip($(id), { text });
+    for (const [id, text] of [['settingsBtn', 'Settings'], ['shortcutsBtn', 'Keyboard shortcuts']]) if ($(id)) ui.tooltip($(id), { text, side: sideOf });
     const themeBtn = $('themeBtn');
     const cycleTheme = () => prefs.set('theme', prefs.nextTheme(prefs.get('theme')));
     keys.register({ id: 'view.theme', keys: 'Shift+Mod+L', inText: true, run: cycleTheme });
-    const themeTip = themeBtn ? ui.tooltip(themeBtn, { text: '', shortcut: 'view.theme' }) : null;
+    const themeTip = themeBtn ? ui.tooltip(themeBtn, { text: '', shortcut: 'view.theme', side: sideOf }) : null;
     if (themeBtn) themeBtn.addEventListener('click', cycleTheme);
     let captionSent;   // what the Windows caption was last set to; undefined until the first call
     // prefs calls this on every change, including an OS appearance change while System is chosen.
@@ -312,10 +365,17 @@
         if (st.lines[p] !== seen[p]) { seen[p] = st.lines[p]; stalled[p] = false; }
       }
       render(st);
+      for (const fn of tickFns) fn();
     }
     win.setInterval(tick, TICK_MS);
     return {
       sync,
+      // Each device row's { state, rate, name } after the last sync or tick (the toolbar and status bar).
+      devices: () => devState,
+      // Runs fn after every tick's refresh (the toolbar's badge and the status bar, live.js).
+      onTick(fn) { tickFns.push(fn); },
+      // Runs fn(collapsed) after the sidebar went to or from the rail (⌘B or the toggle), once the layout moved.
+      onSidebar(fn) { sidebarFns.push(fn); },
       // The iOS bridge reported a stall (the legacy onmessage, paused or not): the row says "Stalled 15 s"
       // until the next log line. Lines that arrived before the report are not that line.
       markStalled(p) { seen[p] = state().lines[p]; stalled[p] = true; sync(); },
