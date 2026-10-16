@@ -775,10 +775,19 @@ document.getElementById('logTable').addEventListener('click', e => {
   // interval can exceed 500 ms, so a multi-click is swallowed for longer; plain row clicks are unaffected.
   const dt = performance.now() - newerPillJumpAt;
   if (dt < 500 || (e.detail >= 2 && dt < 2000)) return;
+  // A click that ends a text selection (a drag, the second click of a double click) is copying, not selecting: the
+  // selected row is the only one that wraps its message, so toggling it off here would collapse the row under the
+  // cursor and hide the text being picked.
+  const sel = window.getSelection ? window.getSelection() : null;
+  if (sel && !sel.isCollapsed) return;
   const s = cur, tr = e.target.closest('tr');
   if (!tr || !tr._message || tr._message.seq < s.seqFloor) return;   // frozen row of a trimmed line (resume drain after a backlog overflow)
   const tbody = tr.parentElement;
   if (s.sel === tr._message) {
+    // The open row's message is where text is picked (double and triple click start with a plain click): it never
+    // closes the row. Another cell of the row, or another row, does.
+    const cell = e.target.closest('td');
+    if (cell && cell.className === 'c-msg') return;
     s.sel = null;
     tr.removeAttribute('aria-selected');
     return;
