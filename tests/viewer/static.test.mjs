@@ -829,16 +829,18 @@ test('log grid: the columns come in the D14 order, the header reads Time, Lvl, T
 
 test('log grid: column widths are ch plus 12 px of cell padding, so they follow the log size and "15:54:26.290" fits', () => {
   const w = k => gridDecl(`.lgrid > colgroup > col.k-${k}`, 'width');
-  assert.deepEqual(['ts', 'tag', 'app', 'pid'].map(w), ['calc(12ch + 12px)', 'calc(18ch + 12px)', 'calc(20ch + 12px)', 'calc(11ch + 12px)']);
+  assert.deepEqual(['ts', 'tag', 'app', 'pid'].map(w), ['calc(12ch + 14px)', 'calc(18ch + 12px)', 'calc(20ch + 12px)', 'calc(11ch + 14px)'],
+    'Time and PID–TID hold text that must not be cut, so they get 2 px of slack over the 12 px padding (the shaped width can round up by a LayoutUnit)');
   assert.equal(w('lvl'), 'max(calc(1ch + 12px), 40px)', 'the LVL header needs 40 px at interface L');
   assert.equal(w('plat'), 'calc(max(18px, var(--log-fs) * 1.3) + 10px)', 'spec: the badge column follows the badge');
   assert.equal(w('msg'), undefined, 'Message takes the rest');
 });
 
 test('log grid: the table keeps a 24ch Message floor that follows the log font (it scrolls sideways at 20 px)', () => {
-  // 85ch = 12 + 18 + 20 + 11 ch of sized columns + a 24ch Message floor. 110px = the badge column's 10 px + Lvl's
-  // 40 px + 5 × 12 px of padding (Time, Tag, App, PID–TID, Message). Both terms scale with the table's own font.
-  assert.equal(gridDecl('.lgrid', 'min-width'), 'calc(max(18px, var(--log-fs) * 1.3) + 85ch + 110px)');
+  // 85ch = 12 + 18 + 20 + 11 ch of sized columns + a 24ch Message floor. 114px = the badge column's 10 px + Lvl's
+  // 40 px + 5 × 12 px of padding (Time, Tag, App, PID–TID, Message) + 2 × 2 px of slack (Time, PID–TID). Both terms
+  // scale with the table's own font.
+  assert.equal(gridDecl('.lgrid', 'min-width'), 'calc(max(18px, var(--log-fs) * 1.3) + 85ch + 114px)');
   assert.equal(gridDecl('.lgrid', 'table-layout'), 'fixed');
   assert.equal(gridDecl('.lgrid', '--row-h'), 'max(18px, calc(var(--log-fs) * var(--row-k)))', 'spec "Sizes": one row height for every row');
 });
