@@ -450,7 +450,7 @@ test('rail: the header toggle and ⌘B collapse and expand the sidebar through p
   assert.equal(prefs.get('sidebar'), 'expanded');
 });
 
-test('rail: focus on an item the rail hides (or in a row menu) moves to the toggle and the menu closes; focus on a rail item stays', () => {
+test('rail: focus on an item the rail hides moves to the toggle, from a row\'s Start/Stop or its open menu to its More; focus on a rail item stays', () => {
   const { p, prefs, $ } = shellPage();
   p.focus($('openFileBtn'));
   prefs.set('sidebar', 'collapsed');
@@ -467,13 +467,46 @@ test('rail: focus on an item the rail hides (or in a row menu) moves to the togg
   const a = parts(row(p, 'android'));
   p.focus(a.start);
   prefs.set('sidebar', 'collapsed');
-  assert.equal(p.doc.activeElement, $('sidebarToggle'), 'a row\'s Start/Stop and More are not in the rail');
+  assert.equal(p.doc.activeElement, a.more, 'the rail hides the row\'s Start/Stop button: focus goes to its More, whose first item is Start/Stop');
   prefs.set('sidebar', 'expanded');
   a.more.click();
   assert.equal(p.keys.escDepth(), 1, 'the row menu is open, focus in it');
   prefs.set('sidebar', 'collapsed');
-  assert.deepEqual([a.more.getAttribute('aria-expanded'), p.keys.escDepth(), p.doc.activeElement], ['false', 0, $('sidebarToggle')],
-    'the menu anchored to the hidden More closes; its focus goes to the toggle');
+  assert.deepEqual([a.more.getAttribute('aria-expanded'), p.keys.escDepth(), p.doc.activeElement], ['false', 0, a.more],
+    'the menu was placed against the expanded row: it closes, and its focus goes back to the More it belongs to');
+});
+
+test('rail: a device row\'s More stays in the rail: by keyboard it opens on Start / Stop streaming, which streams the device (P4b judge follow-up)', () => {
+  const { p, shell, state, prefs, calls } = shellPage({ st: { devices: { android: { id: 'a1', name: 'Pixel 8 Pro' }, ios: { id: 'u1', name: 'iPhone 15' } } } });
+  prefs.set('sidebar', 'collapsed');
+  const i = parts(row(p, 'ios'));
+  assert.equal(i.start.className, 'icon-btn sm dev-start', 'shell.css hides the row\'s own Start/Stop in the rail, by this class');
+  p.focus(i.more);
+  i.more.fire('keydown', { key: 'ArrowDown' });
+  const items = p.byId[i.more.getAttribute('aria-controls')].children;
+  assert.deepEqual([i.more.getAttribute('aria-expanded'), p.doc.activeElement, texts(items[0])], ['true', items[0], 'Start streaming'],
+    'ArrowDown (or Enter / Space, which click it) opens the menu on its first item');
+  items[0].click();
+  assert.deepEqual(calls.at(-1), ['toggleStream', 'ios']);
+  assert.equal(p.doc.activeElement, i.more, 'choosing an item closes the menu and returns to More');
+  state.live.ios = true;
+  shell.sync();
+  i.more.click();
+  assert.equal(texts(items[0]), 'Stop streaming', 'the same menu stops a streaming device');
+  prefs.set('theme', 'light');
+  assert.equal(i.more.getAttribute('aria-expanded'), 'true', 'a preference change that is not a flip leaves the open menu alone');
+  prefs.set('sidebar', 'expanded');
+  assert.deepEqual([i.more.getAttribute('aria-expanded'), p.keys.escDepth()], ['false', 0], 'expanding moves More: the menu placed against the rail closes');
+});
+
+test('rail: the More tooltip follows the rail to the right, like every other rail item', () => {
+  const { p, prefs } = shellPage({ st: { devices: { android: { id: 'a1', name: 'Pixel 8 Pro' }, ios: { id: '', name: '' } } } });
+  const a = parts(row(p, 'android'));
+  const tip = tipOf(p, a.more);
+  prefs.set('sidebar', 'collapsed');
+  a.more.fire('pointerenter', { pointerType: 'mouse' });
+  p.advance(400);
+  assert.deepEqual([tip.hidden, texts(tip), tip.style.left], [false, 'More for Pixel 8 Pro', '586px'], 'to the right of the 80 px fake anchor');
 });
 
 // The rail tip repeats the item's name (its visually hidden label), so it is not wired to aria-describedby: a

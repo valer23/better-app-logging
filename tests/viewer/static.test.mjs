@@ -258,6 +258,16 @@ test('rail: the header toggle, the 52 px rail column, and on macOS a full 52 px 
   assert.ok(decl('.app[data-sidebar="collapsed"] .side-label').some(d => d.prop === 'clip-path' && d.value === 'inset(50%)'));
 });
 
+test('rail: a device row keeps its More in the rail (Start/Stop is its first item); only the row\'s own Start/Stop button hides', () => {
+  const rules = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')));
+  const decl = sel => rules.filter(r => r.selectors.includes(sel)).flatMap(r => C.declarations(r.body));
+  const gone = rules.filter(r => !r.atRules.some(a => /^@(media|container)/.test(a)) && C.declarations(r.body).some(d => d.prop === 'display' && d.value === 'none')).flatMap(r => r.selectors);
+  assert.ok(!gone.some(s => /collapsed.*\.dev-actions\b/.test(s)), 'the rail no longer hides a row\'s actions (P4b judge follow-up: no Start/Stop in the rail)');
+  assert.ok(gone.includes('.app[data-sidebar="collapsed"] .dev-start'), 'the row\'s own Start/Stop is hidden in the rail, More carries it');
+  assert.deepEqual(decl('.app[data-sidebar="collapsed"] .dev-actions').map(d => `${d.prop}: ${d.value}`), ['position: static', 'transform: none'], 'under the badge, in the flow');
+  assert.ok(decl('.dev-row:focus-within .dev-actions').some(d => d.prop === 'opacity' && d.value === '1'), 'shown on focus, so the keyboard sees what it is on');
+});
+
 test('rail: a folded section still shows its list in the rail (the rail hides the fold buttons)', () => {
   const rules = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')));
   const decl = sel => rules.filter(r => r.selectors.includes(sel)).flatMap(r => C.declarations(r.body));
