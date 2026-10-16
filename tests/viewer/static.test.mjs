@@ -822,7 +822,8 @@ test('log grid: the columns come in the D14 order, the header reads Time, Lvl, T
   assert.equal(ths[0].attrs['aria-label'], 'Platform', 'the badge column is named, not labelled on screen');
   assert.deepEqual(ths.map(th => th.attrs['data-col'] || null), [null, 'ts', 'lvl', 'tag', 'app', 'pid', null], 'the columns grid.js gives a resize handle');
   const t = findById(root, 'logTableEl');
-  assert.deepEqual([t.attrs.class, t.attrs.role, t.attrs['aria-label']], ['lgrid', 'grid', 'Log lines']);
+  assert.deepEqual([t.attrs.class, t.attrs.role, t.attrs['aria-label'], t.attrs.tabindex], ['lgrid', 'grid', 'Log lines', '0'], 'the table is the grid\'s one Tab stop');
+  assert.match(t.attrs['aria-rowcount'] || '', /^\d+$/, 'grid.js keeps aria-rowcount current; the markup starts it at the header row');
   assert.match(html, /<link rel="stylesheet" href="assets\/css\/shell\.css">\n<link rel="stylesheet" href="assets\/css\/grid\.css">/);
   assert.match(read(path.join(ASSETS, 'css', 'grid.css')), /^@layer app \{$/m);
 });

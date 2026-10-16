@@ -111,6 +111,7 @@ test('buildRow: log text stays text (XSS), and no row of any shape exceeds 14 no
 
 // ---- createGrid on the fake page, with the page's #logWrapper mounted ----
 // The fake mount drops text between tags; `headerText` puts back the header texts the page's markup carries.
+// `st` is what shellState() returns (only `cur` is read); `ticks` holds the shell.onTick callbacks.
 function gridPage({ headerText = false } = {}) {
   const p = fakePage({ files: ['prefs.js', 'dom.js', 'keys.js', 'ui.js', 'shell.js', 'grid.js'] });
   mount(p, 'logWrapper');
@@ -120,7 +121,10 @@ function gridPage({ headerText = false } = {}) {
     assert.equal(hs.length, texts.length);
     hs.forEach((h, i) => { h.textContent = texts[i]; });
   }
-  const grid = p.ALV.createGrid({ doc: p.doc, dom: p.dom });
+  const st = { cur: { filtered: [] } };
+  const ticks = [];
+  const shell = { onTick: fn => ticks.push(fn) };
+  const grid = p.ALV.createGrid({ doc: p.doc, dom: p.dom, keys: p.keys, shell, state: () => st });
   const ths = p.byId.headerRow.children;
   const cols = p.byId.colgroup.children;
   const seps = ths.flatMap(th => th.children.filter(c => c.attrs.role === 'separator'));
@@ -129,7 +133,7 @@ function gridPage({ headerText = false } = {}) {
     for (const fn of sep.listeners.keydown || []) fn(ev);
     return ev;
   };
-  return { p, grid, ths, cols, seps, key };
+  return { p, grid, ths, cols, seps, key, st, ticks };
 }
 
 test('resize handles: one separator per boundary after Time, Lvl, Tag, App / Device and PID–TID, inside the next header cell', () => {
@@ -208,4 +212,52 @@ test('resize handles: a drag sets the width from the press, clamped, and ends cl
   assert.equal(cols[1].style.width, '40px', 'no listener left after the release');
   ts.fire('pointerdown', { button: 2, clientX: 300 });
   assert.equal(ts.getAttribute('data-drag'), null, 'a right press does not start a drag');
+});
+
+test('the grid: one Tab stop (the table) with role grid, and the scroller is the registry\'s grid root', () => {
+  const { p, seps } = gridPage();
+  const t = p.byId.logTableEl;
+  assert.deepEqual([t.attrs.role, t.attrs.tabindex, t.attrs['aria-label']], ['grid', '0', 'Log lines']);
+  let ran = 0;
+  p.keys.register({ id: 'test.grid', keys: 'G', scope: 'grid', run: () => { ran++; } });
+  const g = active => p.keys.dispatch({ key: 'g', code: 'KeyG', preventDefault() {} }, active);
+  assert.equal(g(t), 'test.grid', 'focus on the table');
+  assert.equal(g(seps[0]), null, 'a resize separator owns its unmodified keys (keys.js OWNING_ROLES)');
+  assert.equal(g(p.byId.filterbar), null, 'focus outside the grid: a grid-scoped single key never fires');
+  assert.equal(ran, 1);
+});
+
+test('aria-rowcount: filtered lines plus the header row, written on sync and on the shell tick, only when it changed', () => {
+  const { p, grid, st, ticks } = gridPage();
+  const t = p.byId.logTableEl;
+  let writes = 0;
+  const real = t.setAttribute.bind(t);
+  t.setAttribute = (k, v) => { if (k === 'aria-rowcount') writes++; real(k, v); };
+  st.cur = { filtered: new Array(48310) };
+  grid.sync();
+  assert.equal(t.attrs['aria-rowcount'], '48311');
+  assert.equal(ticks.length, 1, 'the grid follows the shell tick (twice a second), not the drain');
+  for (let i = 0; i < 10; i++) ticks[0]();
+  assert.equal(writes, 1, 'unchanged: no write');
+  st.cur = { filtered: [] };
+  ticks[0]();
+  assert.deepEqual([t.attrs['aria-rowcount'], writes], ['1', 2]);
+});
+
+test('the time cell gets the full timestamp (with its date) as a title on its first hover, never before', () => {
+  const { p } = gridPage();
+  const tr = p.doc.createElement('tr');
+  tr._message = { ts: '2026 Oct 14 15:53:43.000123' };
+  const ts = p.doc.createElement('td');
+  ts.className = 'c-ts';
+  const msg = p.doc.createElement('td');
+  msg.className = 'c-msg';
+  tr.appendChild(ts);
+  tr.appendChild(msg);
+  p.byId.tbody.appendChild(tr);
+  assert.equal(ts.title, undefined, 'buildRow sets no title');
+  msg.fire('pointerover');
+  assert.equal(msg.title, undefined, 'only the time cell');
+  ts.fire('pointerover');
+  assert.equal(ts.title, '2026 Oct 14 15:53:43.000123');
 });

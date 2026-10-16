@@ -45,9 +45,17 @@
 
   // ---- DOM ----
 
-  // createGrid({ doc, dom }) → {}. Adds a resize separator on each RESIZABLE boundary of #headerRow.
-  function createGrid({ doc, dom }) {
+  // createGrid({ doc, dom, keys, shell, state }) → { sync() }. Adds a resize separator on each RESIZABLE boundary of
+  // #headerRow, makes the scroller the shortcut registry's grid root and keeps aria-rowcount current. state() is the
+  // legacy shellState().
+  function createGrid({ doc, dom, keys, shell, state }) {
+    const { setAttr } = g.ALV.shellPure;   // shell.js loads first
     const $ = id => doc.getElementById(id);
+    const table = $('logTableEl');
+    const scroller = $('logTable');
+    // Grid-scoped keys (P5b: Space, F) fire while focus is on the table, the grid's one Tab stop (rows are never
+    // focusable until P9). A resize separator inside it owns its unmodified keys (keys.js OWNING_ROLES).
+    keys.setGridRoot(scroller);
     // ---- Column resize. Layout is read only on a user action (focus, a key, a press), never per flush. ----
     const ths = Array.from($('headerRow').children);
     const cols = Array.from($('colgroup').children);
@@ -101,7 +109,22 @@
       }
       host.appendChild(sep);
     }
-    return {};
+
+    // ---- The full timestamp, with its date, as the time cell's title: set on the first hover, never in buildRow. ----
+    scroller.addEventListener('pointerover', e => {
+      const td = e.target && e.target.closest ? e.target.closest('td') : null;
+      if (!td || td.className !== 'c-ts' || td.title) return;
+      const tr = td.closest('tr');
+      if (tr && tr._message && tr._message.ts) td.title = String(tr._message.ts);
+    });
+
+    // ---- aria-rowcount (spec): the shown session's filtered lines plus the header row. Written on shellSync and the
+    // shell's tick (twice a second), never from the drain, and only when it changed. ----
+    function sync() {
+      setAttr(table, 'aria-rowcount', String(state().cur.filtered.length + 1));
+    }
+    shell.onTick(sync);
+    return { sync };
   }
 
   const ALV = g.ALV || (g.ALV = {});

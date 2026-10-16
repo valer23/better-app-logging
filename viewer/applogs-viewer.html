@@ -209,7 +209,7 @@
      so they follow the log text size). Rows come from buildRow; assets/js/grid.js adds the resize separators. -->
 <div id="logWrapper">
   <div id="logTable">
-    <table id="logTableEl" class="lgrid" role="grid" aria-label="Log lines">
+    <table id="logTableEl" class="lgrid" role="grid" aria-label="Log lines" aria-rowcount="1" tabindex="0">
       <colgroup id="colgroup">
         <col class="k-plat"><col class="k-ts"><col class="k-lvl"><col class="k-tag"><col class="k-app"><col class="k-pid"><col class="k-msg">
       </colgroup>
@@ -803,7 +803,7 @@ shell = ALV.createShell({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, 
     repair: () => iosRepairFromHeader(), setup: p => showSetup(p) } });
 liveUi = ALV.createLive({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, keys: ALV.keys, prefs: ALV.prefs, shell, state: shellState,
   actions: { togglePause, toggleAutoScroll, clear: clearLogs, zoom: setLogZoom, openFile: openLogFile, setGlass, togglePlatform } });
-grid = ALV.createGrid({ doc: document, dom: ALV.dom });
+grid = ALV.createGrid({ doc: document, dom: ALV.dom, keys: ALV.keys, shell, state: shellState });
 function shellState() {
   return {
     cur, sessions: [liveSession, fileSession],
@@ -812,7 +812,7 @@ function shellState() {
     maxRetained: MAX_RETAINED,   // the status bar's Following tooltip (Retained text)
   };
 }
-function shellSync() { if (shell) shell.sync(); if (liveUi) liveUi.sync(); }
+function shellSync() { if (shell) shell.sync(); if (liveUi) liveUi.sync(); if (grid) grid.sync(); }
 // "Open log file…" (the SESSIONS row and ⌘O): the file session, then the picker. The picker is the
 // dropzone's file input, so a picked file loads exactly like a dropped one (handleFile).
 function openLogFile() {
