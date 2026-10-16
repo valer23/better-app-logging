@@ -46,6 +46,7 @@ pub static FILES: &[(&str, &[u8])] = embed![
     "icons/LICENSE-lucide.txt",
     "js/dev-bench.js",
     "js/dom.js",
+    "js/grid.js",
     "js/keys.js",
     "js/live.js",
     "js/prefs.js",
