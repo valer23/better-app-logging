@@ -552,7 +552,7 @@ function streamPage() {
   v.run(`globalThis.__ws = {}; WebSocket = function (url) { const ws = { url, close() {} }; __ws[url.endsWith(':8765') ? 'android' : 'ios'] = ws; return ws; };
     document.getElementById('androidDeviceSelect').value = 'a1'; document.getElementById('iosDeviceSelect').value = 'u1';`);
   return { ...v,
-    open(p) { v.run(`${p === 'android' ? 'connectAndroid' : 'connectIos'}(); __ws.${p}.onopen()`); },
+    open(p) { v.run(`${p === 'android' ? 'openAndroid' : 'openIos'}(); __ws.${p}.onopen()`); },
     view: () => ['livePanel', 'logWrapper'].filter(id => display(v, id) === '').join(),
   };
 }

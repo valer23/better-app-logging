@@ -1064,10 +1064,12 @@ function noteFrame(e, platform) {
   else if (platform === 'ios' && shell && d.startsWith('{"type":"error"') && d.toLowerCase().includes('stalled')) shell.markStalled('ios');
 }
 
-// Start streaming with no device in the picker: run the platform's detection, then connect if it found one, else
-// "No device". The pickers are filled only at startup and by the legacy card's ↻, and the card is hidden while the
-// live session holds lines or a stream shows, so a device plugged in after launch could never start. Detecting shows as Connecting… (the
-// sidebar row is busy). One detection per platform at a time; a Stop meanwhile (disconnect*) drops it. No polling (P8).
+// Start streaming (sidebar row, its menu, the legacy Connect): run the platform's detection, then connect if it
+// found a device, else "No device". Always, not only with an empty picker: the pickers are filled at startup and
+// by the legacy card's ↻ (hidden while lines or a stream show), so a device plugged in after launch could never
+// start, and one unplugged since kept "Ready · stopped" and opened a socket to a bridge with no phone. Detecting
+// shows as Connecting… (the sidebar row is busy). One detection per platform at a time; a Stop meanwhile
+// (disconnect*) drops it. No polling (P8).
 async function detectThenConnect(platform) {
   if (detecting[platform]) return;                     // a second Start while detecting
   const android = platform === 'android';
@@ -1079,16 +1081,15 @@ async function detectThenConnect(platform) {
   if (detecting[platform] !== token) return;           // stopped meanwhile
   detecting[platform] = null;
   const sel = document.getElementById(android ? 'androidDeviceSelect' : 'iosDeviceSelect');
-  if (sel && sel.value) { if (android) connectAndroid(); else connectIos(); return; }
+  if (sel && sel.value) { if (android) openAndroid(); else openIos(); return; }
   resetConnectBtn(platform);
   setStatus(platform, 'error', 'No device');
   setTimeout(() => { const s = liveStatus[platform]; if (s.state === 'error' && s.text === 'No device') setStatus(platform, 'disconnected', 'Disconnected'); }, 1500);
 }
 
 // ── WebSocket: Android ──
-function connectAndroid() {
-  const sel = document.getElementById('androidDeviceSelect');
-  if (!sel || !sel.value || detecting.android) { detectThenConnect('android'); return; }   // nothing picked yet, or a detection in flight
+function connectAndroid() { detectThenConnect('android'); }   // Start: always detect first
+function openAndroid() {
   setStatus('android', 'connecting', 'Connecting…');
   document.getElementById('androidBtn').disabled = true;
   wsAndroid = new WebSocket('ws://localhost:8765');
@@ -1116,9 +1117,8 @@ function disconnectAndroid() {
 function toggleAndroid() { androidLive ? disconnectAndroid() : connectAndroid(); }
 
 // ── WebSocket: iOS ──
-function connectIos() {
-  const sel = document.getElementById('iosDeviceSelect');
-  if (!sel || !sel.value || detecting.ios) { detectThenConnect('ios'); return; }   // nothing picked yet, or a detection in flight
+function connectIos() { detectThenConnect('ios'); }   // Start: always detect first
+function openIos() {
   setStatus('ios', 'connecting', 'Connecting…');
   document.getElementById('iosBtn').disabled = true;
   wsIos = new WebSocket('ws://localhost:8766');
