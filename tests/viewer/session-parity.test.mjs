@@ -750,5 +750,67 @@ test('held Enter: Follow, Pause and the pill button ignore keydown auto-repeat (
     const ev = { key: 'Enter', repeat: true, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
     for (const fn of v.doc.listeners.get(`${id}:keydown`) || []) fn(ev);
     assert.equal(ev.defaultPrevented, true, `#${id}: a held Enter does not activate it again`);
+    const first = { key: 'Enter', repeat: false, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+    for (const fn of v.doc.listeners.get(`${id}:keydown`) || []) fn(first);
+    assert.equal(first.defaultPrevented, false, `#${id}: the first Enter (not a repeat) still activates it`);
+    const space = { key: ' ', repeat: false, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+    for (const fn of v.doc.listeners.get(`${id}:keydown`) || []) fn(space);
+    assert.equal(space.defaultPrevented, false, `#${id}: the first Space (not a repeat) still activates it`);
   }
+});
+
+// Where the page parks focus when a keyboard activation hides or retargets the pill (behaviour change 19). A keyboard
+// activation (detail 0) keeps the pill button's focus, so the hide in updateNewerPill moves it to the toolbar button the
+// pill stood in for; a pointer click (detail 1) blurs it first. Resume with lines below turns the pill into the jump pill
+// instead of hiding it, so focus stays on the button.
+const focusId = v => v.doc.activeElement && v.doc.activeElement.id;
+function pillFocusBoot() {
+  const v = boot();
+  v.doc.hidden = false;
+  // The sticky elements are deepStubs: give the three ids the page reads focus through a real `id`.
+  for (const id of ['autoScrollBtn', 'pauseBtn', 'newerPillBtn']) v.doc.getElementById(id).id = id;
+  v.send(5); v.api.flushBatch();
+  return v;
+}
+test('pill focus: a keyboard Resume while following moves focus from the pill to Pause', () => {
+  const v = pillFocusBoot();
+  v.api.togglePause();
+  assert.equal(v.run('newerPillMode'), 'paused');
+  v.doc.getElementById('newerPillBtn').focus();
+  v.run('pillAction({ detail: 0 })');
+  assert.equal(v.run('livePaused'), false);
+  assert.equal(v.doc.getElementById('newerPill').classList.contains('visible'), false, 'following again: the pill is gone');
+  assert.equal(focusId(v), 'pauseBtn');
+});
+test('pill focus: a keyboard Jump to latest while reading moves focus from the pill to Follow', () => {
+  const v = pillFocusBoot();
+  v.api.toggleAutoScroll();
+  v.doc.hidden = true; v.send(3, 5); v.api.flushBatch(); v.doc.hidden = false;
+  v.api.updateNewerPill();
+  assert.equal(v.run('newerPillMode'), 'newer');
+  assert.match(v.pill(), /^3 lines below$/);
+  v.doc.getElementById('newerPillBtn').focus();
+  v.run('pillAction({ detail: 0 })');
+  assert.equal(v.run('liveSession.follow'), true);
+  assert.equal(focusId(v), 'autoScrollBtn');
+});
+test('pill focus: a keyboard Resume with lines below keeps focus on the pill, now the jump pill', () => {
+  const v = pillFocusBoot();
+  v.api.toggleAutoScroll();
+  v.doc.hidden = true; v.send(3, 5); v.api.flushBatch(); v.doc.hidden = false;
+  v.api.togglePause();
+  assert.equal(v.run('newerPillMode'), 'paused');
+  v.doc.getElementById('newerPillBtn').focus();
+  v.run('pillAction({ detail: 0 })');
+  assert.equal(v.run('livePaused'), false);
+  assert.equal(v.run('newerPillMode'), 'newer');
+  assert.match(v.pill(), / lines below$/);
+  assert.equal(focusId(v), 'newerPillBtn');
+});
+test('pill focus: a pointer click drops the pill button focus first (no parking on Follow)', () => {
+  const v = pillFocusBoot();
+  v.api.togglePause();
+  v.doc.getElementById('newerPillBtn').focus();
+  v.run('pillAction({ detail: 1 })');
+  assert.notEqual(focusId(v), 'pauseBtn');
 });

@@ -143,6 +143,9 @@ export function stickyDocument({ hidden = true, values = { search: '', tagFilter
   // test can call a handler the page registered (a delegated click on #logTable, say).
   const listeners = new Map();
   doc.listeners = listeners;
+  // Focus: focus() / blur() on a sticky element move document.activeElement (null = <body>), so a test can
+  // read where the page parked focus (the pill hiding under a keyboard activation).
+  doc.activeElement = null;
   doc.getElementById = id => {
     if (!els.has(id)) {
       const el = deepStub(`#${id}`);
@@ -155,6 +158,8 @@ export function stickyDocument({ hidden = true, values = { search: '', tagFilter
         contains: c => classes.has(c),
         toggle: (c, force) => { const on = force === undefined ? !classes.has(c) : !!force; if (on) classes.add(c); else classes.delete(c); return on; },
       };
+      el.focus = () => { doc.activeElement = el; };
+      el.blur = () => { if (doc.activeElement === el) doc.activeElement = null; };
       el.addEventListener = (type, fn) => {
         const k = `${id}:${type}`;
         if (!listeners.has(k)) listeners.set(k, []);
