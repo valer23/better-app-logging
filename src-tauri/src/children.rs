@@ -102,7 +102,7 @@ impl Registry {
     }
 
     #[cfg(all(test, unix))]
-    fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.lock().children.len()
     }
 }

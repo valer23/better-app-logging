@@ -9,6 +9,7 @@
 //! - `GET /assets/*path` — viewer CSS, JS and fonts (`viewer_assets`, exact-match table)
 //! - `GET /devices/{android,ios}`, `GET /ios-driver-status` — device discovery
 //! - `POST /ios/{pair,unpair,repair}` — iOS pairing actions
+//! - `POST /ios/quiet` — "Quiet system noise" (`bridge::ios::set_quiet`)
 //! - `POST /window/glass-mode` — toggle macOS NSVisualEffectView material
 //!
 //! `Cache-Control: no-store` for fast iteration.
@@ -58,6 +59,7 @@ pub async fn serve(app: AppHandle, ready_tx: Sender<()>) -> Result<(), String> {
         .route("/ios/unpair", post(ios_unpair))
         .route("/ios/pair", post(ios_pair))
         .route("/ios/repair", post(ios_repair))
+        .merge(ios_quiet_routes())
         .route("/window/glass-mode", post(set_glass_mode))
         .layer(cors);
     let app_router = router.with_state(app);
@@ -524,6 +526,30 @@ async fn run_idevicepair(sub: &str, timeout_secs: u64) -> serde_json::Value {
     })
 }
 
+// ─── Quiet system noise ─────────────────────────────────────────────────────
+
+/// Request body for `POST /ios/quiet`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IosQuietReq {
+    on: bool,
+}
+
+/// Stateless, so `serve` and the tests share the route string.
+fn ios_quiet_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
+    Router::new().route("/ios/quiet", post(set_ios_quiet))
+}
+
+/// `POST /ios/quiet {"on": bool}` → `{"on": bool}` (the stored value). The
+/// bridge restarts idevicesyslog only when the value changes (bridge/ios.rs).
+/// Origin-gated like the pairing endpoints; a bad body is a 4xx from `Json`.
+async fn set_ios_quiet(headers: HeaderMap, Json(req): Json<IosQuietReq>) -> Response {
+    if let Err(e) = require_browser_origin(&headers) {
+        return e.into_response();
+    }
+    Json(serde_json::json!({ "on": crate::bridge::ios::set_quiet(req.on) })).into_response()
+}
+
 // ─── Window effects ─────────────────────────────────────────────────────────
 
 /// Request body for `POST /window/glass-mode`.
@@ -599,6 +625,42 @@ mod tests {
 
     /// Send `GET <uri>` through the real asset router (route registration, prefix stripping and
     /// percent-decoding included), not straight into the handler.
+    async fn post_quiet(origin: Option<&str>, body: &str) -> Response {
+        let mut req = Request::builder()
+            .method(Method::POST)
+            .uri("/ios/quiet")
+            .header(header::CONTENT_TYPE, "application/json");
+        if let Some(o) = origin {
+            req = req.header(header::ORIGIN, o);
+        }
+        ios_quiet_routes::<()>()
+            .oneshot(req.body(Body::from(body.to_owned())).expect("request"))
+            .await
+            .expect("infallible")
+    }
+
+    /// The only test that touches the process-wide setting; it ends off.
+    #[tokio::test]
+    async fn ios_quiet_is_origin_gated_validated_and_answers_the_stored_value() {
+        for origin in [None, Some("http://evil.example")] {
+            let res = post_quiet(origin, r#"{"on":true}"#).await;
+            assert_eq!(res.status(), StatusCode::FORBIDDEN, "{origin:?}");
+        }
+        for bad in [r#"{"on":"yes"}"#, r#"{"on":true,"x":1}"#, "{}", "nope"] {
+            let res = post_quiet(Some("http://localhost:8780"), bad).await;
+            assert!(res.status().is_client_error(), "{bad}");
+        }
+        for on in [true, false] {
+            let res = post_quiet(Some("http://127.0.0.1:8780"), &format!(r#"{{"on":{on}}}"#)).await;
+            assert_eq!(res.status(), StatusCode::OK);
+            let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+                .await
+                .expect("body");
+            let v: serde_json::Value = serde_json::from_slice(&body).expect("json");
+            assert_eq!(v, serde_json::json!({ "on": on }));
+        }
+    }
+
     async fn get_uri(uri: &str) -> Response {
         asset_routes::<()>()
             .oneshot(

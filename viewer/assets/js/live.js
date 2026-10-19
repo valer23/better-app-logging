@@ -45,11 +45,11 @@
       desc: `The viewer fell behind${at}, so the bridge dropped the oldest unsent lines. Exports will have the same gap. Resets on Clear.`,
     };
   }
-  // A status-bar device button's rate (spec): "842/s", "connecting…", "stalled" or "stopped".
-  function deviceRate(state, rate) {
-    if (state === 'streaming') return sp().fmtRate(rate);
-    if (state === 'connecting') return 'connecting…';
-    return state === 'stalled' ? 'stalled' : 'stopped';
+  // A status-bar device button's rate (spec): "842/s", "connecting…", "stalled" or "stopped", then " · quiet"
+  // while Quiet system noise filters it (shell.js decides when: QUIET_STATES).
+  function deviceRate(state, rate, quiet) {
+    const r = state === 'streaming' ? sp().fmtRate(rate) : state === 'connecting' ? 'connecting…' : state === 'stalled' ? 'stalled' : 'stopped';
+    return quiet ? `${r} · quiet` : r;
   }
 
   // ---- DOM ----
@@ -144,7 +144,7 @@
       for (const [p, id] of PLAT) {
         const d = dev[p] || { state: 'disconnected', rate: 0, name: '' };
         setText($(`${id}Name`), d.name);
-        setText($(`${id}Rate`), deviceRate(d.state, d.rate));
+        setText($(`${id}Rate`), deviceRate(d.state, d.rate, !!d.quiet));
         setAttr($(id), 'data-state', d.state);
         setAttr($(id), 'aria-pressed', String(st.enabled.has(p)));
         const n = st.dropped[p];

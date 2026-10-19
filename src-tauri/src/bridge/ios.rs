@@ -3,16 +3,21 @@
 //!
 //! Auto-respawns on subprocess exit (2 s backoff) so unplugging + replugging
 //! the iPhone resumes streaming without restarting the app.
+//!
+//! "Quiet system noise" (`set_quiet`, `POST /ios/quiet`) adds `-q` and
+//! `-e <QUIET_EXTRA_EXCLUDES>`: idevicesyslog then drops those processes'
+//! lines before they reach us. A change kills the running child and respawns
+//! it at once with the new arguments.
 
 use std::process::Stdio;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use chrono::Datelike;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::sync::{broadcast, Notify};
+use tokio::sync::{broadcast, watch, Notify};
 
-use crate::children;
+use crate::children::{self, Registry};
 use crate::frame::{DevicesFrame, ErrorFrame, Frame, LogFrame};
 use crate::parser::{ios_level, ANSI_RE, IOS_RE};
 use crate::tooling;
@@ -23,6 +28,22 @@ use crate::tooling;
 /// the child lets the outer `spawn` loop reconnect from scratch.
 const STREAM_STALL_TIMEOUT_SECS: u64 = 15;
 
+/// The same, while "Quiet system noise" is on. The watchdog is fed only by lines
+/// that reach stdout, and `-q`/`-e` drop 93-99 % of an iPhone's volume inside
+/// idevicesyslog, so a locked or idle phone can stay silent for longer than 15 s
+/// on a healthy stream. Not yet measured on a locked iPhone with `-q` for minutes
+/// (open item in the PR); the page mirrors this value (`STALL_SECONDS_QUIET`).
+const QUIET_STALL_TIMEOUT_SECS: u64 = 60;
+
+/// The silence that counts as a stall for the current setting.
+fn stall_timeout(quiet: bool) -> Duration {
+    Duration::from_secs(if quiet {
+        QUIET_STALL_TIMEOUT_SECS
+    } else {
+        STREAM_STALL_TIMEOUT_SECS
+    })
+}
+
 const STALL_HINT: &str = concat!(
     "iOS log stream stalled — restarting idevicesyslog. ",
     "If this repeats, the pair record is usually stale: ",
@@ -31,48 +52,137 @@ const STALL_HINT: &str = concat!(
     "(3) `sudo launchctl kickstart -k system/com.apple.usbmuxd` on the Mac.",
 );
 
+/// Processes "Quiet system noise" excludes on top of idevicesyslog's own `-q`
+/// list (`idevicesyslog --quiet-list`). Measured on an iPhone streaming 6-13k
+/// lines/s: `-q` alone cut 10 s from 8 387 lines to 545, and these five led
+/// what was left (IntelligencePlatformComputeService bursts reach 13k/s).
+/// The only copy of the list; not user-editable until P14's Settings.
+pub(crate) const QUIET_EXTRA_EXCLUDES: &[&str] = &[
+    "PerfPowerServices",
+    "IntelligencePlatformComputeService",
+    "wirelessinsightsd",
+    "cameracaptured",
+    "searchpartyd",
+];
+
+/// The "Quiet system noise" setting, process-wide (precedent: `children::GLOBAL`).
+/// Off at launch; the page re-sends a saved "on" when it loads. A watch channel
+/// rather than an atomic, so a change wakes the running stream at once.
+static QUIET: LazyLock<watch::Sender<bool>> = LazyLock::new(|| watch::Sender::new(false));
+
+/// Sets "Quiet system noise" (`POST /ios/quiet`); returns the stored value.
+pub fn set_quiet(on: bool) -> bool {
+    store_quiet(&QUIET, on)
+}
+
+/// Notifies the bridge only on a real change, so the same value sent again
+/// (every page load) never restarts idevicesyslog.
+fn store_quiet(quiet: &watch::Sender<bool>, on: bool) -> bool {
+    if quiet.send_if_modified(|v| std::mem::replace(v, on) != on) {
+        tracing::info!("[ios] quiet system noise {}", if on { "on" } else { "off" });
+    }
+    *quiet.borrow()
+}
+
+/// idevicesyslog's arguments. Quiet adds `-q -e "a|b|…"`, the form measured
+/// above (one `-e`, names joined by `|`). No shell is involved, so `|` is
+/// literal on Windows too. Never add `-p`: idevicesyslog refuses it with `-e`/`-q`.
+fn syslog_args(quiet: bool) -> Vec<String> {
+    let mut args = vec!["--no-colors".to_string()];
+    if quiet {
+        args.extend([
+            "-q".to_string(),
+            "-e".to_string(),
+            QUIET_EXTRA_EXCLUDES.join("|"),
+        ]);
+    }
+    args
+}
+
 /// Spawn the iOS bridge worker. Returns immediately; runs forever in a tokio task.
 pub fn spawn(tx: broadcast::Sender<String>) {
     tauri::async_runtime::spawn(async move {
+        let mut quiet = QUIET.subscribe();
         loop {
-            let res = run_once(&tx).await;
+            let on = *quiet.borrow_and_update();
+            let res = run_once(&tx, on, &mut quiet).await;
             // App is exiting (children already killed): stop instead of
             // surfacing the resulting EOF as a bridge error and respawning.
             if children::is_shutting_down() {
                 tracing::debug!("[ios] shutdown — bridge loop exit");
                 break;
             }
-            if let Err(e) = res {
-                tracing::warn!("[ios] bridge error: {e}");
-                emit_error(&tx, &format!("ios bridge error: {e}"));
+            match res {
+                // Quiet changed: respawn now with the new arguments, without an
+                // error frame or the backoff.
+                Ok(Respawn::Now) => continue,
+                Ok(Respawn::AfterBackoff) => {}
+                Err(e) => {
+                    tracing::warn!("[ios] bridge error: {e}");
+                    emit_error(&tx, &format!("ios bridge error: {e}"));
+                }
             }
-            // Respawn delay — gives the device a chance to come back if it was unplugged.
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            // Respawn delay — gives the device a chance to come back if it was
+            // unplugged. A quiet change ends it early.
+            backoff(&mut quiet).await;
         }
     });
 }
 
-async fn run_once(tx: &broadcast::Sender<String>) -> Result<(), String> {
-    tracing::info!("[ios] spawning idevicesyslog --no-colors");
+/// When the loop spawns the next child after a run that was not an error.
+#[derive(Debug)]
+enum Respawn {
+    Now,
+    AfterBackoff,
+}
+
+async fn run_once(
+    tx: &broadcast::Sender<String>,
+    quiet: bool,
+    changed: &mut watch::Receiver<bool>,
+) -> Result<Respawn, String> {
+    let args = syslog_args(quiet);
+    tracing::info!("[ios] spawning idevicesyslog {}", args.join(" "));
+    let mut cmd = tooling::tokio_command("idevicesyslog");
+    cmd.args(&args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    stream_child(
+        tx,
+        &children::GLOBAL,
+        &mut cmd,
+        changed,
+        stall_timeout(quiet),
+    )
+    .await
+}
+
+/// Spawns `cmd` in `reg`, streams its stdout until EOF, `stall_after` of
+/// silence or a quiet change, then kills and reaps it before returning, so two children never
+/// overlap. `reg` is a parameter so the tests use their own registry.
+async fn stream_child(
+    tx: &broadcast::Sender<String>,
+    reg: &'static Registry,
+    cmd: &mut tokio::process::Command,
+    changed: &mut watch::Receiver<bool>,
+    stall_after: Duration,
+) -> Result<Respawn, String> {
     // Registered with `children` so it is killed on app exit — `kill_on_drop`
     // alone never fires there (see children.rs). The registry owns the child
     // from spawn; `kill_on_drop` only fires when `Tracked` is dropped on an
     // early return, or when `kill_all` drops a `Child` whose `start_kill` failed.
-    let (child, stdout, stderr) = children::spawn(
-        tooling::tokio_command("idevicesyslog")
-            .arg("--no-colors")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true),
-    )
-    .map_err(|e| format!("spawn idevicesyslog: {e} (is libimobiledevice installed?)"))?;
+    let (child, stdout, stderr) = reg
+        .spawn(cmd)
+        .map_err(|e| format!("spawn idevicesyslog: {e} (is libimobiledevice installed?)"))?;
 
     let stdout = stdout.ok_or("no stdout")?;
     let stderr = stderr.ok_or("no stderr")?;
 
-    // Drain stderr in a sibling task — forwarded as ErrorFrame.
+    // Drain stderr in a sibling task — forwarded as ErrorFrame. tokio::spawn:
+    // this always runs inside a tokio runtime (Tauri's, or a test's).
     let stderr_tx = tx.clone();
-    tauri::async_runtime::spawn(async move {
+    tokio::spawn(async move {
         let mut reader = BufReader::new(stderr).lines();
         while let Ok(Some(line)) = reader.next_line().await {
             if line.trim().is_empty() {
@@ -89,27 +199,35 @@ async fn run_once(tx: &broadcast::Sender<String>) -> Result<(), String> {
     let activity = Arc::new(Notify::new());
 
     let read_loop = read_lines(stdout, tx.clone(), activity.clone());
-    let stall_watch = watch_for_stall(activity.clone());
+    let stall_watch = watch_for_stall(activity.clone(), stall_after);
 
     let outcome = tokio::select! {
         r = read_loop => r,
         r = stall_watch => r,
+        () = quiet_changed(changed) => StreamOutcome::QuietChanged,
     };
 
     // Kill + reap before returning, in all branches, so we never leak a zombie
-    // across respawns. Harmless if the child has already exited
-    // (`ReaderEof`) or `kill_all` already took it at shutdown; on stall /
-    // reader error it ensures the SIGKILL is reaped.
+    // across respawns and never run two children. Harmless if the child has
+    // already exited (`ReaderEof`) or `kill_all` already took it at shutdown;
+    // on stall / reader error / quiet change it ensures the SIGKILL is reaped.
     child.kill_and_reap().await;
 
     match outcome {
+        StreamOutcome::QuietChanged => {
+            tracing::info!("[ios] quiet system noise changed — restarting idevicesyslog");
+            Ok(Respawn::Now)
+        }
         StreamOutcome::Stalled => {
-            tracing::warn!("[ios] stream stalled after {STREAM_STALL_TIMEOUT_SECS}s — respawning");
+            tracing::warn!(
+                "[ios] stream stalled after {}s — respawning",
+                stall_after.as_secs()
+            );
             emit_error(tx, STALL_HINT);
             // Return Ok so the outer `spawn` loop respawns silently without
             // also emitting a generic "ios bridge error: stream stalled" frame
             // — that would overwrite the actionable hint above in the UI.
-            Ok(())
+            Ok(Respawn::AfterBackoff)
         }
         StreamOutcome::ReaderEof => Err("idevicesyslog exited (EOF)".into()),
         StreamOutcome::ReaderErr(e) => Err(e),
@@ -118,8 +236,26 @@ async fn run_once(tx: &broadcast::Sender<String>) -> Result<(), String> {
 
 enum StreamOutcome {
     Stalled,
+    QuietChanged,
     ReaderEof,
     ReaderErr(String),
+}
+
+/// The respawn delay. A quiet change ends it early, so the new setting
+/// applies at once (for example while no iPhone is plugged in).
+async fn backoff(changed: &mut watch::Receiver<bool>) {
+    tokio::select! {
+        () = tokio::time::sleep(Duration::from_secs(2)) => {}
+        () = quiet_changed(changed) => {}
+    }
+}
+
+/// Resolves on the next quiet change. The sender is a static and never drops;
+/// if it ever did, this waits forever instead of spinning the loop.
+async fn quiet_changed(changed: &mut watch::Receiver<bool>) {
+    if changed.changed().await.is_err() {
+        std::future::pending::<()>().await;
+    }
 }
 
 async fn read_lines(
@@ -191,16 +327,11 @@ async fn read_lines(
 }
 
 /// Arms only after the first ping, then fires if no ping arrives within
-/// `STREAM_STALL_TIMEOUT_SECS`. Caller respawns the child on return.
-async fn watch_for_stall(activity: Arc<Notify>) -> StreamOutcome {
+/// `stall_after`. Caller respawns the child on return.
+async fn watch_for_stall(activity: Arc<Notify>, stall_after: Duration) -> StreamOutcome {
     activity.notified().await;
     loop {
-        match tokio::time::timeout(
-            Duration::from_secs(STREAM_STALL_TIMEOUT_SECS),
-            activity.notified(),
-        )
-        .await
-        {
+        match tokio::time::timeout(stall_after, activity.notified()).await {
             Ok(()) => continue,
             Err(_) => return StreamOutcome::Stalled,
         }
@@ -223,4 +354,144 @@ fn emit_error(tx: &broadcast::Sender<String>, text: &str) {
             data: text.to_string(),
         }),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn args_off_are_the_plain_stream() {
+        assert_eq!(syslog_args(false), ["--no-colors"]);
+    }
+
+    #[test]
+    fn args_on_add_quiet_and_one_joined_exclude() {
+        let a = syslog_args(true);
+        assert_eq!(a[..3], ["--no-colors", "-q", "-e"]);
+        assert_eq!(a.len(), 4, "one -e: the extra list is joined, not repeated");
+        assert_eq!(a[3], QUIET_EXTRA_EXCLUDES.join("|"));
+        assert!(
+            !a.iter().any(|s| s == "-p"),
+            "-p conflicts with -e/-q in idevicesyslog"
+        );
+        for p in QUIET_EXTRA_EXCLUDES {
+            assert!(
+                !p.is_empty() && !p.contains('|') && !p.contains(char::is_whitespace),
+                "{p}"
+            );
+        }
+    }
+
+    #[test]
+    fn store_quiet_notifies_only_on_a_real_change() {
+        let (q, mut rx) = watch::channel(false);
+        assert!(!store_quiet(&q, false));
+        assert!(
+            !rx.has_changed().unwrap(),
+            "the same value (each page load) must not restart the stream"
+        );
+        assert!(store_quiet(&q, true));
+        assert!(rx.has_changed().unwrap());
+        rx.borrow_and_update();
+        assert!(store_quiet(&q, true));
+        assert!(!rx.has_changed().unwrap());
+    }
+
+    #[test]
+    fn quiet_waits_longer_before_calling_the_stream_stalled() {
+        assert_eq!(stall_timeout(false), Duration::from_secs(15));
+        assert!(
+            stall_timeout(true) >= Duration::from_secs(60),
+            "-q hides most lines, so silence is normal on an idle phone"
+        );
+    }
+
+    #[tokio::test]
+    async fn backoff_ends_early_on_a_quiet_change() {
+        let (q, mut rx) = watch::channel(false);
+        store_quiet(&q, true);
+        tokio::time::timeout(Duration::from_millis(500), backoff(&mut rx))
+            .await
+            .expect("backoff ignored the change");
+    }
+
+    #[cfg(unix)]
+    mod unix {
+        use super::super::*;
+        use std::process::Stdio;
+
+        fn leaked() -> &'static Registry {
+            Box::leak(Box::new(Registry::new()))
+        }
+
+        #[tokio::test]
+        async fn quiet_change_restarts_now_and_reaps_the_old_child() {
+            let reg = leaked();
+            let (q, mut rx) = watch::channel(false);
+            let (tx, _keep) = broadcast::channel::<String>(16);
+            let run = tokio::spawn(async move {
+                let mut cmd = tokio::process::Command::new("sleep");
+                cmd.arg("30")
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .kill_on_drop(true);
+                stream_child(&tx, reg, &mut cmd, &mut rx, stall_timeout(false)).await
+            });
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            assert_eq!(reg.len(), 1, "the child runs");
+            store_quiet(&q, true);
+            let res = tokio::time::timeout(Duration::from_secs(2), run)
+                .await
+                .expect("restart not prompt")
+                .expect("task");
+            assert!(matches!(res, Ok(Respawn::Now)), "{res:?}");
+            assert_eq!(
+                reg.len(),
+                0,
+                "killed and reaped before returning: never two children"
+            );
+        }
+
+        #[tokio::test]
+        async fn silence_after_the_first_ping_is_a_stall_after_the_given_time() {
+            let reg = leaked();
+            let (_q, mut rx) = watch::channel(false);
+            let (tx, mut seen) = broadcast::channel::<String>(16);
+            let mut cmd = tokio::process::Command::new("sh");
+            cmd.args(["-c", "echo '[connected:X]'; sleep 30"])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true);
+            let res = tokio::time::timeout(
+                Duration::from_secs(5),
+                stream_child(&tx, reg, &mut cmd, &mut rx, Duration::from_millis(300)),
+            )
+            .await
+            .expect("stall not seen");
+            assert!(matches!(res, Ok(Respawn::AfterBackoff)), "{res:?}");
+            assert_eq!(reg.len(), 0);
+            let frames: Vec<String> = std::iter::from_fn(|| seen.try_recv().ok()).collect();
+            assert!(frames.iter().any(|f| f.contains("stalled")), "{frames:?}");
+        }
+
+        #[tokio::test]
+        async fn child_exit_is_an_error_and_is_reaped() {
+            let reg = leaked();
+            let (_q, mut rx) = watch::channel(false);
+            let (tx, _keep) = broadcast::channel::<String>(16);
+            let mut cmd = tokio::process::Command::new("true");
+            cmd.stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true);
+            let res = tokio::time::timeout(
+                Duration::from_secs(2),
+                stream_child(&tx, reg, &mut cmd, &mut rx, stall_timeout(false)),
+            )
+            .await
+            .expect("EOF not seen");
+            assert_eq!(res.unwrap_err(), "idevicesyslog exited (EOF)");
+            assert_eq!(reg.len(), 0);
+        }
+    }
 }

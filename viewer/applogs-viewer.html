@@ -404,6 +404,17 @@ function setGlass(enabled) {
 // If glass was on at startup, sync the native window now (the macOS conf starts with effects=[]).
 if (IS_MAC && ALV.prefs.get('material') === 'glass') postGlassMode(true).catch(() => {});
 
+// Quiet system noise (the iPhone's More menu, assets/js/shell.js): the iOS bridge filters at idevicesyslog.
+// The bridge starts with it off at every launch, so a saved "on" is re-sent now (it ignores a value it has).
+function postIosQuiet(on) {
+  return fetch('/ios/quiet', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ on }),
+  }).then(r => { if (!r.ok) throw new Error(`ios/quiet http ${r.status}`); });
+}
+if (ALV.prefs.getSettings().iosQuiet === 'on') postIosQuiet(true).catch(e => console.warn('ios/quiet sync failed', e));
+
 // ── Constants ──
 const LEVELS     = ['VERBOSE','DEBUG','INFO','WARN','ERROR','ASSERT'];
 // The letter a row and a level toggle show. ASSERT reads F (spec D8, "Fatal / Assert"); the exports keep their
@@ -819,7 +830,7 @@ document.getElementById('logTable').addEventListener('click', e => {
 // The shell reads the page only through shellState() and acts only through these functions.
 shell = ALV.createShell({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, keys: ALV.keys, prefs: ALV.prefs, state: shellState,
   actions: { selectSession, openFile: openLogFile, togglePlatform, toggleStream: p => (p === 'android' ? toggleAndroid() : toggleIos()),
-    repair: () => iosRepairFromHeader(), setup: p => showSetup(p) } });
+    repair: () => iosRepairFromHeader(), setup: p => showSetup(p), setIosQuiet: postIosQuiet } });
 liveUi = ALV.createLive({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, keys: ALV.keys, prefs: ALV.prefs, shell, state: shellState,
   actions: { togglePause, toggleAutoScroll, clear: clearLogs, zoom: setLogZoom, openFile: openLogFile, setGlass, togglePlatform } });
 grid = ALV.createGrid({ doc: document, dom: ALV.dom, keys: ALV.keys, shell, state: shellState });

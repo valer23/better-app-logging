@@ -10,7 +10,7 @@
      glassMode    'on' | 'off'                   legacy; mirrored on every material write (downgrade)
      uiSize       's' | 'm' | 'l'                default 'm'
      sidebar      'expanded' | 'collapsed'       default 'expanded' (P4: ⌘B collapses it to the rail)
-     settings     JSON object (font, density, contrast, motion here; later PRs add fields).
+     settings     JSON object (font, density, contrast, motion, iosQuiet, iosQuietHint here; later PRs add fields).
                   Corrupt JSON reads as defaults and is not written back until the user changes
                   a setting. Unknown fields are preserved.
    Reserved for later PRs: presets (P7), onboarded (P15). */
@@ -25,6 +25,8 @@
     density: Object.freeze(['comfortable', 'compact']),
     contrast: Object.freeze(['system', 'more', 'off']),
     motion: Object.freeze(['system', 'reduce', 'off']),
+    iosQuiet: Object.freeze(['off', 'on']),   // Quiet system noise (shell.js, POST /ios/quiet); no root attribute
+    iosQuietHint: Object.freeze(['unseen', 'seen']),   // the one-time Quiet system noise hint (shell.js)
   });
   const DARK_QUERY = '(prefers-color-scheme: dark)';
   // Known limitation: WebKit (WKWebView, the only webview where glass applies) may not report
