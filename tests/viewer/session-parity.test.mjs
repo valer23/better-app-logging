@@ -898,23 +898,23 @@ test('empty states keep #70: Clear with nothing streaming shows the device panel
   assert.equal(tile(), '', 'a line hides it');
 });
 
-// P5b: the arrival highlight (renderLiveTail asks buildRow for it; grid.screenRows is the screenful).
-test('arrival: the rows a flush appends to a followed tail, up to one screenful; none on a rebuild, while reading or past a screenful', () => {
+// P5b: the arrival highlight (renderLiveTail asks grid.arrive, which budgets the lit rows per --t-arrival window).
+test('arrival: a flush that appends to a followed tail asks grid.arrive for the highlight; none on a rebuild or while reading', () => {
   const v = boot();
   v.doc.hidden = false;
   v.run('globalThis.__hl = []; { const real = buildRow; buildRow = (m, isNew) => (__hl.push(isNew), real(m, isNew)); }');
-  v.run('grid.screenRows = 10');
-  const flush = n => { v.run('__hl.length = 0'); v.send(n, v.run('nextSeq')); v.api.flushBatch(); return [...new Set(v.run('__hl'))]; };
+  v.run('globalThis.__asked = []; grid.arrive = n => (__asked.push(n), n <= 10)');
+  const flush = n => { v.run('__hl.length = 0; __asked.length = 0'); v.send(n, v.run('nextSeq')); v.api.flushBatch(); return [[...new Set(v.run('__hl'))], [...v.run('__asked')]]; };
   v.run('liveSession.domStale = true');
-  assert.deepEqual(flush(2), [false], 'a rebuild of a few rows (a stale tail, fewer than a screenful) highlights nothing: the !full clause');
-  assert.deepEqual(flush(5), [true], '5 rows ≤ 10: highlighted');
-  assert.deepEqual(flush(11), [false], '11 rows > one screenful: none');
-  assert.deepEqual(flush(10), [true], 'exactly a screenful');
+  assert.deepEqual(flush(2), [[false], []], 'a rebuild of a few rows (a stale tail) highlights nothing and spends no budget: the !full clause');
+  assert.deepEqual(flush(5), [[true], [5]], 'the gate is asked for the rows built, and says yes');
+  assert.deepEqual(flush(11), [[false], [11]], 'the gate says no: none lit');
+  assert.deepEqual(flush(10), [[true], [10]]);
   v.run('liveSession.domStale = true');
-  assert.deepEqual(flush(2), [false], 'a rebuild (stale tail) highlights nothing, even after a screenful has been built');
+  assert.deepEqual(flush(2), [[false], []], 'a rebuild (stale tail) highlights nothing, even after a screenful has been built');
   v.api.toggleAutoScroll();
   v.doc.hidden = true;
-  assert.deepEqual(flush(2), [], 'reading: the window is frozen, nothing is built (#54)');
+  assert.deepEqual(flush(2), [[], []], 'reading: the window is frozen, nothing is built or asked (#54)');
   v.doc.hidden = false;
   v.run("globalThis.__cleared = []; grid.clearArrival = tb => __cleared.push(tb)");
   v.go('toFile');

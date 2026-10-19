@@ -74,6 +74,37 @@ test('screenRows: rows in one screenful from the height, the log size and the de
   assert.deepEqual([G.screenRows(500, 13, 'comfortable'), G.screenRows(500, 20, 'comfortable'), G.screenRows(500, 10, 'compact'), G.screenRows(0, 13, 'comfortable')], [25, 16, 28, 0]);
 });
 
+test('arrive: lit rows within one --t-arrival window never exceed a screenful, for every flush pattern (invariant, table and property)', () => {
+  const fresh = () => ({ level: 0, at: 0 });
+  // Table: screenful 34 -> a budget of 17 rows that refills over 600 ms.
+  const st = fresh();
+  assert.deepEqual([G.arrive(st, 9, 0, 34), G.arrive(st, 9, 0, 34), G.arrive(st, 8, 0, 34), G.arrive(st, 1, 0, 34)], [true, false, true, false], 'a burst spends the budget: 9 + 8 = 17, then none');
+  assert.equal(G.arrive(st, 9, 600, 34), true, 'a full window later the budget is back');
+  assert.equal(G.arrive(fresh(), 18, 0, 34), false, 'a flush above the budget is skipped and spends nothing');
+  const big = fresh(); G.arrive(big, 18, 0, 34);
+  assert.equal(G.arrive(big, 17, 0, 34), true, 'a skipped flush left the budget whole');
+  assert.equal(G.arrive(fresh(), 1, 0, 0), false, 'a hidden grid (no height) highlights nothing');
+  assert.equal(G.arrive(fresh(), 1, 0, 1), false, 'a one-row screen has no budget');
+  assert.equal(G.arrive(fresh(), 0, 0, 34), false, 'nothing appended, nothing lit');
+  const back = fresh(); G.arrive(back, 17, 100, 34);
+  assert.equal(G.arrive(back, 1, 50, 34), false, 'a clock that steps back refills nothing');
+  // 400 lines/s in 150 ms flushes of 60 rows: past the budget, never lit. 60 lines/s: 9 rows per flush.
+  const hi = fresh(); let litHi = 0;
+  for (let t = 0; t < 3000; t += 150) litHi += G.arrive(hi, 60, t, 34) ? 1 : 0;
+  assert.equal(litHi, 0, '400 lines/s: every flush is past the budget');
+  // Property: whatever the flush sizes and gaps, the rows lit in any 600 ms window stay within the screenful.
+  let seed = 12345; const rnd = n => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+  for (let run = 0; run < 200; run++) {
+    const screen = 2 + rnd(80); const s = fresh(); let t = rnd(1000); const lit = [];
+    for (let i = 0; i < 300; i++) {
+      t += rnd(400); const n = 1 + rnd(screen);
+      if (G.arrive(s, n, t, screen)) lit.push([t, n]);
+      const inWindow = lit.filter(([at]) => at > t - 600).reduce((a, [, k]) => a + k, 0);
+      assert.ok(inWindow <= screen, `run ${run}: ${inWindow} rows lit within 600 ms on a ${screen}-row screen`);
+    }
+  }
+});
+
 test('rowClass: level and platform in one class string; ASSERT is the F class; unknown levels read as Verbose', () => {
   assert.equal(G.rowClass('ERROR', 'ios'), 'l-e p-i');
   assert.equal(G.rowClass('WARN', 'android'), 'l-w p-a');
@@ -518,4 +549,14 @@ test('arrival: screenRows follows the scroller\'s height, the log size and the d
   const lit = { classList: { remove: c => { lit.gone = c; } } };
   grid.clearArrival({ querySelectorAll: sel => (assert.equal(sel, 'tr.is-new'), [lit]) });
   assert.equal(lit.gone, 'is-new');
+});
+
+test('arrival: grid.arrive reads the screenful kept from the scroller and a clock, not the page', () => {
+  const { p, grid, resize } = gridPage();
+  let t = 0; p.win.performance = { now: () => t };
+  assert.equal(grid.arrive(1), false, 'no height yet');
+  resize(700);   // 34 rows of 20.8 px: a budget of 17
+  assert.deepEqual([grid.arrive(9), grid.arrive(9), grid.arrive(8)], [true, false, true]);
+  t = 600;
+  assert.equal(grid.arrive(17), true, 'refilled after one --t-arrival');
 });

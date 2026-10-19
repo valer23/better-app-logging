@@ -48,6 +48,22 @@
   function rowPx(fs, density) { return Math.max(18, fs * (density === 'compact' ? 1.4 : 1.6)); }
   function screenRows(height, fs, density) { return height > 0 ? Math.ceil(height / rowPx(fs, density)) : 0; }
 
+  // The arrival highlight's budget. A row's fade lasts ARRIVAL_MS (= --t-arrival), longer than the gap between two
+  // flushes, so "at most a screenful per flush" lets the last four flushes' rows glow at once. The invariant is on the
+  // fade, not the flush: the rows lit within any ARRIVAL_MS window never exceed one screenful. One leaky bucket
+  // enforces it in constant time (a level and a timestamp, no array, no layout read): capacity and refill are each half
+  // a screenful, so a window admits at most the capacity plus what refills in it, which is the screenful. A flush above
+  // the capacity is skipped and spends nothing. st = { level, at } is mutated; `now` and ARRIVAL_MS are in ms.
+  const ARRIVAL_MS = 600;
+  function arrive(st, n, now, screen) {
+    const cap = Math.floor(screen / 2);
+    if (!(n > 0) || n > cap) return false;
+    const level = Math.max(0, st.level - Math.max(0, now - st.at) * cap / ARRIVAL_MS);
+    if (level + n > cap) return false;
+    st.level = level + n; st.at = now;
+    return true;
+  }
+
   // The jump pill and the paused pill (spec "States", "Follow, pause and the jump pill"): Paused wins over new lines.
   // → null (hidden) or { mode, icon, pre, num, unit, action, key }: "<pre><b>num</b><unit>" and a primary button
   // `action` with the kbd of binding `key`. Numbers use the thin-space grouping (shellPure.num, loaded first).
@@ -111,7 +127,7 @@
 
   // ---- DOM ----
 
-  // createGrid({ doc, win, dom, ui, keys, prefs, shell, state, actions }) → { sync(), syncEmpty(), screenRows,
+  // createGrid({ doc, win, dom, ui, keys, prefs, shell, state, actions }) → { sync(), syncEmpty(), screenRows, arrive(n),
   // clearArrival(tbody) }. Adds a resize separator on each RESIZABLE boundary of #headerRow, makes the scroller the
   // shortcut registry's grid root, binds the stream keys, keeps aria-rowcount current, shows the empty states and
   // keeps the arrival highlight's screenful. state() is the legacy shellState(); actions are legacy functions:
@@ -273,11 +289,15 @@
     }
     shell.onTick(sync);
 
-    // ---- Arrival highlight (spec "Log grid"): the rows the last flush appended while following, none when that is
-    // more than one screenful. renderLiveTail reads api.screenRows, kept here from the scroller's height (a
-    // ResizeObserver) and the row height (log size, density): nothing is measured per flush. A row's is-new class
+    // ---- Arrival highlight (spec "Log grid"): the rows a flush appended while following, while the rows lit within
+    // one fade stay within a screenful (arrive). renderLiveTail asks api.arrive(n); the screenful is kept here from the
+    // scroller's height (a ResizeObserver) and the row height (log size, density): nothing is measured per flush. A row's is-new class
     // goes when its animation ends; a tbody hidden mid-flight (selectSession) is cleared, or it would replay. ----
-    const api = { sync, syncEmpty, screenRows: 0, clearArrival };
+    const api = { sync, syncEmpty, screenRows: 0, arrive: arriveRows, clearArrival };
+    const budget = { level: 0, at: 0 };
+    const clock = () => (win.performance ? win.performance.now() : Date.now());
+    // renderLiveTail: may the n rows this flush appends glow? Spends the budget only when it says yes.
+    function arriveRows(n) { return arrive(budget, n, clock(), api.screenRows); }
     let viewH = 0;
     function recount() {
       const ps = prefs.state();
@@ -292,6 +312,6 @@
   }
 
   const ALV = g.ALV || (g.ALV = {});
-  ALV.gridPure = Object.freeze({ timeOf, rowClass, ROW_CLASS, LEVEL_CLASS: Object.freeze(LEVEL_CLASS), RESIZABLE, COL_MIN, COL_MAX, clampCol, resizeKey, pillView, emptyView, rowPx, screenRows });
+  ALV.gridPure = Object.freeze({ timeOf, rowClass, ROW_CLASS, LEVEL_CLASS: Object.freeze(LEVEL_CLASS), RESIZABLE, COL_MIN, COL_MAX, clampCol, resizeKey, pillView, emptyView, rowPx, screenRows, arrive, ARRIVAL_MS });
   ALV.createGrid = createGrid;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -1550,9 +1550,9 @@ function renderLiveTail(s, firstNew) {
     // Only build rows that survive `cap` — anything older would be trimmed right away.
     const from = Math.max(full ? 0 : firstNew, filtered.length - cap);
     const frag = document.createDocumentFragment();
-    // Arrival highlight (spec): the rows this flush appends to a followed tail, none when they are more than one
-    // screenful (grid.screenRows, kept off the drain: no layout read here). A rebuild highlights nothing.
-    const hl = !full && s.follow && filtered.length - from <= grid.screenRows;
+    // Arrival highlight (spec): the rows this flush appends to a followed tail, while the rows lit within one fade stay
+    // within a screenful (grid.arrive: constant time, no layout read here). A rebuild highlights nothing.
+    const hl = !full && s.follow && grid.arrive(filtered.length - from);
     for (let i = from; i < filtered.length; i++) frag.appendChild(buildRow(filtered[i], hl));
 
     if (full) {
