@@ -651,3 +651,34 @@ test('File <-> Live brings back the right live view', () => {
   p.api.clearLogs(); p.go('toFile'); p.go('toLive');
   assert.equal(p.view(), 'livePanel');
 });
+
+// P5b: Home and End (assets/js/grid.js binds them to these).
+test('Home (jumpToOldest): Follow off, the window rebuilt at the oldest retained line, the drain marker reset (#58 invariant)', () => {
+  const v = boot();
+  v.doc.hidden = false;
+  v.send(1200); v.api.flushBatch();
+  v.run('liveSession.renderFrom = 7');   // as if a drain were in progress: the rebuild owns the DOM from here, as applyFilters
+  v.run('jumpToOldest()');
+  assert.equal(v.run('liveSession.follow'), false);
+  assert.equal(v.run('liveSession.renderedEnd'), 500, 'PAGE rows from the head: the tbody is filtered[0, 500)');
+  assert.equal(v.run('liveSession.renderFrom'), -1);
+  assert.equal(v.run('liveSession.domStale'), false);
+  v.doc.hidden = true;                  // no layout in a stub: keep the window from sliding
+  v.send(10, 1200); v.api.flushBatch();
+  assert.equal(v.run('liveSession.renderedEnd'), 500, 'reading: the window stays put while lines arrive (#54)');
+});
+
+test('End (jumpToEnd): Follow back on at the newest line; a file session moves its window to its last lines', () => {
+  const v = boot();
+  v.doc.hidden = false;
+  v.send(1200); v.api.flushBatch();
+  v.run('jumpToOldest()');
+  v.run('jumpToEnd()');
+  assert.deepEqual([v.run('liveSession.follow'), v.run('liveSession.renderedEnd')], [true, 1200]);
+  v.run('setTimeout = f => (f(), 0)');
+  v.go('toFile');
+  v.api.handleFile({ text: fileText(1200) });
+  assert.equal(v.run('fileSession.renderedEnd'), 500, 'a loaded file shows its first page');
+  v.run('jumpToEnd()');
+  assert.deepEqual([v.run('fileSession.renderedEnd'), v.run('fileSession.follow')], [1200, false], 'the last lines; a file never follows');
+});

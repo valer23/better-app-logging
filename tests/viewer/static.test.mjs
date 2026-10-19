@@ -91,7 +91,7 @@ test('toolbar and status bar are fixed-height flex: none children of #main under
 
 test('the page passes every action that shell.js and live.js call (the fake pages answer any action name, so a missing one only throws on a real click)', () => {
   const code = inlineScripts(html).at(-1).code;
-  for (const [file, factory] of [['shell.js', 'createShell'], ['live.js', 'createLive']]) {
+  for (const [file, factory] of [['shell.js', 'createShell'], ['live.js', 'createLive'], ['grid.js', 'createGrid']]) {
     const used = [...new Set([...read(path.join(ASSETS, 'js', file)).matchAll(/\bactions\.(\w+)/g)].map(m => m[1]))];
     const call = code.slice(code.indexOf(`ALV.${factory}(`));
     const open = call.indexOf('actions: {') + 'actions: '.length;
@@ -192,7 +192,7 @@ test('status bar: devices, drops (with its popover in the popover layer), the mo
   assert.doesNotMatch(inlineScripts(html).at(-1).code, /updateLiveBar|liveBar|getElementById\('stats'\)/);
   const tiers = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css'))).filter(r => r.atRules.some(a => a.startsWith('@container')));
   assert.deepEqual([...new Set(tiers.flatMap(r => r.atRules.filter(a => a.startsWith('@container'))))].sort(),
-    ['@container statusbar (max-width: 975px)', '@container toolbar (max-width: 1011px)', '@container toolbar (max-width: 1151px)'],
+    ['@container statusbar (max-width: 975px)', '@container toolbar (max-width: 1011px)', '@container toolbar (max-width: 1151px)', '@container toolbar (max-width: 1291px)'],
     'the spec\'s tiers, as border-box widths minus the padding');
   assert.deepEqual(tiers.filter(r => r.atRules.includes('@container statusbar (max-width: 975px)')).flatMap(r => r.selectors), ['#retainedText', '#retainedNote:not(:empty)'],
     'the narrow tier swaps the plain count for the #45 note alone; the #58 hint is never hidden (the legacy hint showed at every width), and the note itself is never hidden');
@@ -918,6 +918,18 @@ test('buildRow sets no per-row tabindex, title, role or inline style, and grid.c
   assert.doesNotMatch(fn, /tabindex|tabIndex|\.title\b|'title'|'role'|\.style\b|getBoundingClientRect|offset(Width|Height|Top)/);
   assert.match(fn, /tr\.className = rowClass\(m\.lvl, m\.platform\)/, 'one className write carries level and platform');
   assert.ok(!gridCss().some(r => C.declarations(r.body).some(d => /^(transition|animation)/.test(d.prop))), 'no transition on rows (spec: none per row)');
+});
+
+test('stream keys: Pause and Follow carry a kbd (aria-hidden, shown from the 1 320 px toolbar) and their tooltips name the key', () => {
+  for (const [btn, kbd] of [['pauseBtn', 'pauseKbd'], ['autoScrollBtn', 'followKbd']]) {
+    const k = findById(root, kbd);
+    assert.deepEqual([k.parent.attrs.id, k.attrs.class, k.attrs['aria-hidden']], [btn, 'kbd tb-kbd', 'true'], `#${kbd}: the button's name stays its label`);
+  }
+  const tier = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css'))).filter(r => r.atRules.includes('@container toolbar (max-width: 1291px)'));
+  assert.deepEqual(tier.flatMap(r => r.selectors), ['.tb-kbd'], 'spec B1: kbd hints from 1 320 px (border box) only');
+  const live = read(path.join(ASSETS, 'js', 'live.js'));
+  assert.match(live, /tip\('pauseBtn', \{ text: 'Pause stream', shortcut: 'stream\.pause' \}\)/);
+  assert.match(live, /tip\('autoScrollBtn', \{ text: 'Follow newest lines', shortcut: 'stream\.latest' \}\)/);
 });
 
 test('column resize lives in grid.js: the legacy initResizeHandles and its .col-resize-handle are gone', () => {

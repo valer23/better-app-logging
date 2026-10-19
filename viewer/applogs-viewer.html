@@ -89,8 +89,8 @@
     <span id="streamBadge" class="badge status-idle"><span id="streamDot" class="dot" aria-hidden="true"></span><span id="streamBadgeText"></span></span>
   </div>
   <div class="tb-right">
-    <button type="button" id="pauseBtn" class="btn"><svg class="icon" aria-hidden="true" focusable="false"><use id="pauseIcon" href="#i-pause"/></svg><span id="pauseLabel">Pause</span></button>
-    <button type="button" id="autoScrollBtn" class="btn" aria-pressed="true"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-arrow-down-to-line"/></svg><span>Follow</span></button>
+    <button type="button" id="pauseBtn" class="btn"><svg class="icon" aria-hidden="true" focusable="false"><use id="pauseIcon" href="#i-pause"/></svg><span id="pauseLabel">Pause</span><span class="kbd tb-kbd" id="pauseKbd" aria-hidden="true"></span></button>
+    <button type="button" id="autoScrollBtn" class="btn" aria-pressed="true"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-arrow-down-to-line"/></svg><span>Follow</span><span class="kbd tb-kbd" id="followKbd" aria-hidden="true"></span></button>
     <span class="divider-v" aria-hidden="true"></span>
     <div id="zoomGroup" class="tb-zoom" role="group" aria-label="Log text size">
       <button type="button" id="zoomOutBtn" class="btn btn-ghost btn-sm" aria-label="Smaller log text">A−</button>
@@ -526,6 +526,38 @@ function jumpToLatest(e) {
   if (hadFocus && e && e.detail !== 0) newerPill.blur();
   if (!cur.follow) toggleAutoScroll();
 }
+// End / ⌘↓ (spec "Follow, pause and the jump pill"): Follow on, at the newest line; it is the jump pill's action
+// on the live session. A file session never follows: the window moves to its last lines instead.
+function jumpToEnd() {
+  const s = cur, t = document.getElementById('logTable');
+  if (s.kind === 'live') {
+    if (!s.follow) toggleAutoScroll(); else t.scrollTop = t.scrollHeight;
+    return;
+  }
+  if (s.renderedEnd < s.filtered.length) {   // the window stops short of the end: rebuild it there, as applyFilters does
+    s.renderFrom = -1; s.domStale = false;
+    s.tbody.textContent = '';
+    s.renderedEnd = Math.max(0, s.filtered.length - PAGE);
+    renderChunk(s.renderedEnd);
+    updateNewerPill();
+  }
+  t.scrollTop = t.scrollHeight;
+}
+// Home / ⌘↑: the oldest retained line. Follow turns off (the view leaves the newest line) and the window is rebuilt at
+// the head of `filtered`, as applyFilters does, so the invariant "the tbody is filtered[renderedEnd - rows,
+// renderedEnd)" (#58) holds and the reader slides on from there.
+function jumpToOldest() {
+  const s = cur, t = document.getElementById('logTable');
+  if (s.follow) toggleAutoScroll();
+  const rows = s.tbody.rows;
+  if (!s.domStale && rows.length && s.renderedEnd === rows.length && rows[0]._message === s.filtered[0]) { t.scrollTop = 0; return; }   // already there
+  s.renderFrom = -1; s.domStale = false;
+  s.tbody.textContent = '';
+  s.renderedEnd = 0;
+  renderChunk(0);
+  t.scrollTop = 0;
+  updateNewerPill();
+}
 // Focus is parked on Auto-scroll after a keyboard jump and Enter activates on keydown, so a held key's
 // auto-repeat would keep toggling it.
 document.getElementById('autoScrollBtn').addEventListener('keydown', e => { if (e.repeat && (e.key === 'Enter' || e.key === ' ')) e.preventDefault(); });
@@ -833,13 +865,18 @@ shell = ALV.createShell({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, 
     repair: () => iosRepairFromHeader(), setup: p => showSetup(p), setIosQuiet: postIosQuiet } });
 liveUi = ALV.createLive({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, keys: ALV.keys, prefs: ALV.prefs, shell, state: shellState,
   actions: { togglePause, toggleAutoScroll, clear: clearLogs, zoom: setLogZoom, openFile: openLogFile, setGlass, togglePlatform } });
-grid = ALV.createGrid({ doc: document, dom: ALV.dom, keys: ALV.keys, shell, state: shellState });
+grid = ALV.createGrid({ doc: document, dom: ALV.dom, keys: ALV.keys, shell, state: shellState,
+  actions: { jumpToEnd, jumpToOldest, togglePause, toggleAutoScroll } });
 function shellState() {
   return {
     cur, sessions: [liveSession, fileSession],
     live: { android: androidLive, ios: iosLive }, status: liveStatus, devices: deviceInfo, driverMissing: iosDriverMissing, noDevice,
     lines: wsLines, dropped: liveSession.dropped, enabled: enabledPlatforms, paused: livePaused, buffered: pendingBatch.length,
     maxRetained: MAX_RETAINED,   // the status bar's Following tooltip (Retained text)
+    // The stream keys (grid.js) fire only while the grid shows and no legacy modal (setup guide, stall) is over it:
+    // keys.setModal does not cover those, and the setup guide scrolls with Home and End. A getter: it is read only
+    // when End or Home is pressed, never by the per-flush and tick callers of shellState().
+    get gridShown() { return document.getElementById('logWrapper').classList.contains('visible') && !document.querySelector('.modal-overlay.visible'); },
   };
 }
 function shellSync() { if (shell) shell.sync(); if (liveUi) liveUi.sync(); if (grid) grid.sync(); }

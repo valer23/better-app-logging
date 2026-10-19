@@ -45,17 +45,36 @@
 
   // ---- DOM ----
 
-  // createGrid({ doc, dom, keys, shell, state }) → { sync() }. Adds a resize separator on each RESIZABLE boundary of
-  // #headerRow, makes the scroller the shortcut registry's grid root and keeps aria-rowcount current. state() is the
-  // legacy shellState().
-  function createGrid({ doc, dom, keys, shell, state }) {
-    const { setAttr } = g.ALV.shellPure;   // shell.js loads first
+  // createGrid({ doc, dom, keys, shell, state, actions }) → { sync() }. Adds a resize separator on each RESIZABLE
+  // boundary of #headerRow, makes the scroller the shortcut registry's grid root, binds the stream keys and keeps
+  // aria-rowcount current. state() is the legacy shellState(); actions are legacy functions: jumpToEnd,
+  // jumpToOldest, togglePause, toggleAutoScroll.
+  function createGrid({ doc, dom, keys, shell, state, actions }) {
+    const { setAttr, setText } = g.ALV.shellPure;   // shell.js loads first
     const $ = id => doc.getElementById(id);
     const table = $('logTableEl');
     const scroller = $('logTable');
     // Grid-scoped keys (P5b: Space, F) fire while focus is on the table, the grid's one Tab stop (rows are never
     // focusable until P9). A resize separator inside it owns its unmodified keys (keys.js OWNING_ROLES).
     keys.setGridRoot(scroller);
+
+    // ---- Stream keys (spec "Keyboard map", "Follow, pause and the jump pill"). End / ⌘↓ turn Follow on at the newest
+    // line and Home / ⌘↑ go to the oldest retained line, from anywhere but a text field or a control that owns the
+    // key; Space† pauses and F† toggles Follow while the grid has focus, on the live session only. ----
+    const onLive = () => state().cur.kind === 'live';
+    // End and Home are global, so they wait while the grid is hidden (the device cards, the dropzone, loading) or a
+    // legacy modal is over it: keys.setModal does not cover the setup guide or the stall modal, which scroll with them.
+    const shown = () => !!state().gridShown;
+    keys.register({ id: 'stream.latest', keys: ['End', 'Mod+ArrowDown'], when: shown, run: () => actions.jumpToEnd() });
+    keys.register({ id: 'stream.oldest', keys: ['Home', 'Mod+ArrowUp'], when: shown, run: () => actions.jumpToOldest() });
+    keys.register({ id: 'stream.pause', keys: 'Space', scope: 'grid', when: onLive, run: () => actions.togglePause() });
+    keys.register({ id: 'stream.follow', keys: 'F', scope: 'grid', when: onLive, run: () => actions.toggleAutoScroll() });
+    // The toolbar buttons carry their keys (spec: aria-keyshortcuts on toolbar buttons) and show them from the
+    // 1 320 px toolbar tier (shell.css); their tooltips name them always (live.js).
+    setAttr($('pauseBtn'), 'aria-keyshortcuts', keys.aria('stream.pause'));
+    setAttr($('autoScrollBtn'), 'aria-keyshortcuts', keys.aria('stream.latest'));
+    setText($('pauseKbd'), keys.label('stream.pause'));
+    setText($('followKbd'), keys.label('stream.latest'));
     // ---- Column resize. Layout is read only on a user action (focus, a key, a press), never per flush. ----
     const ths = Array.from($('headerRow').children);
     const cols = Array.from($('colgroup').children);

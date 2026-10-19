@@ -111,9 +111,11 @@ test('buildRow: log text stays text (XSS), and no row of any shape exceeds 14 no
 
 // ---- createGrid on the fake page, with the page's #logWrapper mounted ----
 // The fake mount drops text between tags; `headerText` puts back the header texts the page's markup carries.
-// `st` is what shellState() returns (only `cur` is read); `ticks` holds the shell.onTick callbacks.
+// `st` is what shellState() returns (`cur` and `gridShown` are read); `ticks` holds the shell.onTick callbacks; every
+// action the grid calls is recorded in `calls`.
 function gridPage({ headerText = false } = {}) {
   const p = fakePage({ files: ['prefs.js', 'dom.js', 'keys.js', 'ui.js', 'shell.js', 'grid.js'] });
+  mount(p, 'toolbar');
   mount(p, 'logWrapper');
   if (headerText) {
     const texts = [...read(HTML_PATH).match(/<tr id="headerRow">[\s\S]*?<\/tr>/)[0].matchAll(/<span class="h">([^<]*)<\/span>/g)].map(m => m[1]);
@@ -121,10 +123,12 @@ function gridPage({ headerText = false } = {}) {
     assert.equal(hs.length, texts.length);
     hs.forEach((h, i) => { h.textContent = texts[i]; });
   }
-  const st = { cur: { filtered: [] } };
+  const st = { cur: { kind: 'live', filtered: [] }, gridShown: true };
   const ticks = [];
+  const calls = [];
   const shell = { onTick: fn => ticks.push(fn) };
-  const grid = p.ALV.createGrid({ doc: p.doc, dom: p.dom, keys: p.keys, shell, state: () => st });
+  const actions = new Proxy({}, { get: (o, k) => (...a) => calls.push([k, ...a]) });
+  const grid = p.ALV.createGrid({ doc: p.doc, dom: p.dom, keys: p.keys, shell, state: () => st, actions });
   const ths = p.byId.headerRow.children;
   const cols = p.byId.colgroup.children;
   const seps = ths.flatMap(th => th.children.filter(c => c.attrs.role === 'separator'));
@@ -133,7 +137,7 @@ function gridPage({ headerText = false } = {}) {
     for (const fn of sep.listeners.keydown || []) fn(ev);
     return ev;
   };
-  return { p, grid, ths, cols, seps, key, st, ticks };
+  return { p, grid, ths, cols, seps, key, st, ticks, calls };
 }
 
 test('resize handles: one separator per boundary after Time, Lvl, Tag, App / Device and PID–TID, inside the next header cell', () => {
@@ -184,14 +188,13 @@ test('resize handles: focus reports the width; ←/→ 8 px, ⇧ 32 px, clamped 
   assert.equal(key(tag, 'End').defaultPrevented, false, 'End is not a resize key');
 });
 
-test('resize handles: Home on a handle never reaches the shortcut registry (P5b binds Home to the oldest line)', () => {
-  const { p, seps, key } = gridPage();
-  let ran = 0;
-  p.keys.register({ id: 'test.home', keys: 'Home', run: () => { ran++; } });
+test('resize handles: Home on a handle resets the column and never reaches the stream\'s Home (the oldest line)', () => {
+  const { p, seps, key, calls } = gridPage();
   const ev = key(seps[0], 'Home');
   assert.equal(p.keys.dispatch(ev, seps[0]), null, 'the handle handled it (defaultPrevented)');
   assert.equal(p.keys.dispatch({ key: 'Home', preventDefault() {} }, seps[0]), null, 'and a separator owns its keys anyway');
-  assert.equal(ran, 0);
+  assert.deepEqual(calls, []);
+  assert.equal(p.keys.dispatch({ key: 'Home', preventDefault() {} }, p.byId.logTableEl), 'stream.oldest', 'control: from the table it is the stream\'s Home');
 });
 
 test('resize handles: a drag sets the width from the press, clamped, and ends cleanly on release', () => {
@@ -286,4 +289,57 @@ test('the time cell gets the full timestamp (with its date) as a title on its fi
   assert.equal(msg.title, undefined, 'only the time cell');
   ts.fire('pointerover');
   assert.equal(ts.title, '2026 Oct 14 15:53:43.000123');
+});
+
+// ---- Stream keys (P5b) ----
+const press = (p, active, key, o = {}) => p.keys.dispatch({ key, code: o.code || '', preventDefault() {}, ...o }, active);
+
+test('stream keys: End and ⌘↓ go to the newest line, Home and ⌘↑ to the oldest, from the grid or a toolbar button; never from a text field', () => {
+  const { p, calls } = gridPage();
+  const t = p.byId.logTableEl;
+  assert.equal(press(p, t, 'End'), 'stream.latest');
+  assert.equal(press(p, p.byId.clearBtn, 'End'), 'stream.latest', 'global: a button does not own End');
+  assert.equal(press(p, null, 'ArrowDown', { metaKey: true }), 'stream.latest', '⌘↓ (Mod is Meta on macOS)');
+  assert.equal(press(p, t, 'Home'), 'stream.oldest');
+  assert.equal(press(p, null, 'ArrowUp', { metaKey: true }), 'stream.oldest');
+  const field = p.doc.createElement('input');
+  field.setAttribute('type', 'text');
+  for (const [k, o] of [['End', {}], ['Home', {}], ['ArrowDown', { metaKey: true }]]) assert.equal(press(p, field, k, o), null, `${k} in a text field moves the caret`);
+  assert.deepEqual(calls.map(c => c[0]), ['jumpToEnd', 'jumpToEnd', 'jumpToEnd', 'jumpToOldest', 'jumpToOldest']);
+});
+
+test('stream keys: End and Home wait while the grid is hidden or a legacy modal is over it (the setup guide scrolls with them)', () => {
+  const { p, st, calls } = gridPage();
+  const end = () => ({ key: 'End', code: 'End', preventDefault() {} });
+  st.gridShown = false;   // the device cards, the dropzone or the loading view; or #setupModal / #stallModal open
+  assert.equal(p.keys.dispatch(end(), p.doc.body), null, 'the key stays the page\'s: no preventDefault, no jump');
+  assert.equal(press(p, p.doc.body, 'Home'), null);
+  assert.equal(press(p, null, 'ArrowDown', { metaKey: true }), null);
+  assert.deepEqual(calls, []);
+  st.gridShown = true;
+  assert.equal(p.keys.dispatch(end(), p.doc.body), 'stream.latest');
+  assert.deepEqual(calls.map(c => c[0]), ['jumpToEnd']);
+});
+
+test('stream keys: Space pauses and F toggles Follow only with the grid focused, on the live session, and not with single keys off', () => {
+  const { p, st, calls } = gridPage();
+  const t = p.byId.logTableEl;
+  assert.equal(press(p, t, ' ', { code: 'Space' }), 'stream.pause');
+  assert.equal(press(p, t, 'f', { code: 'KeyF' }), 'stream.follow');
+  assert.equal(press(p, p.byId.clearBtn, ' ', { code: 'Space' }), null, 'outside the grid Space is the focused control\'s');
+  assert.equal(press(p, p.byId.filterbar, 'f', { code: 'KeyF' }), null, 'a single key never fires outside the grid (WCAG 2.1.4)');
+  st.cur = { kind: 'file', filtered: [] };
+  assert.equal(press(p, t, ' ', { code: 'Space' }), null, 'a file session has nothing to pause: Space scrolls');
+  assert.equal(press(p, t, 'f', { code: 'KeyF' }), null);
+  st.cur = { kind: 'live', filtered: [] };
+  p.keys.setSingleKeys(false);
+  assert.equal(press(p, t, ' ', { code: 'Space' }), null, 'single keys can be switched off (Settings → Shortcuts, P14)');
+  assert.deepEqual(calls.map(c => c[0]), ['togglePause', 'toggleAutoScroll']);
+});
+
+test('stream keys: Pause and Follow carry aria-keyshortcuts and show their key in the toolbar kbd', () => {
+  const { p } = gridPage();
+  assert.deepEqual([p.byId.pauseBtn.getAttribute('aria-keyshortcuts'), p.byId.pauseKbd.textContent], ['Space', 'Space']);
+  assert.deepEqual([p.byId.autoScrollBtn.getAttribute('aria-keyshortcuts'), p.byId.followKbd.textContent], ['End Meta+ArrowDown', 'End']);
+  assert.equal(p.keys.label('stream.follow'), 'F');
 });
