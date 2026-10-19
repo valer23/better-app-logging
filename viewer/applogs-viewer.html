@@ -435,6 +435,8 @@ const liveStatus = { android: { state: 'disconnected', text: 'Disconnected' }, i
 const deviceInfo = { android: { id: '', name: '' }, ios: { id: '', name: '' } };
 let iosDriverMissing = false;
 let androidLive = false, iosLive = false;
+// Per platform, while its socket is open: the bridge reported the phone gone (setNoDevice). Reset when a socket opens.
+const noDevice = { android: false, ios: false };
 // The device detection a Start streaming is waiting on, per platform (detectThenConnect); null when none.
 const detecting = { android: null, ios: null };
 const DETECT_TIMEOUT_MS = 8000;   // /devices/ios runs idevice_id + ideviceinfo with no timeout of its own
@@ -834,7 +836,7 @@ liveUi = ALV.createLive({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, 
 function shellState() {
   return {
     cur, sessions: [liveSession, fileSession],
-    live: { android: androidLive, ios: iosLive }, status: liveStatus, devices: deviceInfo, driverMissing: iosDriverMissing,
+    live: { android: androidLive, ios: iosLive }, status: liveStatus, devices: deviceInfo, driverMissing: iosDriverMissing, noDevice,
     lines: wsLines, dropped: liveSession.dropped, enabled: enabledPlatforms, paused: livePaused, buffered: pendingBatch.length,
     maxRetained: MAX_RETAINED,   // the status bar's Following tooltip (Retained text)
   };
@@ -1054,14 +1056,25 @@ function formatTs(ts) {
   return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(),3)}`;
 }
 
+// idevicesyslog with no phone (it exits; the bridge respawns it every 2 s) and adb logcat waiting for one.
+const NO_DEVICE_FRAME = /^\{"type":"error","data":"(?:No device found|- waiting for device -)/;
+// The phone is gone (or back) while the socket is open: the row reads Disconnected instead of "Streaming · 0/s"
+// then "Stalled 15 s", Stop still stops, and the bridge resumes the stream when it is plugged back in.
+// Written on a change only (the iOS bridge repeats it every 2 s).
+function setNoDevice(platform, gone) { if (noDevice[platform] === gone) return; noDevice[platform] = gone; shellSync(); }
+
 // What the sidebar needs from a frame, read off its text before handleWsMsg parses it (serde writes the
 // "type" tag first): a log line moves the counter (rate; the only thing that ends a stall), and the iOS
 // bridge's stall hint marks the row stalled, paused or not (the pause only holds back the stall sheet).
+// A frame saying the phone is gone (or back) sets noDevice, which the row reads as Disconnected.
 function noteFrame(e, platform) {
   const d = e.data;
   if (typeof d !== 'string') return;
-  if (d.startsWith('{"type":"log"')) wsLines[platform]++;
-  else if (platform === 'ios' && shell && d.startsWith('{"type":"error"') && d.toLowerCase().includes('stalled')) shell.markStalled('ios');
+  if (d.startsWith('{"type":"log"')) { wsLines[platform]++; if (noDevice[platform]) setNoDevice(platform, false); }
+  else if (NO_DEVICE_FRAME.test(d)) setNoDevice(platform, true);
+  else if (platform === 'ios' && shell && d.startsWith('{"type":"error"') && d.toLowerCase().includes('stalled') && !noDevice.ios) shell.markStalled('ios');
+  else if (platform === 'ios' && d.startsWith('{"type":"devices","data":"disconnected:')) setNoDevice('ios', true);
+  else if (platform === 'ios' && d.startsWith('{"type":"devices","data":"connected:')) setNoDevice('ios', false);
 }
 
 // Start streaming (sidebar row, its menu, the legacy Connect): run the platform's detection, then connect if it
@@ -1092,6 +1105,7 @@ function connectAndroid() { detectThenConnect('android'); }   // Start: always d
 function openAndroid() {
   setStatus('android', 'connecting', 'Connecting…');
   document.getElementById('androidBtn').disabled = true;
+  noDevice.android = false;
   wsAndroid = new WebSocket('ws://localhost:8765');
   wsAndroid.onopen = () => { androidLive = true; setStatus('android','connected','Connected'); setConnectBtn('android', true); refreshLiveView(); };
   wsAndroid.onmessage = e => { noteFrame(e, 'android'); handleWsMsg(e, 'android'); };
@@ -1121,6 +1135,7 @@ function connectIos() { detectThenConnect('ios'); }   // Start: always detect fi
 function openIos() {
   setStatus('ios', 'connecting', 'Connecting…');
   document.getElementById('iosBtn').disabled = true;
+  noDevice.ios = false;
   wsIos = new WebSocket('ws://localhost:8766');
   wsIos.onopen = () => { iosLive = true; setStatus('ios','connected','Connected'); setConnectBtn('ios', true); refreshLiveView(); };
   wsIos.onmessage = e => { noteFrame(e, 'ios'); handleWsMsg(e, 'ios'); };
@@ -1318,6 +1333,7 @@ function iosRepairFromStall() {
 }
 
 function showStallModal(text) {
+  if (noDevice.ios) return;   // an unplugged phone (noteFrame), not a stale pair record
   // #overlayRoot (z 200) paints above the legacy .modal-overlay (z 100): an open Export menu would sit over the
   // modal and keep focus. Close it without moving focus into the page behind the modal.
   exportMenuCtl.close({ restoreFocus: false });

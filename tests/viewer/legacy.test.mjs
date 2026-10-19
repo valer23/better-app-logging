@@ -220,6 +220,40 @@ test('the iOS stall frame marks the sidebar row stalled whether or not the strea
   assert.equal(run('wsLines.ios'), 1, 'the stall hint is not a line');
 });
 
+const NO_DEVICE_IOS = '{"type":"error","data":"No device found. Plug in a device or pass UDID with -u to wait for device to become available."}';
+const EXITED_IOS = '{"type":"error","data":"ios bridge error: idevicesyslog exited (EOF)"}';
+const UNPLUGGED_IOS = '{"type":"devices","data":"disconnected:00008110-000A1B2C3D4E5F60"}';
+const REPLUGGED_IOS = '{"type":"devices","data":"connected:00008110-000A1B2C3D4E5F60"}';
+const WAITING_ANDROID = '{"type":"error","data":"- waiting for device -"}';
+test('while streaming, the bridge reporting the phone gone sets noDevice (no stall, no stall sheet) until it is back', async () => {
+  const p = startPage();
+  p.devices('ios', [{ id: 'u1', name: 'iPhone 15' }]); p.devices('android', [{ id: 'a1', name: 'Pixel 8' }]);
+  p.run('toggleIos(); toggleAndroid()'); await settle();
+  p.run(`wsIos.onopen(); wsAndroid.onopen(); globalThis.__stalls = [];
+    shell = { markStalled: q => __stalls.push(q), sync() {}, closeMenus() {} }; liveUi = { sync() {}, closeMenus() {} };`);
+  const send = (q, data) => p.run(`${q === 'ios' ? 'wsIos' : 'wsAndroid'}.onmessage({ data: ${JSON.stringify(data)} })`);
+  const gone = () => JSON.parse(JSON.stringify(p.run('noDevice')));
+  const stalls = () => JSON.parse(JSON.stringify(p.run('__stalls')));
+  const sheet = () => p.run(`document.getElementById('stallModal').classList.contains('visible')`);
+  send('ios', LOG); send('ios', NO_DEVICE_IOS); send('ios', EXITED_IOS); send('ios', NO_DEVICE_IOS);
+  assert.deepEqual([gone().ios, p.run('iosLive')], [true, true], 'the socket stays open');
+  send('ios', STALL);
+  assert.deepEqual([stalls(), sheet()], [[], false], 'not a stale pair record');
+  send('ios', LOG);
+  assert.equal(gone().ios, false, 'lines flow again');
+  send('ios', STALL);
+  assert.deepEqual([stalls(), sheet()], [['ios'], true], 'a real stall still reports');
+  send('ios', UNPLUGGED_IOS); assert.equal(gone().ios, true);
+  send('ios', REPLUGGED_IOS); assert.equal(gone().ios, false);
+  send('android', LOG); send('android', WAITING_ANDROID);
+  assert.deepEqual(gone(), { android: true, ios: false });
+  send('android', LOG); assert.equal(gone().android, false);
+  send('ios', NO_DEVICE_IOS); p.run('toggleIos()');
+  assert.deepEqual([p.run('iosLive'), p.sockets().length], [false, 2], 'Stop still stops');
+  p.run('toggleIos()'); await settle();
+  assert.equal(gone().ios, false, 'a new stream starts clean');
+});
+
 test('handleWsMsg still shows the stall sheet for the stall frame unless the stream is paused (P4)', () => {
   const doc = stickyDocument();
   const { run } = loadLegacy([], { document: doc });
@@ -244,10 +278,11 @@ const settle = () => new Promise(r => setImmediate(r));
 test('shellState has the shape the shell reads: live, status, devices, driverMissing, lines, dropped and enabled', () => {
   const { run } = loadLegacy([], { document: stickyDocument() });
   const st = run('shellState()');
-  assert.deepEqual(Object.keys(st).sort(), ['buffered', 'cur', 'devices', 'driverMissing', 'dropped', 'enabled', 'lines', 'live', 'maxRetained', 'paused', 'sessions', 'status']);
+  assert.deepEqual(Object.keys(st).sort(), ['buffered', 'cur', 'devices', 'driverMissing', 'dropped', 'enabled', 'lines', 'live', 'maxRetained', 'noDevice', 'paused', 'sessions', 'status']);
   assert.deepEqual([st.cur === run('liveSession'), st.sessions[0] === run('liveSession'), st.sessions[1] === run('fileSession')], [true, true, true]);
   assert.equal(st.dropped, run('liveSession.dropped'), 'the same object, so a drop shows without a copy');
   assert.equal(st.lines, run('wsLines'));
+  assert.equal(st.noDevice, run('noDevice'));
   assert.equal(st.devices, run('deviceInfo'));
   assert.equal(st.status, run('liveStatus'));
   assert.equal(st.enabled, run('enabledPlatforms'));

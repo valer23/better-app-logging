@@ -39,13 +39,14 @@
   }
 
   // The status line of a sidebar device row (spec "Window frame and sidebar"), in spec copy.
-  // s: { live, state, text (setStatus), detected, driverMissing, stalledFor (the stall threshold in s, or -1), rate, dropped }
+  // s: { live, state, text (setStatus), detected, driverMissing, noDevice (live, but the bridge reports the phone gone), stalledFor (the stall threshold in s, or -1), rate, dropped }
   // → { state: the shape the row shows, tone, text, drops: the second line or '' }
   function deviceStatus(s) {
     let state;
     let tone;
     let text;
-    if (s.live && s.stalledFor >= 0) { state = 'stalled'; tone = 'warn'; text = `Stalled ${Math.round(s.stalledFor)} s`; }
+    if (s.live && s.noDevice) { state = 'disconnected'; tone = 'idle'; text = 'Disconnected'; }
+    else if (s.live && s.stalledFor >= 0) { state = 'stalled'; tone = 'warn'; text = `Stalled ${Math.round(s.stalledFor)} s`; }
     else if (s.live) { state = 'streaming'; tone = 'ok'; text = `Streaming · ${fmtRate(s.rate)}`; }
     else if (s.state === 'connecting') { state = 'connecting'; tone = 'info'; text = 'Connecting…'; }
     else if (s.state === 'error') { state = 'error'; tone = 'err'; text = s.text || 'Error'; }
@@ -301,7 +302,7 @@
         }
         const live = !!st.live[p];
         const busy = st.status[p].state === 'connecting';
-        const s = deviceStatus({ live, state: st.status[p].state, text: st.status[p].text, detected: !!dev.id,
+        const s = deviceStatus({ live, state: st.status[p].state, text: st.status[p].text, detected: !!dev.id, noDevice: !!st.noDevice[p],
           driverMissing: p === 'ios' && st.driverMissing, stalledFor: stalledFor(p, live), rate: rates[p], dropped: st.dropped[p] });
         devState[p] = { state: s.state, rate: rates[p], name: r.name };
         setAttr(r.li, 'data-state', s.state);
