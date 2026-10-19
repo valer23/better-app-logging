@@ -608,6 +608,7 @@ test('deviceStatus: quiet adds "· quiet" while the iPhone streams, stalls or is
   assert.equal(S.deviceStatus({ ...b, live: false, state: 'error', text: 'No device' }).text, 'No device');
   assert.equal(S.deviceStatus({ ...b, live: false, driverMissing: true }).text, 'Driver missing');
   assert.equal(S.deviceStatus({ ...b, live: false, detected: false }).text, 'Disconnected');
+  assert.deepEqual({ ...S.deviceStatus({ ...b, noDevice: true }) }, { state: 'disconnected', tone: 'idle', text: 'Disconnected', drops: '' }, 'phone gone: no " · quiet" on Disconnected');
   assert.equal(S.deviceStatus({ ...b, quiet: false }).text, 'Streaming · 842/s');
 });
 
