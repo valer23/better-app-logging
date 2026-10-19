@@ -52,8 +52,9 @@
   // flushes, so "at most a screenful per flush" lets the last four flushes' rows glow at once. The invariant is on the
   // fade, not the flush: the rows lit within any ARRIVAL_MS window never exceed one screenful. One leaky bucket
   // enforces it in constant time (a level and a timestamp, no array, no layout read): capacity and refill are each half
-  // a screenful, so a window admits at most the capacity plus what refills in it, which is the screenful. A flush above
-  // the capacity is skipped and spends nothing. st = { level, at } is mutated; `now` and ARRIVAL_MS are in ms.
+  // a screenful, so a window admits at most the capacity plus what refills in it, which is the screenful. A single
+  // flush above half a screenful is therefore skipped and spends nothing (a deliberate deviation from the spec's
+  // per-flush screenful). st = { level, at } is mutated; `now` and ARRIVAL_MS are in ms.
   const ARRIVAL_MS = 600;
   function arrive(st, n, now, screen) {
     const cap = Math.floor(screen / 2);
