@@ -111,8 +111,11 @@
 
     function syncToolbar(st) {
       const dev = shell.devices();
-      const rate = ['android', 'ios'].reduce((sum, p) => sum + (st.live[p] && dev[p] ? dev[p].rate : 0), 0);
-      const b = streamBadge({ kind: st.cur.kind, paused: st.paused, streaming: st.live.android || st.live.ios, rate, buffered: st.buffered, lines: st.cur.all.length });
+      // A platform streams while its socket is open AND the bridge has not reported the phone gone (noDevice): the row
+      // says Disconnected then, so the badge must not stay green on "Streaming · 0/s".
+      const on = ['android', 'ios'].filter(p => st.live[p] && !st.noDevice[p]);
+      const rate = on.reduce((sum, p) => sum + (dev[p] ? dev[p].rate : 0), 0);
+      const b = streamBadge({ kind: st.cur.kind, paused: st.paused, streaming: on.length > 0, rate, buffered: st.buffered, lines: st.cur.all.length });
       setText($('sessionTitle'), st.cur.name);
       setAttr($('streamBadge'), 'class', `badge status-${b.tone}`);
       setAttr($('streamDot'), 'class', b.pulse ? 'dot pulse' : 'dot');
