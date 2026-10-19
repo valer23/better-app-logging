@@ -61,6 +61,22 @@
     return { state, tone, text, drops: s.dropped > 0 ? `${num(s.dropped)} dropped` : '' };
   }
 
+  // The one-time Quiet system noise hint: step() is true once, the first time `rate` has stayed above `over`
+  // lines/s for `forMs` while armed. A dip, or disarming, restarts the clock.
+  function createLoudWatch({ over = 3000, forMs = 10000 } = {}) {
+    let since = null;
+    let fired = false;
+    return {
+      step(t, rate, armed) {
+        if (fired || !armed || !(rate > over)) { since = null; return false; }
+        if (since === null) since = t;
+        if (t - since < forMs) return false;
+        fired = true;
+        return true;
+      },
+    };
+  }
+
   // The sidebar footer's theme button (spec): the chosen theme's icon, aria-label "Theme: Dark. Switch to
   // Light", tooltip "Theme: Dark" or "Theme: System (Dark)". resolved: what System shows now; next: the
   // theme a click picks (ALV.prefs.nextTheme).
@@ -91,6 +107,8 @@
   // src-tauri/src/bridge/ios.rs). The row says exactly this: spec "Stalled 15 s", not a running timer.
   const STALL_SECONDS = 15;
   const TICK_MS = 500;   // the counts and rates refresh twice a second (spec: at most 4 times), off the drain
+  const LOUD_RATE = 3000;   // the hint: the iPhone sends more than this many lines/s…
+  const LOUD_MS = 10000;    // …for this long, with Quiet system noise off
 
   // Diffed writes for the shell and the status bar (live.js): they refresh twice a second, so an unchanged
   // text, attribute or hidden flag is never written again. null removes the attribute.
@@ -250,7 +268,17 @@
     // the page re-sends a saved "on" at load (applogs-viewer.html), since the bridge starts with it off.
     let quiet = prefs.getSettings().iosQuiet === 'on';
     let quietSeq = 0;   // the newest request: an older one that fails must not undo a newer choice
-    prefs.onChange(ps => { quiet = ps.settings.iosQuiet === 'on'; });
+    let hintSeen = prefs.getSettings().iosQuietHint === 'seen';
+    prefs.onChange(ps => { quiet = ps.settings.iosQuiet === 'on'; hintSeen = ps.settings.iosQuietHint === 'seen'; });
+    // The one-time hint (spec toasts), on the tick: streaming, not stalled, quiet off, never shown. The flag is
+    // stored before the toast shows.
+    const loud = createLoudWatch({ over: LOUD_RATE, forMs: LOUD_MS });
+    function hintQuiet(st) {
+      if (!loud.step(now(), rates.ios, !!st.live.ios && !stalled.ios && !quiet && !hintSeen && !!devState.ios)) return;
+      prefs.patchSettings({ iosQuietHint: 'seen' });
+      ui.toast({ key: 'ios-quiet', kind: 'info', title: `${devState.ios.name} is sending ${num(Math.round(rates.ios / 100) * 100)} lines/s`,
+        desc: 'Quiet system noise drops common iOS system processes before they reach the log.', action: { label: 'Turn on', run: () => setQuiet(true) } });
+    }
     function setQuiet(on) {
       prefs.patchSettings({ iosQuiet: on ? 'on' : 'off' });
       sync();
@@ -409,6 +437,7 @@
         if (st.lines[p] !== seen[p]) { seen[p] = st.lines[p]; stalled[p] = false; }
       }
       render(st);
+      hintQuiet(st);
       for (const fn of tickFns) fn();
     }
     win.setInterval(tick, TICK_MS);
@@ -430,6 +459,6 @@
   }
 
   const ALV = g.ALV || (g.ALV = {});
-  ALV.shellPure = Object.freeze({ num, fmtRate, createRateMeter, deviceStatus, QUIET_STATES, themeView, DRAG_BANDS, STALL_SECONDS, setText, setAttr, setHidden });
+  ALV.shellPure = Object.freeze({ num, fmtRate, createRateMeter, deviceStatus, QUIET_STATES, createLoudWatch, themeView, DRAG_BANDS, STALL_SECONDS, setText, setAttr, setHidden });
   ALV.createShell = createShell;
 })(typeof window !== 'undefined' ? window : globalThis);

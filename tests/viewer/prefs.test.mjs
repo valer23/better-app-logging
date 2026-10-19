@@ -115,7 +115,7 @@ test('uiSize accepts s, m, l; anything else is m', () => {
 test('corrupt settings JSON reads as defaults and is not written back at boot', () => {
   for (const bad of ['{not json', '[]', '5', 'null']) {
     const { prefs, st } = boot({ stored: { settings: bad } });
-    assert.deepEqual({ ...prefs.getSettings() }, { font: 'default', density: 'comfortable', contrast: 'system', motion: 'system', iosQuiet: 'off' });
+    assert.deepEqual({ ...prefs.getSettings() }, { font: 'default', density: 'comfortable', contrast: 'system', motion: 'system', iosQuiet: 'off', iosQuietHint: 'unseen' });
     assert.equal(st.map.get(K('settings')), bad);
   }
 });
@@ -138,7 +138,7 @@ test('settings apply to the root and patchSettings preserves unknown fields', ()
 test('patchSettings over corrupt JSON writes a fresh object', () => {
   const { prefs, st } = boot({ stored: { settings: '{oops' } });
   prefs.patchSettings({ density: 'compact' });
-  assert.deepEqual(JSON.parse(st.map.get(K('settings'))), { font: 'default', density: 'compact', contrast: 'system', motion: 'system', iosQuiet: 'off' });
+  assert.deepEqual(JSON.parse(st.map.get(K('settings'))), { font: 'default', density: 'compact', contrast: 'system', motion: 'system', iosQuiet: 'off', iosQuietHint: 'unseen' });
 });
 
 test('set validates, persists, applies and mirrors glassMode', () => {
@@ -261,6 +261,7 @@ test('sidebar: expanded by default, collapsed persists and writes data-sidebar, 
 test('settings: iosQuiet (Quiet system noise) is off by default, validated, persisted and never a root attribute', () => {
   const { prefs, root, st } = boot();
   assert.equal(prefs.getSettings().iosQuiet, 'off');
+  assert.equal(prefs.getSettings().iosQuietHint, 'unseen');
   prefs.patchSettings({ iosQuiet: 'on' });
   assert.equal(JSON.parse(st.map.get(K('settings'))).iosQuiet, 'on');
   assert.throws(() => prefs.patchSettings({ iosQuiet: true }), { name: 'RangeError' });

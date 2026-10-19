@@ -656,3 +656,27 @@ test('Quiet system noise: a failed request puts the choice back with a Retry err
   await flush();
   assert.equal(prefs.getSettings().iosQuiet, 'off', 'the newest choice stands');
 });
+
+test('loud watch: once, after 10 s over 3 000/s while armed; a dip or disarm restarts the clock', () => {
+  const w = S.createLoudWatch({ over: 3000, forMs: 10000 });
+  assert.deepEqual([w.step(0, 6200, true), w.step(9500, 6200, true), w.step(10000, 6200, true), w.step(10500, 6200, true)], [false, false, true, false]);
+  const v = S.createLoudWatch({ over: 3000, forMs: 10000 });
+  v.step(0, 6200, true); v.step(5000, 2000, true);
+  assert.deepEqual([v.step(14000, 6200, true), v.step(24000, 6200, true)], [false, true]);
+  const d = S.createLoudWatch({ over: 3000, forMs: 10000 });
+  d.step(0, 6200, true); d.step(5000, 6200, false);
+  assert.equal(d.step(12000, 6200, true), false);
+});
+
+test('Quiet system noise hint: over 3 000 lines/s for 10 s with quiet off, once ever; Turn on enables it', () => {
+  const { p, prefs, calls, state } = shellPage({ st: IOS() });
+  for (let k = 0; k < 24; k++) { state.lines.ios += 3100; p.advance(500); }
+  const t = p.byId.toastLive.children[0];
+  assert.match(texts(t), new RegExp(`^iPhone Val is sending 6${T}200 lines/s`));
+  assert.equal(prefs.getSettings().iosQuietHint, 'seen', 'stored before it shows');
+  t.children[2].click();
+  assert.deepEqual([prefs.getSettings().iosQuiet, calls.at(-1)], ['on', ['setIosQuiet', true]]);
+  prefs.patchSettings({ iosQuiet: 'off' });
+  for (let k = 0; k < 40; k++) { state.lines.ios += 3100; p.advance(500); }
+  assert.ok(!texts(p.byId.toastLive).includes('is sending'), 'never twice');
+});

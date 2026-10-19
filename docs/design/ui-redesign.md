@@ -711,6 +711,7 @@ Bottom right, 16 px above the status bar (shifted left of an open drawer), 356 w
 | Quiet system noise on | info | Quiet system noise on | Lines from common iOS system processes are dropped before they reach the log, so exports leave them out too. | — |
 | Quiet system noise off | info | Quiet system noise off | Lines from every iOS process reach the log again. | — |
 | Quiet system noise failed | alert (err) | Quiet system noise did not change | The app did not answer. Try again. | Retry |
+| Quiet system noise hint (once, iPhone over 3 000 lines/s for 10 s, quiet off) | info | iPhone 15 is sending 6 200 lines/s | Quiet system noise drops common iOS system processes before they reach the log. | Turn on |
 | Exported | check | Exported 47 106 lines | HS-1234-OTA-pairing_2-devices_2026-10-14_1554.txt | Show in folder |
 | Error | alert (err) | Export failed | Disk is full. Free some space and try again. | Retry |
 
