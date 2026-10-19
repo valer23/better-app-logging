@@ -839,7 +839,11 @@ async function checkIosDriverStatus() {
 function refreshLiveView() {
   if (cur.kind !== 'live') return;
   const anyConnected = androidLive || iosLive;
-  showOnly(anyConnected || cur.all.length || pendingBatch.length ? 'logWrapper' : 'livePanel');
+  const showGrid = anyConnected || cur.all.length || pendingBatch.length;
+  // The device panel ends the Clear state ("Waiting for new lines…"): a device started later is a new wait, and shows
+  // "Waiting for the first lines from …" (liveClearedSeq would otherwise stay equal to nextSeq until a line arrives).
+  if (!showGrid) liveClearedSeq = -1;
+  showOnly(showGrid ? 'logWrapper' : 'livePanel');
   shellSync();
 }
 

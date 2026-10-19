@@ -898,6 +898,19 @@ test('empty states keep #70: Clear with nothing streaming shows the device panel
   assert.equal(tile(), '', 'a line hides it');
 });
 
+test('empty states: Clear while streaming, then Stop, then Start again shows the first-lines tile, not "Waiting for new lines…" (review F7)', () => {
+  const p = streamPage();
+  const tile = () => (p.doc.getElementById('gridEmpty').hidden ? '' : p.text('gridEmptyTitle'));
+  p.doc.hidden = false;
+  p.open('ios'); p.send(2); p.api.flushBatch();
+  p.api.clearLogs();
+  assert.deepEqual([p.run('shellState().cleared'), tile()], [true, 'Waiting for new lines…'], 'Clear while streaming');
+  p.run('disconnectIos()');
+  assert.deepEqual([p.view(), p.run('shellState().cleared')], ['livePanel', false], 'Stop: the device panel takes over and the Clear state ends with it');
+  p.open('ios');
+  assert.deepEqual([p.view(), p.run('shellState().cleared'), tile()], ['logWrapper', false, 'Waiting for the first lines from iPhone…'], 'a device started later');
+});
+
 // P5b: the arrival highlight (renderLiveTail asks grid.arrive, which budgets the lit rows per --t-arrival window).
 test('arrival: a flush that appends to a followed tail asks grid.arrive for the highlight; none on a rebuild or while reading', () => {
   const v = boot();
