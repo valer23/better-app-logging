@@ -146,13 +146,14 @@
     // line and Home / ⌘↑ go to the oldest retained line, from anywhere but a text field or a control that owns the
     // key; Space† pauses and F† toggles Follow while the grid has focus, on the live session only. ----
     const onLive = () => state().cur.kind === 'live';
-    // End and Home are global, so they wait while the grid is hidden (the device cards, the dropzone, loading) or a
-    // legacy modal is over it: keys.setModal does not cover the setup guide or the stall modal, which scroll with them.
+    // All four wait while the grid is hidden (the device cards, the dropzone, loading) or a legacy modal is over it:
+    // keys.setModal does not cover the setup guide or the stall modal, which leave focus on the table (Space and F
+    // would pause or flip Follow behind the sheet, unseen) and scroll with End and Home.
     const shown = () => !!state().gridShown;
     keys.register({ id: 'stream.latest', keys: ['End', 'Mod+ArrowDown'], when: shown, run: () => actions.jumpToEnd() });
     keys.register({ id: 'stream.oldest', keys: ['Home', 'Mod+ArrowUp'], when: shown, run: () => actions.jumpToOldest() });
-    keys.register({ id: 'stream.pause', keys: 'Space', scope: 'grid', when: onLive, run: () => actions.togglePause() });
-    keys.register({ id: 'stream.follow', keys: 'F', scope: 'grid', when: onLive, run: () => actions.toggleAutoScroll() });
+    keys.register({ id: 'stream.pause', keys: 'Space', scope: 'grid', when: () => onLive() && shown(), run: () => actions.togglePause() });
+    keys.register({ id: 'stream.follow', keys: 'F', scope: 'grid', when: () => onLive() && shown(), run: () => actions.toggleAutoScroll() });
     // The toolbar buttons carry their keys (spec: aria-keyshortcuts on toolbar buttons) and show them from the
     // 1 320 px toolbar tier (shell.css); their tooltips name them always (live.js).
     setAttr($('pauseBtn'), 'aria-keyshortcuts', keys.aria('stream.pause'));

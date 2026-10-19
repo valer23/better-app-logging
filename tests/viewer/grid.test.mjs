@@ -444,6 +444,19 @@ test('stream keys: Space pauses and F toggles Follow only with the grid focused,
   assert.deepEqual(calls.map(c => c[0]), ['togglePause', 'toggleAutoScroll']);
 });
 
+test('stream keys: Space and F wait while a legacy modal covers the grid (the stall or setup sheet leaves focus on the table), review F4', () => {
+  const { p, st, calls } = gridPage();
+  const t = p.byId.logTableEl;
+  st.gridShown = false;   // #stallModal / #setupModal open over the grid, or the grid hidden
+  assert.equal(press(p, t, ' ', { code: 'Space' }), null, 'Space does not pause the stream behind the sheet');
+  assert.equal(press(p, t, 'f', { code: 'KeyF' }), null, 'F does not flip Follow unseen');
+  assert.deepEqual(calls, []);
+  st.gridShown = true;
+  assert.equal(press(p, t, ' ', { code: 'Space' }), 'stream.pause');
+  assert.equal(press(p, t, 'f', { code: 'KeyF' }), 'stream.follow');
+  assert.deepEqual(calls.map(c => c[0]), ['togglePause', 'toggleAutoScroll']);
+});
+
 test('stream keys: Pause and Follow carry aria-keyshortcuts and show their key in the toolbar kbd', () => {
   const { p } = gridPage();
   assert.deepEqual([p.byId.pauseBtn.getAttribute('aria-keyshortcuts'), p.byId.pauseKbd.textContent], ['Space', 'Space']);
