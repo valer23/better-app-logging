@@ -227,7 +227,14 @@
       <tbody id="tbody"></tbody>
     </table>
   </div>
-  <button type="button" class="newer-pill" id="newerPill" onclick="jumpToLatest(event)" aria-label="" title="Jump to the newest line and turn auto-scroll back on"><span class="newer-count" id="newerPillCount"></span><span class="newer-sep" aria-hidden="true">·</span><span class="newer-action">Jump to latest ↓</span></button>
+  <!-- The jump pill and the paused pill (spec "States"; #57): bottom-centre over the grid, outside the scroller, so
+       writing it never lays out the rows. updateNewerPill() is its one writer; the 56 px spacer (#logTable.newer-room)
+       keeps it off the last row. -->
+  <div class="jump-pill" id="newerPill" role="group" aria-labelledby="newerPillCount">
+    <svg class="icon" aria-hidden="true" focusable="false"><use id="newerPillIcon" href="#i-arrow-down-to-line"/></svg>
+    <span id="newerPillCount"><span id="newerPillPre"></span><b id="newerPillNum"></b><span id="newerPillUnit"></span></span>
+    <button type="button" class="btn btn-primary btn-sm" id="newerPillBtn" onclick="pillAction(event)"><span id="newerPillAction">Jump to latest</span><span class="kbd" id="newerPillKbd" aria-hidden="true"></span></button>
+  </div>
 </div>
 <footer id="statusBar" class="chrome">
   <div class="sb-left">
@@ -457,15 +464,19 @@ let livePaused = false;
 let pendingBatch = [], batchTimer = null;   // the live ingest queue: one drain, into the live session
 const PAGE = 500;
 
-// ── "N lines below" pill ──
+// ── The jump pill ("N lines below") and the paused pill ("Resume to see N buffered lines") ──
 // Since #54 the table is frozen while auto-scroll is off, so newer lines don't appear on their own.
 // The pill says how many filtered lines lie past the rendered window (including lines slid out below
-// it while scrolling back) and re-pins on click. Cheap by
-// design: O(1) arithmetic on filtered.length/renderedEnd, no layout reads, DOM writes only when the
-// value changes, nothing while the window is hidden (visibilitychange refreshes it). Declared here, not
-// next to togglePause, because the top-level selectSession(liveSession) call reaches it before later `let`s run.
+// it while scrolling back) and re-pins on click; while the live stream is paused it offers Resume instead
+// (spec: Paused wins). Cheap by design: O(1) arithmetic on filtered.length/renderedEnd and the backlog
+// length, no layout reads, DOM writes only when what it shows changes, nothing while the window is hidden
+// (visibilitychange refreshes it; the grid's tick refreshes the paused count, which no flush moves). Declared
+// here, not next to togglePause, because the top-level selectSession(liveSession) call reaches it before later
+// `let`s run.
 const newerPill = document.getElementById('newerPill'), newerPillCount = document.getElementById('newerPillCount');
-let newerPillShown = -1;      // count on screen; 0 = hidden, -1 = unknown (forces a write)
+const newerPillBtn = document.getElementById('newerPillBtn');
+let newerPillShown = null;    // what the pill shows ('' = hidden, null = unknown: forces a write)
+let newerPillMode = null;     // 'newer' | 'paused' | null: what its button does
 let newerPillArmed = null;    // spacer class state on #logTable
 let newerPillJumpAt = -Infinity;   // when the pill last re-pinned; see the tbody click guard
 // ── Reading-window position hint (the status bar's "Lines X–Y of Z") ──
@@ -495,17 +506,33 @@ function updateNewerPill() {
   // Armed = the same live-table test toggleAutoScroll uses to re-pin; a file-only table never shows it.
   const s = cur, filtered = s.filtered;
   const armed = s.kind === 'live' && !s.follow && filtered.length > 0 && filtered[filtered.length - 1].seq !== undefined;
-  if (armed !== newerPillArmed) { newerPillArmed = armed; document.getElementById('logTable').classList.toggle('newer-room', armed); }
+  const paused = s.kind === 'live' && livePaused;
+  const room = armed || paused;
+  if (room !== newerPillArmed) {
+    newerPillArmed = room;
+    const t = document.getElementById('logTable');
+    t.classList.toggle('newer-room', room);
+    if (room && s.follow) t.scrollTop = t.scrollHeight;   // paused while following: the newest line moves above the pill (once, on the change)
+  }
   const n = armed ? Math.max(0, filtered.length - s.renderedEnd) : 0;   // max(): never negative even if renderedEnd overshoots
-  if (n === newerPillShown) return;
-  newerPillShown = n;
-  // Hiding a focused button would drop focus on <body>; park it on the Auto-scroll toggle (the pill already had it, so nothing is stolen).
-  if (!n && document.activeElement === newerPill) document.getElementById('autoScrollBtn').focus({ preventScroll: true });
-  newerPill.classList.toggle('visible', n > 0);
-  if (!n) return;
-  const lines = `${n.toLocaleString()} ${n === 1 ? 'line' : 'lines'} below`;
-  newerPillCount.textContent = lines;
-  newerPill.setAttribute('aria-label', `${lines}. Jump to latest and turn auto-scroll back on`);
+  const key = paused ? (liveSession.overflowed ? 'full' : `paused ${pendingBatch.length}`) : n ? `newer ${n}` : '';
+  if (key === newerPillShown) return;
+  newerPillShown = key;
+  const v = ALV.gridPure.pillView({ paused, buffered: pendingBatch.length, overflowed: liveSession.overflowed, below: n });
+  // Hiding a focused button would drop focus on <body>: park it on the toolbar button the pill stood in for, Follow or
+  // Pause (the pill already had it, so nothing is stolen).
+  if (!v && document.activeElement === newerPillBtn) document.getElementById(newerPillMode === 'paused' ? 'pauseBtn' : 'autoScrollBtn').focus({ preventScroll: true });
+  newerPillMode = v ? v.mode : null;
+  newerPill.classList.toggle('visible', !!v);
+  document.getElementById('logWrapper').classList.toggle('is-paused', paused);   // spec: a 2 px --warn line while paused
+  if (!v) return;
+  const { setText, setAttr } = ALV.shellPure;   // diffed: an unchanged part is not written again
+  setAttr(document.getElementById('newerPillIcon'), 'href', `#i-${v.icon}`);
+  setText(document.getElementById('newerPillPre'), v.pre);
+  setText(document.getElementById('newerPillNum'), v.num);
+  setText(document.getElementById('newerPillUnit'), v.unit);
+  setText(document.getElementById('newerPillAction'), v.action);
+  setText(document.getElementById('newerPillKbd'), ALV.keys.label(v.key));
 }
 // The pill is a sibling of the scroller, so its wheel would otherwise chain to the overflow:hidden #logWrapper.
 function forwardWheelToTable(e) {
@@ -515,16 +542,18 @@ function forwardWheelToTable(e) {
   t.scrollTop += e.deltaY * k; t.scrollLeft += e.deltaX * k;
 }
 newerPill.addEventListener('wheel', forwardWheelToTable, { passive: true });
-function jumpToLatest(e) {
-  const hadFocus = document.activeElement === newerPill;
+// The pill's button: Resume while paused, else Jump to latest (Follow back on).
+function pillAction(e) {
+  const hadFocus = document.activeElement === newerPillBtn;
   newerPillJumpAt = performance.now();
-  // Pointer activation (detail !== 0) drops the pill's focus first: Chromium focuses a clicked button, and
+  // Pointer activation (detail !== 0) drops the button's focus first: Chromium focuses a clicked button, and
   // parking focus on Auto-scroll then would let a later Space unpin. Keyboard activation keeps it, so the
-  // hide in updateNewerPill moves focus to Auto-scroll instead of <body>. The `if (!cur.follow)` guard only
-  // stops a repeat activation of the pill itself; the pill hides at once, so the second click of a double
-  // click lands on the row underneath, which the tbody click handler ignores for a short window after a jump.
-  if (hadFocus && e && e.detail !== 0) newerPill.blur();
-  if (!cur.follow) toggleAutoScroll();
+  // hide in updateNewerPill moves focus to Follow (or Pause) instead of <body>. The guards only stop a repeat
+  // activation of the pill itself; the pill hides at once, so the second click of a double click lands on the
+  // row underneath, which the tbody click handler ignores for a short window after a jump.
+  if (hadFocus && e && e.detail !== 0) newerPillBtn.blur();
+  if (newerPillMode === 'paused') { if (livePaused) togglePause(); }
+  else if (!cur.follow) toggleAutoScroll();
 }
 // End / ⌘↓ (spec "Follow, pause and the jump pill"): Follow on, at the newest line; it is the jump pill's action
 // on the live session. A file session never follows: the window moves to its last lines instead.
@@ -560,9 +589,10 @@ function jumpToOldest() {
   t.scrollTop = 0;
   updateNewerPill();
 }
-// Focus is parked on Auto-scroll after a keyboard jump and Enter activates on keydown, so a held key's
-// auto-repeat would keep toggling it.
-document.getElementById('autoScrollBtn').addEventListener('keydown', e => { if (e.repeat && (e.key === 'Enter' || e.key === ' ')) e.preventDefault(); });
+// Focus is parked on Follow (or Pause) after a keyboard jump (or Resume) and Enter activates on keydown, so a held
+// key's auto-repeat would keep toggling it. A keyboard Resume while lines wait below keeps focus on the pill's button
+// (the pill turns into the jump pill), so a held Enter would jump to the latest line at once: it is guarded too.
+for (const id of ['autoScrollBtn', 'pauseBtn', 'newerPillBtn']) document.getElementById(id).addEventListener('keydown', e => { if (e.repeat && (e.key === 'Enter' || e.key === ' ')) e.preventDefault(); });
 
 // ── Live retention ──
 // Live lines kept in memory; older ones are dropped so long sessions can't grow the heap without
@@ -868,7 +898,7 @@ shell = ALV.createShell({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, 
 liveUi = ALV.createLive({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, keys: ALV.keys, prefs: ALV.prefs, shell, state: shellState,
   actions: { togglePause, toggleAutoScroll, clear: clearLogs, zoom: setLogZoom, openFile: openLogFile, setGlass, togglePlatform } });
 grid = ALV.createGrid({ doc: document, dom: ALV.dom, keys: ALV.keys, shell, state: shellState,
-  actions: { jumpToEnd, jumpToOldest, togglePause, toggleAutoScroll } });
+  actions: { jumpToEnd, jumpToOldest, togglePause, toggleAutoScroll, updateNewerPill } });
 function shellState() {
   return {
     cur, sessions: [liveSession, fileSession],

@@ -43,12 +43,26 @@
     return null;
   }
 
+  // The jump pill and the paused pill (spec "States", "Follow, pause and the jump pill"): Paused wins over new lines.
+  // → null (hidden) or { mode, icon, pre, num, unit, action, key }: "<pre><b>num</b><unit>" and a primary button
+  // `action` with the kbd of binding `key`. Numbers use the thin-space grouping (shellPure.num, loaded first).
+  function pillView({ paused, buffered, overflowed, below }) {
+    const { num } = g.ALV.shellPure;
+    if (paused) {
+      const base = { mode: 'paused', icon: 'pause', action: 'Resume', key: 'stream.pause' };
+      if (overflowed) return { ...base, pre: 'Buffer full · resuming skips to the newest lines', num: '', unit: '' };
+      return { ...base, pre: 'Resume to see ', num: num(buffered), unit: buffered === 1 ? ' buffered line' : ' buffered lines' };
+    }
+    if (below > 0) return { mode: 'newer', icon: 'arrow-down-to-line', pre: '', num: num(below), unit: below === 1 ? ' line below' : ' lines below', action: 'Jump to latest', key: 'stream.latest' };
+    return null;
+  }
+
   // ---- DOM ----
 
   // createGrid({ doc, dom, keys, shell, state, actions }) → { sync() }. Adds a resize separator on each RESIZABLE
   // boundary of #headerRow, makes the scroller the shortcut registry's grid root, binds the stream keys and keeps
   // aria-rowcount current. state() is the legacy shellState(); actions are legacy functions: jumpToEnd,
-  // jumpToOldest, togglePause, toggleAutoScroll.
+  // jumpToOldest, togglePause, toggleAutoScroll, updateNewerPill.
   function createGrid({ doc, dom, keys, shell, state, actions }) {
     const { setAttr, setText } = g.ALV.shellPure;   // shell.js loads first
     const $ = id => doc.getElementById(id);
@@ -152,16 +166,18 @@
     });
 
     // ---- aria-rowcount (spec): the shown session's filtered lines plus the header row. Written on shellSync and the
-    // shell's tick (twice a second), never from the drain, and only when it changed. ----
+    // shell's tick (twice a second), never from the drain, and only when it changed. The tick also refreshes the
+    // paused pill's count: a paused stream runs no flush. ----
     function sync() {
       setAttr(table, 'aria-rowcount', String(state().cur.filtered.length + 1));
       ring();
+      actions.updateNewerPill();
     }
     shell.onTick(sync);
     return { sync };
   }
 
   const ALV = g.ALV || (g.ALV = {});
-  ALV.gridPure = Object.freeze({ timeOf, rowClass, ROW_CLASS, LEVEL_CLASS: Object.freeze(LEVEL_CLASS), RESIZABLE, COL_MIN, COL_MAX, clampCol, resizeKey });
+  ALV.gridPure = Object.freeze({ timeOf, rowClass, ROW_CLASS, LEVEL_CLASS: Object.freeze(LEVEL_CLASS), RESIZABLE, COL_MIN, COL_MAX, clampCol, resizeKey, pillView });
   ALV.createGrid = createGrid;
 })(typeof window !== 'undefined' ? window : globalThis);

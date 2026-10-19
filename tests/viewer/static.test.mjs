@@ -932,6 +932,30 @@ test('stream keys: Pause and Follow carry a kbd (aria-hidden, shown from the 1 3
   assert.match(live, /tip\('autoScrollBtn', \{ text: 'Follow newest lines', shortcut: 'stream\.latest' \}\)/);
 });
 
+test('the pill: a group named by its count, a primary button with its kbd, outside the scroller; the legacy .newer-pill is gone', () => {
+  const pill = findById(root, 'newerPill');
+  assert.deepEqual([pill.tag, pill.attrs.class, pill.attrs.role, pill.attrs['aria-labelledby'], pill.parent.attrs.id], ['div', 'jump-pill', 'group', 'newerPillCount', 'logWrapper']);
+  const btn = findById(root, 'newerPillBtn');
+  assert.deepEqual([btn.tag, btn.attrs.class, btn.attrs.onclick, btn.parent], ['button', 'btn btn-primary btn-sm', 'pillAction(event)', pill]);
+  assert.deepEqual(findById(root, 'newerPillCount').children.map(c => `${c.tag}#${c.attrs.id}`), ['span#newerPillPre', 'b#newerPillNum', 'span#newerPillUnit'], 'spec: the number is bold');
+  assert.equal(findById(root, 'newerPillKbd').attrs['aria-hidden'], 'true');
+  assert.doesNotMatch(read(path.join(ASSETS, 'css', 'legacy.css')), /newer-pill|newer-room/);
+  assert.equal(gridDecl('#newerPill', 'bottom'), '16px', 'spec: 16 px above the status bar');
+  assert.equal(gridDecl('#logTable.newer-room::after', 'height'), '56px', 'the #57 spacer');
+  assert.equal(gridDecl('#logWrapper.is-paused::before', 'height'), '2px', 'spec: the paused warn line');
+  const code = inlineScripts(html).at(-1).code;
+  const fn = code.slice(code.indexOf('\nfunction updateNewerPill('), code.indexOf('\n}\n', code.indexOf('\nfunction updateNewerPill(')));
+  assert.doesNotMatch(fn, /getBoundingClientRect|offset(Width|Height|Top)|clientHeight|toLocaleString/, 'per flush: no layout read (scrollHeight only on a spacer change), thin-space numbers');
+});
+
+test('the pill is opaque in both materials: no rule gives it a backdrop-filter, an opacity or a see-through background (P5a judge)', () => {
+  const decls = cssFiles.flatMap(f => C.cssRules(f.text).filter(r => r.selectors.some(s => /newerPill|newer-pill|jump-pill/.test(s)))
+    .flatMap(r => C.declarations(r.body).map(d => ({ at: `${f.path} ${r.selectors.join(', ')}`, ...d }))));
+  assert.ok(decls.some(d => / \.jump-pill$/.test(d.at) && d.prop === 'background' && d.value === 'var(--raised)'), 'the foundation draws it on --raised: opaque in both themes and both materials');
+  assert.deepEqual(decls.filter(d => /backdrop-filter|^opacity$/.test(d.prop) || (/^background(-color)?$/.test(d.prop) && d.value !== 'var(--raised)')).map(d => `${d.at}: ${d.prop}`), [],
+    'the grid is opaque, and so is what floats over it (roadmap §5.1)');
+});
+
 test('column resize lives in grid.js: the legacy initResizeHandles and its .col-resize-handle are gone', () => {
   const code = inlineScripts(html).at(-1).code;
   assert.doesNotMatch(code, /initResizeHandles|col-resize-handle/);

@@ -46,6 +46,8 @@ function boot() {
     drop(platform, count) { api.handleWsMsg({ data: JSON.stringify({ type: 'dropped', count }) }, platform); },
     text: id => doc.getElementById(id).textContent,
     title: id => doc.getElementById(id).title,
+    // P5b: the pill's text is "<pre><b>num</b><unit>" (spec: the number is bold), its button names its action.
+    pill: () => ['newerPillPre', 'newerPillNum', 'newerPillUnit'].map(id => doc.getElementById(id).textContent || '').join(''),
   };
 }
 
@@ -162,7 +164,7 @@ test('#54 and #57: with Follow off the window stays put and the pill counts the 
   assert.equal(v.get('liveRenderedEnd'), 5);
   v.doc.hidden = false;
   v.api.updateNewerPill();
-  assert.equal(v.text('newerPillCount'), '7 lines below');
+  assert.equal(v.pill(), '7 lines below');
 });
 
 test('#57: lines that arrive while the file session is shown count as lines below on return', () => {
@@ -177,7 +179,7 @@ test('#57: lines that arrive while the file session is shown count as lines belo
   assert.equal(v.get('liveRenderedEnd'), 5);
   v.doc.hidden = false;
   v.api.updateNewerPill();
-  assert.equal(v.text('newerPillCount'), '9 lines below');
+  assert.equal(v.pill(), '9 lines below');
 });
 
 test('the retention cap trims the live session while the file session is shown, and never the file', () => {
@@ -693,4 +695,60 @@ test('End (jumpToEnd) with Follow already on re-pins a window that slid back off
   v.run('jumpToEnd()');
   assert.equal(v.run('liveSession.follow'), true);
   assert.equal(v.run('liveSession.renderedEnd'), v.run('liveSession.filtered.length'), 'End reaches the newest line, not the bottom of the slid-back window');
+});
+
+// P5b: the paused pill (spec "States": Paused wins over new lines).
+test('paused pill: "Resume to see N buffered lines" wins over "N lines below"; its button resumes; the spacer is armed', () => {
+  const v = boot();
+  v.doc.hidden = false;
+  v.send(5); v.api.flushBatch();
+  v.api.toggleAutoScroll();               // reading: 3 lines will wait below
+  v.doc.hidden = true;
+  v.send(3, 5); v.api.flushBatch();
+  v.doc.hidden = false;
+  v.api.updateNewerPill();
+  assert.deepEqual([v.pill(), v.text('newerPillAction'), v.text('newerPillKbd')], ['3 lines below', 'Jump to latest', 'End']);
+  v.api.togglePause();
+  v.send(1201, 8);
+  v.api.updateNewerPill();
+  assert.deepEqual([v.pill(), v.text('newerPillAction'), v.text('newerPillKbd')], ['Resume to see 1\u2009201 buffered lines', 'Resume', 'Space'],
+    'thin-space grouping; paused wins');
+  assert.equal(v.doc.getElementById('logWrapper').classList.contains('is-paused'), true, 'the 2 px warn line');
+  assert.equal(v.doc.getElementById('logTable').classList.contains('newer-room'), true, 'the 56 px spacer');
+  v.run('pillAction({ detail: 1 })');
+  assert.equal(v.run('livePaused'), false, 'the button resumes');
+  v.api.updateNewerPill();
+  assert.equal(v.doc.getElementById('logWrapper').classList.contains('is-paused'), false);
+  assert.match(v.pill(), / lines below$/, 'resumed while reading: back to the jump pill');
+  v.run('pillAction({ detail: 1 })');
+  assert.equal(v.run('liveSession.follow'), true, 'Jump to latest turns Follow back on');
+});
+
+test('paused pill: while following too; "Buffer full · resuming skips to the newest lines" once the backlog overflowed; the tick refreshes the count', () => {
+  const v = boot();
+  v.doc.hidden = false;
+  v.run('MAX_RETAINED = 100');
+  v.send(5); v.api.flushBatch();
+  v.api.togglePause();
+  assert.equal(v.pill(), 'Resume to see 0 buffered lines');
+  assert.equal(v.doc.getElementById('logTable').classList.contains('newer-room'), true, 'following and paused: the spacer keeps the newest line above the pill');
+  v.send(1, 5);
+  v.run('grid.sync()');                   // the grid's tick: no flush runs while paused
+  assert.equal(v.pill(), 'Resume to see 1 buffered line');
+  v.send(150, 6);
+  v.run('grid.sync()');
+  assert.equal(v.pill(), 'Buffer full · resuming skips to the newest lines');
+  v.api.togglePause();
+  v.api.updateNewerPill();
+  assert.equal(v.doc.getElementById('newerPill').classList.contains('visible'), false, 'following again: no pill');
+  assert.equal(v.doc.getElementById('logTable').classList.contains('newer-room'), false, 'and no spacer');
+});
+
+test('held Enter: Follow, Pause and the pill button ignore keydown auto-repeat (a keyboard Resume with lines below keeps focus on the pill)', () => {
+  const v = boot();
+  for (const id of ['autoScrollBtn', 'pauseBtn', 'newerPillBtn']) {
+    const ev = { key: 'Enter', repeat: true, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+    for (const fn of v.doc.listeners.get(`${id}:keydown`) || []) fn(ev);
+    assert.equal(ev.defaultPrevented, true, `#${id}: a held Enter does not activate it again`);
+  }
 });

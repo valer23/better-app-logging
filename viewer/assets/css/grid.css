@@ -98,6 +98,20 @@
   .lgrid > tbody > tr.p-a > td.c-plat::before { content: "A"; content: "A" / "Android"; color: var(--plat-android); background: color-mix(in srgb, var(--plat-android) 14%, var(--surface)); }
   .lgrid > tbody > tr.p-i > td.c-plat::before { content: "i"; content: "i" / "iOS"; color: var(--plat-ios); background: color-mix(in srgb, var(--plat-ios) 14%, var(--surface)); }
 
+  /* The jump pill and the paused pill (spec "States"): bottom-centre, 16 px above the status bar, over the grid but
+     outside the scroller, so writing it never lays out the rows. The foundation's .jump-pill draws it (no blur: the
+     grid is opaque). No transition: nothing here animates per flush. */
+  #newerPill { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 6; white-space: nowrap; }
+  #newerPill:not(.visible) { display: none; }
+  #newerPill > .icon { color: var(--text-2); }
+  #newerPillNum { font-weight: 700; font-variant-numeric: tabular-nums; }
+  /* Room below the last row, so it can scroll above the pill: 56 px = bottom 16 + the 32 px pill + an 8 px margin.
+     Toggled with the armed state (not the count), so the content end does not jump as the count crosses 0. While
+     armed the 200 px end detection in extendReadingWindow and the scroll handler is about 144 px from the last row. */
+  #logTable.newer-room::after { content: ""; display: block; height: 56px; }
+  /* Paused (spec "States"): a 2 px --warn line at the top of the grid, over the header. */
+  #logWrapper.is-paused::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 2px; z-index: 7; background: var(--warn); pointer-events: none; }
+
   /* Search hits (P6 marks the first hit only). */
   .lgrid mark { background: var(--match-bg); color: var(--match-fg); border-radius: 2px; }
 

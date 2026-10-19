@@ -26,6 +26,19 @@ test('timeOf: the time of every timestamp shape the viewer reads, to the millise
   for (const [ts, want] of cases) assert.equal(G.timeOf(ts), want, String(ts));
 });
 
+test('pillView: Paused wins over new lines, singular and plural, thin-space grouping, Buffer full; nothing to show is null', () => {
+  const v = o => G.pillView({ paused: false, buffered: 0, overflowed: false, below: 0, ...o });
+  const text = x => (x ? `${x.pre}${x.num}${x.unit} | ${x.action} ${x.key}` : null);
+  assert.equal(text(v({ below: 1284 })), '1\u2009284 lines below | Jump to latest stream.latest', 'a thin space (spec conventions)');
+  assert.equal(text(v({ below: 1 })), '1 line below | Jump to latest stream.latest');
+  assert.equal(text(v({ paused: true, buffered: 3402, below: 50 })), 'Resume to see 3\u2009402 buffered lines | Resume stream.pause');
+  assert.equal(text(v({ paused: true, buffered: 1 })), 'Resume to see 1 buffered line | Resume stream.pause');
+  assert.equal(text(v({ paused: true, buffered: 9, overflowed: true })), 'Buffer full · resuming skips to the newest lines | Resume stream.pause');
+  assert.deepEqual([v({ below: 3 }).mode, v({ below: 3 }).icon, v({ paused: true }).mode, v({ paused: true }).icon], ['newer', 'arrow-down-to-line', 'paused', 'pause']);
+  assert.equal(v({}), null);
+  assert.equal(v({ below: -2 }), null);
+});
+
 test('rowClass: level and platform in one class string; ASSERT is the F class; unknown levels read as Verbose', () => {
   assert.equal(G.rowClass('ERROR', 'ios'), 'l-e p-i');
   assert.equal(G.rowClass('WARN', 'android'), 'l-w p-a');
@@ -271,6 +284,13 @@ test('the focus ring: #logWrapper carries grid-focus while the table is focus-vi
   ticks[0]();
   assert.equal(on(), false, 'a hidden or detached grid cannot keep a stale ring: the shell tick re-reads it');
   assert.equal(wrap.className, '', 'the class is the only thing written');
+});
+
+test('the grid tick also refreshes the pill (a paused stream runs no flush, so nothing else moves its count)', () => {
+  const { grid, ticks, calls } = gridPage();
+  ticks[0]();
+  grid.sync();
+  assert.deepEqual(calls.map(c => c[0]), ['updateNewerPill', 'updateNewerPill']);
 });
 
 test('the time cell gets the full timestamp (with its date) as a title on its first hover, never before', () => {
