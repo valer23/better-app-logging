@@ -543,3 +543,73 @@ test('a loaded file names its SESSIONS row and shows it', () => {
   assert.equal(v.doc.getElementById('sessFileItem').hidden, false);
   assert.equal(v.text('sessFileCount'), '3');
 });
+
+// ---- The live session keeps its grid after Stop (user report: Stop showed the device panel over 166 727 lines) ----
+// Streams through the real connect/disconnect paths: the page's WebSocket is kept per platform so a test can
+// fire onopen / onerror / onclose the way the browser would.
+function streamPage() {
+  const v = boot();
+  v.run(`globalThis.__ws = {}; WebSocket = function (url) { const ws = { url, close() {} }; __ws[url.endsWith(':8765') ? 'android' : 'ios'] = ws; return ws; };
+    document.getElementById('androidDeviceSelect').value = 'a1'; document.getElementById('iosDeviceSelect').value = 'u1';`);
+  return { ...v,
+    open(p) { v.run(`${p === 'android' ? 'connectAndroid' : 'connectIos'}(); __ws.${p}.onopen()`); },
+    view: () => ['livePanel', 'logWrapper'].filter(id => display(v, id) === '').join(),
+  };
+}
+
+test('Stop keeps the recorded lines on screen; an empty live session with nothing streaming shows the device panel', () => {
+  const p = streamPage();
+  assert.equal(p.view(), 'livePanel', 'first launch: no lines, no stream');
+  p.open('android'); p.open('ios');
+  p.send(3, 0, 'android'); p.send(3, 3, 'ios'); p.api.flushBatch();
+  p.run('toggleAndroid()');
+  assert.equal(p.view(), 'logWrapper', 'iOS still streams');
+  p.run('toggleIos()');
+  assert.equal(p.view(), 'logWrapper', 'both stopped: the recorded lines stay readable');
+  assert.equal(p.get('liveAll').length, 6);
+  assert.equal(p.text('streamBadgeText'), 'Stopped · 6 lines');
+  const q = streamPage();
+  q.open('ios'); q.run('disconnectIos()');
+  assert.equal(q.view(), 'livePanel', 'Stop with no line received');
+});
+
+test('Clear on Live: the panel when nothing streams, the emptied grid while a device streams', () => {
+  const p = streamPage();
+  p.open('ios'); p.send(2); p.api.flushBatch();
+  p.api.clearLogs();
+  assert.equal(p.view(), 'logWrapper', 'streaming: the grid refills');
+  p.send(2, 2); p.api.flushBatch(); p.run('disconnectIos()');
+  assert.equal(p.view(), 'logWrapper');
+  p.api.clearLogs();
+  assert.equal(p.view(), 'livePanel');
+});
+
+test('a socket ending on its own keeps the grid while the session holds lines', () => {
+  const p = streamPage();
+  p.open('android'); p.send(2, 0, 'android'); p.api.flushBatch();
+  p.run('__ws.android.onerror(); __ws.android.onclose()');   // device unplugged, bridge gone
+  assert.deepEqual([p.view(), p.run('androidLive')], ['logWrapper', false]);
+  const q = streamPage();
+  q.open('android'); q.run('__ws.android.onclose()');
+  assert.equal(q.view(), 'livePanel');
+});
+
+test('a paused backlog counts as lines: Stop keeps the grid and Resume drains into it', () => {
+  const p = streamPage();
+  p.open('ios'); p.api.togglePause(); p.send(3);
+  p.run('disconnectIos()');
+  assert.equal(p.view(), 'logWrapper');
+  p.api.togglePause();
+  assert.deepEqual([p.get('liveAll').length, p.view()], [3, 'logWrapper']);
+});
+
+test('File <-> Live brings back the right live view', () => {
+  const p = streamPage();
+  p.open('ios'); p.send(2); p.api.flushBatch(); p.run('disconnectIos()');
+  p.go('toFile');
+  assert.equal(display(p, 'dropzone'), '', 'the empty File session');
+  p.go('toLive');
+  assert.equal(p.view(), 'logWrapper');
+  p.api.clearLogs(); p.go('toFile'); p.go('toLive');
+  assert.equal(p.view(), 'livePanel');
+});

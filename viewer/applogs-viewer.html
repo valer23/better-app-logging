@@ -733,10 +733,15 @@ async function checkIosDriverStatus() {
   shellSync();
 }
 
+// The live session shows its grid whenever it holds lines (retained, or queued: a paused backlog or a drain
+// not yet run) or a device streams, so Stop leaves the recorded lines readable, filterable and exportable.
+// The legacy device panel shows only while it is empty and nothing streams (first launch, Clear with no
+// stream). The only place that picks the live view: P8's "No logs yet" / Devices screen and P5b's empty
+// states replace 'livePanel' here.
 function refreshLiveView() {
   if (cur.kind !== 'live') return;
   const anyConnected = androidLive || iosLive;
-  showOnly(anyConnected ? 'logWrapper' : 'livePanel');
+  showOnly(anyConnected || cur.all.length || pendingBatch.length ? 'logWrapper' : 'livePanel');
   shellSync();
 }
 
@@ -1060,8 +1065,8 @@ function noteFrame(e, platform) {
 }
 
 // Start streaming with no device in the picker: run the platform's detection, then connect if it found one, else
-// "No device". The pickers are filled only at startup and by the legacy card's ↻, and the card is hidden once any
-// stream shows, so a device plugged in after launch could never start. Detecting shows as Connecting… (the
+// "No device". The pickers are filled only at startup and by the legacy card's ↻, and the card is hidden while the
+// live session holds lines or a stream shows, so a device plugged in after launch could never start. Detecting shows as Connecting… (the
 // sidebar row is busy). One detection per platform at a time; a Stop meanwhile (disconnect*) drops it. No polling (P8).
 async function detectThenConnect(platform) {
   if (detecting[platform]) return;                     // a second Start while detecting
@@ -1573,6 +1578,8 @@ function clearLogs() {
   if (s.kind === 'file') {
     fileLoadGen++;   // a load still reading or waiting to render is cancelled (see handleFile)
     showOnly('dropzone');   // Clear on File: the dropzone is the only way to load another file
+  } else {
+    refreshLiveView();      // Clear on Live: the device panel when nothing streams, else the emptied grid
   }
   updateStats(); updateExportVisibility(); updateNewerPill(); shellSync();
 }
