@@ -437,6 +437,11 @@ const liveStatus = { android: { state: 'disconnected', text: 'Disconnected' }, i
 const deviceInfo = { android: { id: '', name: '' }, ios: { id: '', name: '' } };
 let iosDriverMissing = false;
 let androidLive = false, iosLive = false;
+// Per platform, while its socket is open: the bridge reported the phone gone (setNoDevice). Reset when a socket opens.
+const noDevice = { android: false, ios: false };
+// The device detection a Start streaming is waiting on, per platform (detectThenConnect); null when none.
+const detecting = { android: null, ios: null };
+const DETECT_TIMEOUT_MS = 8000;   // /devices/ios runs idevice_id + ideviceinfo with no timeout of its own
 let livePaused = false;
 let pendingBatch = [], batchTimer = null;   // the live ingest queue: one drain, into the live session
 const PAGE = 500;
@@ -732,10 +737,15 @@ async function checkIosDriverStatus() {
   shellSync();
 }
 
+// The live session shows its grid whenever it holds lines (retained, or queued: a paused backlog or a drain
+// not yet run) or a device streams, so Stop leaves the recorded lines readable, filterable and exportable.
+// The legacy device panel shows only while it is empty and nothing streams (first launch, Clear with no
+// stream). The only place that picks the live view: P8's "No logs yet" / Devices screen and P5b's empty
+// states replace 'livePanel' here.
 function refreshLiveView() {
   if (cur.kind !== 'live') return;
   const anyConnected = androidLive || iosLive;
-  showOnly(anyConnected ? 'logWrapper' : 'livePanel');
+  showOnly(anyConnected || cur.all.length || pendingBatch.length ? 'logWrapper' : 'livePanel');
   shellSync();
 }
 
@@ -816,7 +826,7 @@ grid = ALV.createGrid({ doc: document, dom: ALV.dom, keys: ALV.keys, shell, stat
 function shellState() {
   return {
     cur, sessions: [liveSession, fileSession],
-    live: { android: androidLive, ios: iosLive }, status: liveStatus, devices: deviceInfo, driverMissing: iosDriverMissing,
+    live: { android: androidLive, ios: iosLive }, status: liveStatus, devices: deviceInfo, driverMissing: iosDriverMissing, noDevice,
     lines: wsLines, dropped: liveSession.dropped, enabled: enabledPlatforms, paused: livePaused, buffered: pendingBatch.length,
     maxRetained: MAX_RETAINED,   // the status bar's Following tooltip (Retained text)
   };
@@ -1036,22 +1046,56 @@ function formatTs(ts) {
   return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(),3)}`;
 }
 
+// idevicesyslog with no phone (it exits; the bridge respawns it every 2 s) and adb logcat waiting for one.
+const NO_DEVICE_FRAME = /^\{"type":"error","data":"(?:No device found|- waiting for device -)/;
+// The phone is gone (or back) while the socket is open: the row reads Disconnected instead of "Streaming · 0/s"
+// then "Stalled 15 s", Stop still stops, and the bridge resumes the stream when it is plugged back in.
+// Written on a change only (the iOS bridge repeats it every 2 s).
+function setNoDevice(platform, gone) { if (noDevice[platform] === gone) return; noDevice[platform] = gone; shellSync(); }
+
 // What the sidebar needs from a frame, read off its text before handleWsMsg parses it (serde writes the
 // "type" tag first): a log line moves the counter (rate; the only thing that ends a stall), and the iOS
 // bridge's stall hint marks the row stalled, paused or not (the pause only holds back the stall sheet).
+// A frame saying the phone is gone (or back) sets noDevice, which the row reads as Disconnected.
 function noteFrame(e, platform) {
   const d = e.data;
   if (typeof d !== 'string') return;
-  if (d.startsWith('{"type":"log"')) wsLines[platform]++;
-  else if (platform === 'ios' && shell && d.startsWith('{"type":"error"') && d.toLowerCase().includes('stalled')) shell.markStalled('ios');
+  if (d.startsWith('{"type":"log"')) { wsLines[platform]++; if (noDevice[platform]) setNoDevice(platform, false); }
+  else if (NO_DEVICE_FRAME.test(d)) setNoDevice(platform, true);
+  else if (platform === 'ios' && shell && d.startsWith('{"type":"error"') && d.toLowerCase().includes('stalled') && !noDevice.ios) shell.markStalled('ios');
+  else if (platform === 'ios' && d.startsWith('{"type":"devices","data":"disconnected:')) setNoDevice('ios', true);
+  else if (platform === 'ios' && d.startsWith('{"type":"devices","data":"connected:')) setNoDevice('ios', false);
+}
+
+// Start streaming (sidebar row, its menu, the legacy Connect): run the platform's detection, then connect if it
+// found a device, else "No device". Always, not only with an empty picker: the pickers are filled at startup and
+// by the legacy card's ↻ (hidden while lines or a stream show), so a device plugged in after launch could never
+// start, and one unplugged since kept "Ready · stopped" and opened a socket to a bridge with no phone. Detecting
+// shows as Connecting… (the sidebar row is busy). One detection per platform at a time; a Stop meanwhile
+// (disconnect*) drops it. No polling (P8).
+async function detectThenConnect(platform) {
+  if (detecting[platform]) return;                     // a second Start while detecting
+  const android = platform === 'android';
+  const token = detecting[platform] = {};
+  setStatus(platform, 'connecting', 'Connecting…');
+  document.getElementById(android ? 'androidBtn' : 'iosBtn').disabled = true;
+  const load = (android ? loadAndroidDevices() : loadIosDevices()).catch(e => console.warn('[detectThenConnect]', e));
+  await Promise.race([load, new Promise(r => setTimeout(r, DETECT_TIMEOUT_MS))]);
+  if (detecting[platform] !== token) return;           // stopped meanwhile
+  detecting[platform] = null;
+  const sel = document.getElementById(android ? 'androidDeviceSelect' : 'iosDeviceSelect');
+  if (sel && sel.value) { if (android) openAndroid(); else openIos(); return; }
+  resetConnectBtn(platform);
+  setStatus(platform, 'error', 'No device');
+  setTimeout(() => { const s = liveStatus[platform]; if (s.state === 'error' && s.text === 'No device') setStatus(platform, 'disconnected', 'Disconnected'); }, 1500);
 }
 
 // ── WebSocket: Android ──
-function connectAndroid() {
-  const sel = document.getElementById('androidDeviceSelect');
-  if (!sel || !sel.value) { setStatus('android','error','No device'); setTimeout(() => setStatus('android','disconnected','Disconnected'), 1500); return; }
+function connectAndroid() { detectThenConnect('android'); }   // Start: always detect first
+function openAndroid() {
   setStatus('android', 'connecting', 'Connecting…');
   document.getElementById('androidBtn').disabled = true;
+  noDevice.android = false;
   wsAndroid = new WebSocket('ws://localhost:8765');
   wsAndroid.onopen = () => { androidLive = true; setStatus('android','connected','Connected'); setConnectBtn('android', true); refreshLiveView(); };
   wsAndroid.onmessage = e => { noteFrame(e, 'android'); handleWsMsg(e, 'android'); };
@@ -1067,6 +1111,7 @@ function disconnectAndroid() {
     wsAndroid.close();
     wsAndroid = null;
   }
+  detecting.android = null;   // a Stop drops a pending Start
   resetConnectBtn('android');
   androidLive = false;
   setStatus('android','disconnected','Disconnected');
@@ -1076,11 +1121,11 @@ function disconnectAndroid() {
 function toggleAndroid() { androidLive ? disconnectAndroid() : connectAndroid(); }
 
 // ── WebSocket: iOS ──
-function connectIos() {
-  const sel = document.getElementById('iosDeviceSelect');
-  if (!sel || !sel.value) { setStatus('ios','error','No device'); setTimeout(() => setStatus('ios','disconnected','Disconnected'), 1500); return; }
+function connectIos() { detectThenConnect('ios'); }   // Start: always detect first
+function openIos() {
   setStatus('ios', 'connecting', 'Connecting…');
   document.getElementById('iosBtn').disabled = true;
+  noDevice.ios = false;
   wsIos = new WebSocket('ws://localhost:8766');
   wsIos.onopen = () => { iosLive = true; setStatus('ios','connected','Connected'); setConnectBtn('ios', true); refreshLiveView(); };
   wsIos.onmessage = e => { noteFrame(e, 'ios'); handleWsMsg(e, 'ios'); };
@@ -1094,6 +1139,7 @@ function disconnectIos() {
     wsIos.close();
     wsIos = null;
   }
+  detecting.ios = null;   // a Stop drops a pending Start
   resetConnectBtn('ios');
   iosLive = false;
   setStatus('ios','disconnected','Disconnected');
@@ -1277,6 +1323,7 @@ function iosRepairFromStall() {
 }
 
 function showStallModal(text) {
+  if (noDevice.ios) return;   // an unplugged phone (noteFrame), not a stale pair record
   // #overlayRoot (z 200) paints above the legacy .modal-overlay (z 100): an open Export menu would sit over the
   // modal and keep focus. Close it without moving focus into the page behind the modal.
   exportMenuCtl.close({ restoreFocus: false });
@@ -1537,6 +1584,8 @@ function clearLogs() {
   if (s.kind === 'file') {
     fileLoadGen++;   // a load still reading or waiting to render is cancelled (see handleFile)
     showOnly('dropzone');   // Clear on File: the dropzone is the only way to load another file
+  } else {
+    refreshLiveView();      // Clear on Live: the device panel when nothing streams, else the emptied grid
   }
   updateStats(); updateExportVisibility(); updateNewerPill(); shellSync();
 }

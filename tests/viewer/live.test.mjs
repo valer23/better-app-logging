@@ -74,6 +74,24 @@ test('toolbar: session title and stream badge follow the shown session, its devi
   assert.deepEqual([$('sessionTitle').textContent, $('streamBadgeText').textContent], ['pixel-crash-0412.logcat', `File · 12${T}044 lines`]);
 });
 
+test('toolbar: the badge falls back to Stopped while every open stream reports its phone gone, and counts the others', () => {
+  const { p, state, $ } = livePage();
+  state.live.ios = true;
+  state.devices.ios = { id: 'u1', name: 'iPhone 15' };
+  p.advance(500);
+  state.noDevice.ios = true;
+  p.advance(500);
+  assert.deepEqual([$('streamBadgeText').textContent, $('streamBadge').getAttribute('class'), $('streamDot').getAttribute('class')],
+    ['Stopped · 0 lines', 'badge status-idle', 'dot'], 'the only open stream has no phone');
+  state.live.android = true;
+  state.devices.android = { id: 'a1', name: 'Pixel 8' };
+  p.advance(500);
+  assert.deepEqual([$('streamBadgeText').textContent.startsWith('Streaming · '), $('streamBadge').getAttribute('class')], [true, 'badge status-ok'], 'another phone still streams');
+  state.noDevice.ios = false;
+  p.advance(500);
+  assert.equal($('streamBadge').getAttribute('class'), 'badge status-ok');
+});
+
 test('toolbar: Pause swaps its label, icon and tooltip (not a toggle button), Follow is a toggle button (aria-pressed); both call the legacy functions', () => {
   const { p, live, state, calls, $ } = livePage();
   // APG: a button either swaps its label or is a toggle (aria-pressed), never both ("Resume, toggle button, pressed").

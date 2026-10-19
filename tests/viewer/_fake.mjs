@@ -151,7 +151,8 @@ export function shellPage({ platform = 'mac', st = {}, actions = {}, tauri, osDa
     live: { android: false, ios: false },
     status: { android: { state: 'disconnected', text: 'Disconnected' }, ios: { state: 'disconnected', text: 'Disconnected' } },
     devices: { android: { id: '', name: '' }, ios: { id: '', name: '' } },
-    driverMissing: false, lines: { android: 0, ios: 0 }, dropped: { android: 0, ios: 0 }, enabled: new Set(['android', 'ios']),
+    driverMissing: false, lines: { android: 0, ios: 0 }, dropped: { android: 0, ios: 0 },
+    noDevice: { android: false, ios: false }, enabled: new Set(['android', 'ios']),
     ...st,
   };
   const act = new Proxy(actions, { get: (o, k) => o[k] || ((...a) => calls.push([k, ...a])) });

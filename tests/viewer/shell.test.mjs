@@ -45,6 +45,8 @@ test('deviceStatus: every spec status line, its state shape and tone, and the dr
   assert.deepEqual(st({ driverMissing: true, detected: true }), { state: 'driver', tone: 'err', text: 'Driver missing', drops: '' });
   assert.deepEqual(st({ detected: true }), { state: 'ready', tone: 'idle', text: 'Ready · stopped', drops: '' });
   assert.deepEqual(st({}), { state: 'disconnected', tone: 'idle', text: 'Disconnected', drops: '' });
+  assert.deepEqual(st({ live: true, noDevice: true, stalledFor: 15, detected: true }), { state: 'disconnected', tone: 'idle', text: 'Disconnected', drops: '' }, 'phone gone: ahead of a stall');
+  assert.equal(st({ noDevice: true, detected: true }).text, 'Ready · stopped', 'only an open stream');
   assert.equal(st({ live: true, rate: 10, dropped: 312 }).drops, '312 dropped');
   assert.equal(st({ dropped: 1200 }).drops, `1${T}200 dropped`, 'drops stay visible after a disconnect, until Clear');
 });
@@ -283,6 +285,15 @@ test('DEVICES: a stall reads the fixed threshold "Stalled 15 s", not a timer, an
   state.live.ios = true;
   p.advance(500);
   assert.match(i.status.textContent, /^Streaming · /, 'a stopped stream is not stalled when it starts again');
+});
+
+test('DEVICES: an open stream whose phone is gone reads "Disconnected" and keeps Stop until lines flow again', () => {
+  const { p, state } = shellPage({ st: { live: { android: false, ios: true }, devices: { android: { id: '', name: '' }, ios: { id: 'u1', name: 'iPhone 15' } } } });
+  const i = parts(row(p, 'ios'));
+  state.noDevice.ios = true; p.advance(500);
+  assert.deepEqual([i.status.textContent, row(p, 'ios').getAttribute('data-state'), i.start.getAttribute('aria-label')], ['Disconnected', 'disconnected', 'Stop streaming iPhone 15']);
+  state.noDevice.ios = false; state.lines.ios += 1; p.advance(500);
+  assert.match(i.status.textContent, /^Streaming · /);
 });
 
 test('DEVICES: the toggle is named by the device alone; the status and drops lines describe it', () => {
