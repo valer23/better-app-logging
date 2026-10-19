@@ -461,15 +461,16 @@ test('File tab: the line count and Export cover only the file; Live keeps its ow
 
 // Change 4: each tab keeps its own selection and Follow. The delegated row click on #logTable reads the
 // shown session (_load.mjs records the listeners the page registers), so a click on File cannot touch Live.
-function clickRow(v, message) {
-  const rowClass = new Set();
+// P5a: the selection is the row's aria-selected (the grid's state), not a class. Returns the row's attributes.
+// `td` is the cell the click lands in ({ className }); `attrs` carries the row's attributes across clicks.
+function clickRow(v, message, { td = null, attrs = new Map() } = {}) {
   const tr = {
     _message: message,
     parentElement: { querySelector: () => null },
-    classList: { add: c => rowClass.add(c), remove: c => rowClass.delete(c) },
+    setAttribute: (k, val) => attrs.set(k, String(val)), removeAttribute: k => attrs.delete(k),
   };
-  for (const fn of v.doc.listeners.get('logTable:click')) fn({ target: { closest: () => tr }, detail: 1 });
-  return rowClass;
+  for (const fn of v.doc.listeners.get('logTable:click')) fn({ target: { closest: sel => (sel === 'td' ? td : tr) }, detail: 1 });
+  return attrs;
 }
 
 test('a row click on File selects in the file session and leaves live Follow and selection alone', () => {
@@ -479,11 +480,11 @@ test('a row click on File selects in the file session and leaves live Follow and
   v.go('toFile');
   v.api.handleFile({ text: fileText(4) });
   const msg = v.run('fileSession.all[1]');
-  assert.ok(clickRow(v, msg).has('selected'));
+  assert.equal(clickRow(v, msg).get('aria-selected'), 'true');
   assert.equal(v.run('fileSession.sel === fileSession.all[1]'), true);
   assert.equal(v.run('liveSession.sel'), null);
   assert.equal(v.run('liveSession.follow'), true, 'the click stopped no live auto-scroll');
-  assert.equal(clickRow(v, msg).has('selected'), false, 'a second click deselects');
+  assert.equal(clickRow(v, msg).has('aria-selected'), false, 'a second click deselects');
   assert.equal(v.run('fileSession.sel'), null);
 });
 
@@ -507,6 +508,43 @@ test('the frozen-row guard reads the shown session: a trimmed live row is ignore
   clickRow(v, msg);
   assert.equal(v.run('liveSession.sel'), null);
   assert.equal(v.run('liveSession.follow'), true);
+});
+
+// P5a: the selected row is the only one that wraps its message, so it is where a long line is read and copied.
+// A click that ends a text selection (a drag, the second click of a double click) and a plain click in the open
+// row's message must leave it open: deselecting collapses the row under the cursor and loses the selection.
+test('a click in the selected row\'s message cell keeps it selected; any other cell of it still deselects', () => {
+  const v = boot();
+  v.send(3); v.api.flushBatch();
+  const msg = v.run('liveSession.all[1]');
+  const attrs = clickRow(v, msg);
+  assert.equal(attrs.get('aria-selected'), 'true');
+  clickRow(v, msg, { td: { className: 'c-msg' }, attrs });
+  assert.equal(attrs.get('aria-selected'), 'true', 'the first click of a double or triple click');
+  assert.equal(v.run('liveSession.sel === liveSession.all[1]'), true);
+  clickRow(v, msg, { td: { className: 'c-tag' }, attrs });
+  assert.equal(attrs.has('aria-selected'), false, 'a click on another cell of the row toggles it off');
+  assert.equal(v.run('liveSession.sel'), null);
+  const other = clickRow(v, msg, { td: { className: 'c-msg' } });
+  assert.equal(other.get('aria-selected'), 'true', 'the message cell of a row that is not selected still selects it');
+});
+
+test('a click that ends a text selection selects and deselects nothing', () => {
+  const v = boot();
+  v.send(3); v.api.flushBatch();
+  const msg = v.run('liveSession.all[1]');
+  v.run('window.getSelection = () => ({ isCollapsed: false })');
+  const attrs = clickRow(v, msg, { td: { className: 'c-tag' } });
+  assert.equal(attrs.has('aria-selected'), false, 'a drag-select inside a row does not select it');
+  assert.equal(v.run('liveSession.sel'), null);
+  assert.equal(v.run('liveSession.follow'), true, 'and does not stop Follow');
+  v.run('window.getSelection = () => ({ isCollapsed: true })');
+  const on = clickRow(v, msg, { td: { className: 'c-tag' } });
+  assert.equal(on.get('aria-selected'), 'true', 'a collapsed selection is a plain click');
+  v.run('window.getSelection = () => ({ isCollapsed: false })');
+  clickRow(v, msg, { td: { className: 'c-tag' }, attrs: on });
+  assert.equal(on.get('aria-selected'), 'true', 'a drag that ends on the selected row does not close it');
+  assert.equal(v.run('liveSession.sel === liveSession.all[1]'), true);
 });
 
 // The legacy half of the shell adapter: "Open log file…" (the SESSIONS row and ⌘O) and the row's file name.

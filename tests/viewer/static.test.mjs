@@ -258,6 +258,16 @@ test('rail: the header toggle, the 52 px rail column, and on macOS a full 52 px 
   assert.ok(decl('.app[data-sidebar="collapsed"] .side-label').some(d => d.prop === 'clip-path' && d.value === 'inset(50%)'));
 });
 
+test('rail: a device row keeps its More in the rail (Start/Stop is its first item); only the row\'s own Start/Stop button hides', () => {
+  const rules = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')));
+  const decl = sel => rules.filter(r => r.selectors.includes(sel)).flatMap(r => C.declarations(r.body));
+  const gone = rules.filter(r => !r.atRules.some(a => /^@(media|container)/.test(a)) && C.declarations(r.body).some(d => d.prop === 'display' && d.value === 'none')).flatMap(r => r.selectors);
+  assert.ok(!gone.some(s => /collapsed.*\.dev-actions\b/.test(s)), 'the rail no longer hides a row\'s actions (P4b judge follow-up: no Start/Stop in the rail)');
+  assert.ok(gone.includes('.app[data-sidebar="collapsed"] .dev-start'), 'the row\'s own Start/Stop is hidden in the rail, More carries it');
+  assert.deepEqual(decl('.app[data-sidebar="collapsed"] .dev-actions').map(d => `${d.prop}: ${d.value}`), ['position: static', 'transform: none'], 'under the badge, in the flow');
+  assert.ok(decl('.dev-row:focus-within .dev-actions').some(d => d.prop === 'opacity' && d.value === '1'), 'shown on focus, so the keyboard sees what it is on');
+});
+
 test('rail: a folded section still shows its list in the rail (the rail hides the fold buttons)', () => {
   const rules = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css')));
   const decl = sel => rules.filter(r => r.selectors.includes(sel)).flatMap(r => C.declarations(r.body));
@@ -418,7 +428,7 @@ test('every sprite symbol is used by the page or the JS', () => {
 
 test('no emoji in the primitives, the shell, the app-layer CSS, the overlay root, the sidebar or the Export button', () => {
   const EMOJI = /\p{Extended_Pictographic}/u;
-  for (const p of ['js/dom.js', 'js/keys.js', 'js/ui.js', 'js/shell.js', 'css/base.css', 'css/shell.css']) assert.doesNotMatch(read(path.join(ASSETS, p)), EMOJI, p);
+  for (const p of ['js/dom.js', 'js/keys.js', 'js/ui.js', 'js/shell.js', 'js/grid.js', 'css/base.css', 'css/shell.css', 'css/grid.css']) assert.doesNotMatch(read(path.join(ASSETS, p)), EMOJI, p);
   const lines = html.split('\n');
   for (const p of ['js/live.js']) assert.doesNotMatch(read(path.join(ASSETS, p)), EMOJI, p);
   for (const id of ['overlayRoot', 'exportWrap', 'sidebar', 'toolbar', 'statusBar']) {
@@ -738,7 +748,7 @@ test('pseudo-elements that set padding, a border or a percentage size declare th
 
 test('every legacy animation or transition is switched off by both Reduce motion rules', () => {
   const legacy = cssFiles.find(f => f.path === 'css/legacy.css').text;
-  // legacy.css shrinks with every region PR (P4b removes the top bar's switches and buttons: 18 left).
+  // legacy.css shrinks with every region PR (P4b removes the top bar's switches and buttons, P5a the table rows: 15 left).
   assert.ok(C.animatedSelectors(legacy).length >= 15, 'the legacy animation scan found too few selectors');
   assert.deepEqual(C.reducedMotionCoverageErrors(legacy, 'viewer/assets/css/legacy.css'), []);
 });
@@ -807,27 +817,112 @@ test('prefs.js is the only head script: first, synchronous, before every stylesh
   assert.ok(!('async' in scripts[0].attrs) && !('defer' in scripts[0].attrs) && !('type' in scripts[0].attrs));
 });
 
-test('legacy log columns 2-6 are sized in ch, so they follow the log text size', () => {
-  const colWidths = (r) => {
-    const cg = elements(r).find(el => el.attrs.id === 'colgroup');
-    assert.ok(cg, '#colgroup exists');
-    return cg.children.filter(el => el.tag === 'col').map(el => (el.attrs.style || '').match(/width:\s*([^;]+)/)?.[1].trim());
-  };
-  const isCh = (w) => /^calc\(\d+(\.\d+)?ch \+ 20px\)$/.test(w || '');
-  const widths = colWidths(root);
-  assert.equal(widths.length, 7);
-  assert.equal(widths[0], '28px');
-  widths.slice(1, 6).forEach((w, i) => assert.ok(isCh(w), `column ${i + 2} width ${w} is calc(Nch + 20px)`));
-  // Broken input: a px width must fail the same check.
-  const broken = parseHtml('<table><colgroup id="colgroup"><col style="width:28px"><col style="width:190px"></colgroup></table>').root;
-  assert.ok(!isCh(colWidths(broken)[1]), 'a px width is rejected');
+// ---- The log grid (roadmap P5) ----
+const gridCss = () => C.cssRules(read(path.join(ASSETS, 'css', 'grid.css')));
+const gridDecl = (sel, prop) => gridCss().filter(r => r.selectors.includes(sel)).flatMap(r => C.declarations(r.body)).find(d => d.prop === prop)?.value;
+
+test('log grid: the columns come in the D14 order, the header reads Time, Lvl, Tag, App / Device, PID–TID, Message', () => {
+  const cols = findById(root, 'colgroup').children.filter(el => el.tag === 'col');
+  assert.deepEqual(cols.map(el => el.attrs.class), ['k-plat', 'k-ts', 'k-lvl', 'k-tag', 'k-app', 'k-pid', 'k-msg']);
+  assert.ok(cols.every(el => !('style' in el.attrs)), 'no inline width: the defaults live in grid.css, and a reset removes the inline one');
+  const head = html.slice(html.indexOf('<tr id="headerRow">'), html.indexOf('</tr>', html.indexOf('<tr id="headerRow">')));
+  const labels = [...head.matchAll(/<th([^>]*)>(?:<span class="h">([^<]*)<\/span>)?<\/th>/g)].map(m => m[2] || '');
+  assert.deepEqual(labels, ['', 'Time', 'Lvl', 'Tag', 'App / Device', 'PID–TID', 'Message']);
+  const ths = findById(root, 'headerRow').children;
+  assert.equal(ths[0].attrs['aria-label'], 'Platform', 'the badge column is named, not labelled on screen');
+  assert.deepEqual(ths.map(th => th.attrs['data-col'] || null), [null, 'ts', 'lvl', 'tag', 'app', 'pid', null], 'the columns grid.js gives a resize handle');
+  const t = findById(root, 'logTableEl');
+  assert.deepEqual([t.attrs.class, t.attrs.role, t.attrs['aria-label'], t.attrs.tabindex], ['lgrid', 'grid', 'Log lines', '0'], 'the table is the grid\'s one Tab stop');
+  assert.match(t.attrs['aria-rowcount'] || '', /^\d+$/, 'grid.js keeps aria-rowcount current; the markup starts it at the header row');
+  assert.match(html, /<link rel="stylesheet" href="assets\/css\/shell\.css">\n<link rel="stylesheet" href="assets\/css\/grid\.css">/);
+  assert.match(read(path.join(ASSETS, 'css', 'grid.css')), /^@layer app \{$/m);
 });
 
-test('legacy log table min-width keeps a Message floor that follows the log font', () => {
-  // 102ch = 78ch of sized columns 2-6 + a 24ch Message floor. 148px = 28px column 1 + 5x20px padding on
-  // columns 2-6 + 20px Message padding. Both terms scale with the table's own font, so the floor grows with the text.
-  const css = C.stripCss(read(path.join(ASSETS, 'css', 'legacy.css')));
-  const rules = [...css.matchAll(/(?:^|[\s}])table\s*\{([^}]*)\}/g)];
-  assert.equal(rules.length, 1, 'legacy.css has exactly one bare table rule');
-  assert.equal(rules[0][1].match(/min-width:\s*([^;]+);/)?.[1].trim(), 'max(960px, calc(102ch + 148px))');
+test('log grid: column widths are ch plus 12 px of cell padding, so they follow the log size and "15:54:26.290" fits', () => {
+  const w = k => gridDecl(`.lgrid > colgroup > col.k-${k}`, 'width');
+  assert.deepEqual(['ts', 'tag', 'app', 'pid'].map(w), ['calc(12ch + 14px)', 'calc(18ch + 12px)', 'calc(20ch + 12px)', 'calc(11ch + 14px)'],
+    'Time and PID–TID hold text that must not be cut, so they get 2 px of slack over the 12 px padding (the shaped width can round up by a LayoutUnit)');
+  assert.equal(w('lvl'), 'max(calc(1ch + 12px), 40px)', 'the LVL header needs 40 px at interface L');
+  assert.equal(w('plat'), 'calc(max(18px, var(--log-fs) * 1.3) + 10px)', 'spec: the badge column follows the badge');
+  assert.equal(w('msg'), undefined, 'Message takes the rest');
+});
+
+test('log grid: the table keeps a 24ch Message floor that follows the log font (it scrolls sideways at 20 px)', () => {
+  // 85ch = 12 + 18 + 20 + 11 ch of sized columns + a 24ch Message floor. 114px = the badge column's 10 px + Lvl's
+  // 40 px + 5 × 12 px of padding (Time, Tag, App, PID–TID, Message) + 2 × 2 px of slack (Time, PID–TID). Both terms
+  // scale with the table's own font.
+  assert.equal(gridDecl('.lgrid', 'min-width'), 'calc(max(18px, var(--log-fs) * 1.3) + 85ch + 114px)');
+  assert.equal(gridDecl('.lgrid', 'table-layout'), 'fixed');
+  assert.equal(gridDecl('.lgrid', '--row-h'), 'max(18px, calc(var(--log-fs) * var(--row-k)))', 'spec "Sizes": one row height for every row');
+});
+
+test('log grid: the log column never sizes to its content (P4a must-keep) and the grid is opaque in both materials', () => {
+  assert.equal(gridDecl('#logWrapper', 'flex'), '1 1 0');
+  assert.equal(gridDecl('#logWrapper', 'min-height'), '0');
+  assert.equal(gridDecl('#logTable', 'flex'), '1 1 0');
+  for (const sel of ['#logWrapper', '#logTable', '.lgrid']) assert.equal(gridDecl(sel, 'background'), 'var(--bg)', `${sel} is opaque`);
+  assert.ok(!gridCss().some(r => C.declarations(r.body).some(d => /backdrop-filter/.test(d.prop))), 'no blur on the grid (spec U4)');
+  assert.equal(findById(root, 'logWrapper').attrs.class, undefined, 'the grid left the legacy scope (.lg-scope)');
+});
+
+test('log grid: the focus ring is drawn on #logWrapper (it does not scroll), not on the table', () => {
+  assert.equal(gridDecl('.lgrid:focus-visible', 'outline'), 'none', 'the table\'s own ring would sit outside what is on screen');
+  assert.equal(gridDecl('.lgrid:focus-visible', 'outline-offset'), undefined);
+  const decls = sel => Object.fromEntries(gridCss().filter(r => r.selectors.includes(sel) && !r.atRules.some(a => /^@media/.test(a))).flatMap(r => C.declarations(r.body)).map(d => [d.prop, d.value]));
+  const ring = decls('#logWrapper.grid-focus::after');
+  assert.deepEqual([ring.content, ring.position, ring.inset, ring['pointer-events'], ring['box-shadow']],
+    ['""', 'absolute', '0', 'none', 'inset 0 0 0 2px var(--ring)'], 'spec: 2 px --ring, inset');
+  assert.ok(Number(ring['z-index']) > 2, 'over the sticky header (z-index 2) and under the newer pill (6)');
+  assert.ok(Number(ring['z-index']) < 6);
+  const hc = gridCss().find(r => r.selectors.includes('#logWrapper.grid-focus::after') && r.atRules.some(a => /^@media \(forced-colors: active\)/.test(a)));
+  assert.ok(hc && C.declarations(hc.body).some(d => d.prop === 'outline' && /Highlight/.test(d.value)), 'forced colours drop box-shadow: an outline');
+});
+
+test('log grid: text picked with the mouse shows on every row, the open one included (--accent behind --bg text, both engines)', () => {
+  // The foundation paints ::selection with --row-sel, the open row's own background: a pick inside it was invisible.
+  const f = C.cssRules(read(path.join(ASSETS, 'css', 'foundation.css')));
+  const fsel = Object.fromEntries(C.declarations(f.find(r => r.selectors.includes('.app::selection')).body).map(d => [d.prop, d.value]));
+  for (const sel of ['.lgrid > tbody > tr > td::selection', '.lgrid > tbody > tr > td > mark::selection']) {
+    const rules = gridCss().filter(r => r.selectors.includes(sel));
+    assert.equal(rules.length, 1, sel);
+    assert.deepEqual(rules[0].atRules, ['@layer app'], `${sel}: in no @supports or @media, so WebKit (no ::selection inheritance) and Chromium both take it`);
+    assert.equal(gridDecl(sel, 'background'), 'color-mix(in srgb, var(--accent) 99%, transparent)', `${sel}: --accent, kept just short of opaque so WebKit does not lighten or fade it`);
+    assert.equal(gridDecl(sel, 'color'), 'var(--bg)', sel);
+    assert.notEqual(gridDecl(sel, 'background'), gridDecl('.lgrid > tbody > tr[aria-selected="true"]', 'background'), `${sel}: not the open row's background`);
+    assert.notEqual(gridDecl(sel, 'background'), fsel.background, `${sel}: not the foundation's --row-sel`);
+  }
+  assert.ok(!gridCss().some(r => r.atRules.some(a => /forced-colors/.test(a)) && r.selectors.some(s => s.includes('::selection'))), 'forced colours keep the system Highlight');
+  const tokens = sel => Object.fromEntries(C.declarations(f.find(r => r.selectors.includes(sel)).body).map(d => [d.prop, d.value]));
+  const lum = hex => hex.slice(1).match(/../g).map(h => parseInt(h, 16) / 255)
+    .map(c => c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4).reduce((s, c, i) => s + c * [0.2126, 0.7152, 0.0722][i], 0);
+  const ratio = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); };
+  for (const theme of ['.app[data-theme="dark"]', '.app[data-theme="light"]']) {
+    const t = tokens(theme);
+    assert.ok(ratio(t['--bg'], t['--accent']) >= 4.5, `${theme}: picked text on the highlight (WCAG 1.4.3)`);
+    for (const k of ['--row-sel', '--bg', '--row-hover', '--tint-w', '--tint-e', '--tint-f']) assert.ok(ratio(t['--accent'], t[k]) >= 3, `${theme}: the highlight against ${k} (WCAG 1.4.11)`);
+  }
+});
+
+test('log grid: the legacy table rules are gone from legacy.css, and no stylesheet keys on [aria-rowcount]', () => {
+  const legacy = C.cssRules(read(path.join(ASSETS, 'css', 'legacy.css'))).flatMap(r => r.selectors);
+  const stale = legacy.filter(s => /(^|[\s>(])(table|thead|tbody|td|th|mark)\b|plat-badge|lvl-badge|col-resize-handle|new-row|plat-cell|lg-msg|lg-app|#logWrapper|\.(ts|pid|tag)(?![\w-])/.test(s));
+  assert.deepEqual(stale, []);
+  const keyed = cssFiles.flatMap(f => C.cssRules(f.text).flatMap(r => r.selectors)).filter(sel => /\[aria-row(count|index)/.test(sel));
+  assert.deepEqual(keyed, [], 'grid.js rewrites aria-rowcount: no style may depend on it');
+});
+
+test('buildRow sets no per-row tabindex, title, role or inline style, and grid.css animates nothing in P5a', () => {
+  const code = inlineScripts(html).at(-1).code;
+  const fn = code.slice(code.indexOf('\nfunction buildRow('), code.indexOf('\n}\n', code.indexOf('\nfunction buildRow(')));
+  assert.ok(fn.length > 200, 'buildRow found');
+  assert.doesNotMatch(fn, /tabindex|tabIndex|\.title\b|'title'|'role'|\.style\b|getBoundingClientRect|offset(Width|Height|Top)/);
+  assert.match(fn, /tr\.className = rowClass\(m\.lvl, m\.platform\)/, 'one className write carries level and platform');
+  assert.ok(!gridCss().some(r => C.declarations(r.body).some(d => /^(transition|animation)/.test(d.prop))), 'no transition on rows (spec: none per row)');
+});
+
+test('column resize lives in grid.js: the legacy initResizeHandles and its .col-resize-handle are gone', () => {
+  const code = inlineScripts(html).at(-1).code;
+  assert.doesNotMatch(code, /initResizeHandles|col-resize-handle/);
+  assert.match(code, /\ngrid = ALV\.createGrid\(\{/, 'the page creates the grid once, after the toolbar and status bar');
+  assert.ok(gridCss().some(r => r.selectors.includes('.lgrid > thead > tr > th > .col-sep') && C.declarations(r.body).some(d => d.prop === 'width' && d.value === '24px')), 'a 24 px hit area (spec)');
 });

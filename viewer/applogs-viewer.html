@@ -16,6 +16,7 @@
 <link rel="stylesheet" href="assets/css/legacy.css">
 <link rel="stylesheet" href="assets/css/base.css">
 <link rel="stylesheet" href="assets/css/shell.css">
+<link rel="stylesheet" href="assets/css/grid.css">
 </head>
 <body>
 <!-- Lucide icon sprite (lucide-static 1.49.0, ISC: assets/icons/SOURCES.md, assets/icons/LICENSE-lucide.txt).
@@ -204,28 +205,23 @@
 <!-- Loading -->
 <div class="lg-scope" id="loading"><div class="spinner"></div><span id="loadingText">Parsing…</span></div>
 
-<!-- Log table -->
-<div class="lg-scope" id="logWrapper">
+<!-- Log grid (roadmap P5; spec "Log grid"): columns in the D14 order, their widths in assets/css/grid.css (in ch,
+     so they follow the log text size). Rows come from buildRow; assets/js/grid.js adds the resize separators. -->
+<div id="logWrapper">
   <div id="logTable">
-    <table id="logTableEl">
+    <table id="logTableEl" class="lgrid" role="grid" aria-label="Log lines" aria-rowcount="1" tabindex="0">
       <colgroup id="colgroup">
-        <col style="width:28px">
-        <col style="width:calc(24ch + 20px)">
-        <col style="width:calc(11.5ch + 20px)">
-        <col style="width:calc(18ch + 20px)">
-        <col style="width:calc(22ch + 20px)">
-        <col style="width:calc(2.5ch + 20px)">
-        <col>
+        <col class="k-plat"><col class="k-ts"><col class="k-lvl"><col class="k-tag"><col class="k-app"><col class="k-pid"><col class="k-msg">
       </colgroup>
       <thead>
         <tr id="headerRow">
-          <th title="Platform"></th>
-          <th>Timestamp</th>
-          <th>PID-TID</th>
-          <th>Tag</th>
-          <th>App / Device</th>
-          <th>Lvl</th>
-          <th>Message</th>
+          <th aria-label="Platform"></th>
+          <th data-col="ts"><span class="h">Time</span></th>
+          <th data-col="lvl"><span class="h">Lvl</span></th>
+          <th data-col="tag"><span class="h">Tag</span></th>
+          <th data-col="app"><span class="h">App / Device</span></th>
+          <th data-col="pid"><span class="h">PID–TID</span></th>
+          <th><span class="h">Message</span></th>
         </tr>
       </thead>
       <tbody id="tbody"></tbody>
@@ -385,6 +381,8 @@ pkill -f idevicesyslog</pre>
 <!-- App shell (roadmap P4): sidebar, drag bands, theme. ALV.createShell runs from the legacy script. -->
 <script src="assets/js/shell.js"></script>
 <script src="assets/js/live.js"></script>
+<!-- The log grid (roadmap P5): row helpers, column resize, grid ARIA. ALV.createGrid runs from the legacy script. -->
+<script src="assets/js/grid.js"></script>
 <script>
 // ─── Glass material (macOS only) ─────────────────────────────────────────
 // The material is stored by ALV.prefs (assets/js/prefs.js): set('material') writes data-material and
@@ -408,7 +406,10 @@ if (IS_MAC && ALV.prefs.get('material') === 'glass') postGlassMode(true).catch((
 
 // ── Constants ──
 const LEVELS     = ['VERBOSE','DEBUG','INFO','WARN','ERROR','ASSERT'];
-const LEVEL_CHAR = {VERBOSE:'V',DEBUG:'D',INFO:'I',WARN:'W',ERROR:'E',ASSERT:'A'};
+// The letter a row and a level toggle show. ASSERT reads F (spec D8, "Fatal / Assert"); the exports keep their
+// own 'A' (doExport's LVL, TXT_LEVEL_MAP), so files round-trip unchanged.
+const LEVEL_CHAR = {VERBOSE:'V',DEBUG:'D',INFO:'I',WARN:'W',ERROR:'E',ASSERT:'F'};
+const { rowClass, timeOf } = ALV.gridPure;   // the row's class and its time cell (assets/js/grid.js)
 const enabledLevels   = new Set(LEVELS);
 const enabledPlatforms = new Set(['android','ios']);
 
@@ -427,6 +428,7 @@ function offscreen(s) { return s !== cur || document.hidden; }
 let wsAndroid = null, wsIos = null;
 let shell = null;   // the app shell (ALV.createShell, assets/js/shell.js), created before the first selectSession
 let liveUi = null;  // the toolbar and status bar (ALV.createLive, assets/js/live.js), created right after it
+let grid = null;    // the log grid's header and ARIA (ALV.createGrid, assets/js/grid.js), created right after that
 // What the sidebar device rows show (shellState): log lines received per platform (the rate meter, and what
 // ends a stall), the last setStatus per platform, the device the picker holds, and whether the iOS driver
 // check failed (Windows).
@@ -746,26 +748,6 @@ function showOnly(id) {
   });
 }
 
-// ── Column resize ──
-function initResizeHandles() {
-  const ths = document.querySelectorAll('#headerRow th');
-  const cols = document.querySelectorAll('#colgroup col');
-  ths.forEach((th, i) => {
-    if (i === ths.length - 1) return;
-    // NOTE: do NOT set `th.style.position = 'relative'` — it overrides CSS
-    // `position: sticky`. Sticky already establishes a positioning context
-    // for the absolute-positioned `.col-resize-handle` child.
-    const h = document.createElement('div'); h.className = 'col-resize-handle'; th.appendChild(h);
-    let startX, startW;
-    h.addEventListener('mousedown', e => {
-      e.preventDefault(); startX = e.clientX; startW = th.offsetWidth; h.classList.add('dragging');
-      document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none';
-      const move = e => { cols[i].style.width = Math.max(20, startW + e.clientX - startX) + 'px'; };
-      const up = () => { h.classList.remove('dragging'); document.body.style.cursor = document.body.style.userSelect = ''; document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
-      document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
-    });
-  });
-}
 // ── Log-table zoom ──
 // Scales only the log table via --log-fs (written on <html> by ALV.prefs: 10–20 px, default 13,
 // persisted); chrome stays at its own size so the controls remain usable on small laptops.
@@ -785,8 +767,6 @@ window.addEventListener('keydown', (e) => {
   else if (e.key === '0')                  { e.preventDefault(); setLogZoom(0);  }
 });
 
-initResizeHandles();
-
 // Row selection — click toggles selection, persists across filter changes
 // (handler in applyFilters scrolls the selected row back into view). Delegated from #logTable:
 // every session has its own tbody, and the header row has no _message.
@@ -795,19 +775,28 @@ document.getElementById('logTable').addEventListener('click', e => {
   // interval can exceed 500 ms, so a multi-click is swallowed for longer; plain row clicks are unaffected.
   const dt = performance.now() - newerPillJumpAt;
   if (dt < 500 || (e.detail >= 2 && dt < 2000)) return;
+  // A click that ends a text selection (a drag, the second click of a double click) is copying, not selecting: the
+  // selected row is the only one that wraps its message, so toggling it off here would collapse the row under the
+  // cursor and hide the text being picked.
+  const sel = window.getSelection ? window.getSelection() : null;
+  if (sel && !sel.isCollapsed) return;
   const s = cur, tr = e.target.closest('tr');
   if (!tr || !tr._message || tr._message.seq < s.seqFloor) return;   // frozen row of a trimmed line (resume drain after a backlog overflow)
   const tbody = tr.parentElement;
   if (s.sel === tr._message) {
+    // The open row's message is where text is picked (double and triple click start with a plain click): it never
+    // closes the row. Another cell of the row, or another row, does.
+    const cell = e.target.closest('td');
+    if (cell && cell.className === 'c-msg') return;
     s.sel = null;
-    tr.classList.remove('selected');
+    tr.removeAttribute('aria-selected');
     return;
   }
-  // Clear any previously-selected row in the DOM.
-  const prev = tbody.querySelector('tr.selected');
-  if (prev) prev.classList.remove('selected');
+  // Clear any previously-selected row in the DOM (one per session until P9's multi-select).
+  const prev = tbody.querySelector('tr[aria-selected="true"]');
+  if (prev) prev.removeAttribute('aria-selected');
   s.sel = tr._message;
-  tr.classList.add('selected');
+  tr.setAttribute('aria-selected', 'true');
   // Stop auto-scroll so the view stays put around the selection.
   if (s.follow) {
     s.follow = false;
@@ -823,6 +812,7 @@ shell = ALV.createShell({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, 
     repair: () => iosRepairFromHeader(), setup: p => showSetup(p) } });
 liveUi = ALV.createLive({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, keys: ALV.keys, prefs: ALV.prefs, shell, state: shellState,
   actions: { togglePause, toggleAutoScroll, clear: clearLogs, zoom: setLogZoom, openFile: openLogFile, setGlass, togglePlatform } });
+grid = ALV.createGrid({ doc: document, dom: ALV.dom, keys: ALV.keys, shell, state: shellState });
 function shellState() {
   return {
     cur, sessions: [liveSession, fileSession],
@@ -831,7 +821,7 @@ function shellState() {
     maxRetained: MAX_RETAINED,   // the status bar's Following tooltip (Retained text)
   };
 }
-function shellSync() { if (shell) shell.sync(); if (liveUi) liveUi.sync(); }
+function shellSync() { if (shell) shell.sync(); if (liveUi) liveUi.sync(); if (grid) grid.sync(); }
 // "Open log file…" (the SESSIONS row and ⌘O): the file session, then the picker. The picker is the
 // dropzone's file input, so a picked file loads exactly like a dropped one (handleFile).
 function openLogFile() {
@@ -1899,52 +1889,49 @@ function buildMessageNodes(s, q) {
   return frag;
 }
 
+// One log row (spec "Log grid"): seven cells in the D14 order. The level and the platform are the row's class
+// (tint, stripe, letter colour and the platform badge, which is grid.css's td.c-plat::before), so a row is 14 nodes
+// where it was 17. No per-row tabindex, title, transition or layout read: this runs for every row the drain renders.
 function buildRow(m, isNew) {
-  const lc = LEVEL_CHAR[m.lvl] || 'V';
   const tr = document.createElement('tr');
-  tr.className = lc + (isNew ? ' new-row' : '') + (m === cur.sel ? ' selected' : '');
+  tr.className = rowClass(m.lvl, m.platform) + (isNew ? ' is-new' : '');
+  if (m === cur.sel) tr.setAttribute('aria-selected', 'true');
   tr._message = m; // keep reference so click handler + scroll-to-selection work after re-render
 
-  // Platform cell — static badge, no log-derived content.
+  // Platform cell: the badge is CSS, so the cell holds nothing.
   const platTd = document.createElement('td');
-  platTd.className = 'plat-cell';
-  const platSpan = document.createElement('span');
-  platSpan.className = m.platform === 'ios' ? 'plat-badge ios' : 'plat-badge android';
-  platSpan.textContent = m.platform === 'ios' ? 'i' : 'A';
-  platTd.appendChild(platSpan);
+  platTd.className = 'c-plat';
   tr.appendChild(platTd);
 
   // All log-derived fields below use textContent — XSS-safe even if the
   // device emits markup (e.g. a rooted Android shell or `adb shell log`).
   const tsTd = document.createElement('td');
-  tsTd.className = 'ts';
-  tsTd.textContent = m.ts == null ? '' : String(m.ts);
+  tsTd.className = 'c-ts';
+  tsTd.textContent = timeOf(m.ts);
   tr.appendChild(tsTd);
 
-  const pidTd = document.createElement('td');
-  pidTd.className = 'pid';
-  pidTd.textContent = String(m.pid) + (m.tid ? '-' + String(m.tid) : '');
-  tr.appendChild(pidTd);
+  const lvlTd = document.createElement('td');
+  lvlTd.className = 'c-lvl';
+  lvlTd.textContent = LEVEL_CHAR[m.lvl] || 'V';
+  tr.appendChild(lvlTd);
 
   const tagTd = document.createElement('td');
-  tagTd.className = 'tag';
+  tagTd.className = 'c-tag';
   tagTd.textContent = m.tag == null ? '' : String(m.tag);
   tr.appendChild(tagTd);
 
   const appTd = document.createElement('td');
-  appTd.className = 'lg-app';
+  appTd.className = 'c-app';
   appTd.textContent = m.app == null ? '' : String(m.app);
   tr.appendChild(appTd);
 
-  const lvlTd = document.createElement('td');
-  const lvlSpan = document.createElement('span');
-  lvlSpan.className = 'lvl-badge';
-  lvlSpan.textContent = lc;
-  lvlTd.appendChild(lvlSpan);
-  tr.appendChild(lvlTd);
+  const pidTd = document.createElement('td');
+  pidTd.className = 'c-pid';
+  pidTd.textContent = String(m.pid) + (m.tid ? '-' + String(m.tid) : '');
+  tr.appendChild(pidTd);
 
   const msgTd = document.createElement('td');
-  msgTd.className = 'lg-msg';
+  msgTd.className = 'c-msg';
   msgTd.appendChild(buildMessageNodes(m.msg, currentSearch));
   tr.appendChild(msgTd);
 

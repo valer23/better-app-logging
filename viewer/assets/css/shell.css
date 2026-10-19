@@ -70,8 +70,14 @@
      labels, counts, section heads and [data-rail-hide] items leave; a device keeps its badge and shape. */
   .app[data-sidebar="collapsed"] #app { grid-template-columns: 52px minmax(0, 1fr); }
   .app[data-sidebar="collapsed"] .side-title, .app[data-sidebar="collapsed"] .side-sec-h,
-  .app[data-sidebar="collapsed"] [data-rail-hide], .app[data-sidebar="collapsed"] .nav-item .meta, .app[data-sidebar="collapsed"] .dev-drops,
-  .app[data-sidebar="collapsed"] .dev-actions { display: none; }
+  .app[data-sidebar="collapsed"] [data-rail-hide], .app[data-sidebar="collapsed"] .nav-item .meta, .app[data-sidebar="collapsed"] .dev-drops { display: none; }
+  /* A rail device row keeps its More under the badge, so Start/Stop (More's first item), Re-pair and the setup guide
+     stay one Tab away (P4b judge follow-up: the rail had no Start/Stop). It shows on hover, on focus and while its
+     menu is open, as in the expanded row; the row's own Start/Stop button is hidden in the rail. */
+  .app[data-sidebar="collapsed"] .dev-row { display: flex; flex-direction: column; align-items: center; }
+  .app[data-sidebar="collapsed"] .dev-main { min-height: 36px; }
+  .app[data-sidebar="collapsed"] .dev-actions { position: static; transform: none; }
+  .app[data-sidebar="collapsed"] .dev-start { display: none; }
   /* A rail item's label is its accessible name (the icons are aria-hidden; the rail tooltip is a visual hint only, not wired to aria-describedby),
      so it is hidden visually, never with display: none. */
   .app[data-sidebar="collapsed"] .side-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

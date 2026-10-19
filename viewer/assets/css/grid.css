@@ -1,0 +1,110 @@
+/* The log grid (roadmap P5; spec "Log grid", "Sizes", "Level colours"). @layer app, foundation tokens only (no hex).
+   The rows are <tr>s of a fixed-layout table, not the foundation's .log-row (a display: grid box that would break the
+   <colgroup>), so their look is restated here. Every selector ends in a type or class compound (the foundation v1.2
+   style-recalc policy) and none keys on [aria-rowcount], which grid.js rewrites. The grid is opaque in both
+   materials (spec U4): blur stays on the chrome. */
+@layer app {
+  /* The log column. Neither box sizes to its content: flex basis 0 and min-height 0, as #app (P4a must-keep). */
+  #logWrapper { flex: 1 1 0; min-height: 0; display: none; flex-direction: column; position: relative; overflow: hidden; background: var(--bg); }
+  #logWrapper.visible { display: flex; }
+  #logTable { flex: 1 1 0; min-height: 0; overflow: auto; background: var(--bg); }
+
+  /* Row height (spec "Sizes"): max(18px, log size × 1.6), × 1.4 when Compact, the same for every row so the tail
+     and window arithmetic holds. The Message column keeps a 24ch floor, so at large log sizes in small windows the
+     table scrolls sideways instead of squeezing it: 85ch = Time 12 + Tag 18 + App 20 + PID–TID 11 + Message 24, and
+     114px = the badge column's 10 px, Lvl's 40 px, five cells' 12 px of padding and 2 px of slack each for Time and PID–TID. */
+  .lgrid {
+    --row-h: max(18px, calc(var(--log-fs) * var(--row-k)));
+    table-layout: fixed; border-collapse: separate; border-spacing: 0; width: 100%;
+    min-width: calc(max(18px, var(--log-fs) * 1.3) + 85ch + 114px);
+    font: 400 var(--log-fs)/var(--row-k) var(--font-log); color: var(--text); background: var(--bg);
+  }
+  /* The grid's focus ring is on #logWrapper (below), a box that does not scroll: this table is up to 6 000 rows tall and
+     can be wider than its scroller, so an outline on it has its edges off screen. grid.js sets .grid-focus. */
+  .lgrid:focus-visible { outline: none; }
+  #logWrapper.grid-focus::after { content: ""; position: absolute; inset: 0; z-index: 3; pointer-events: none; box-shadow: inset 0 0 0 2px var(--ring); }
+
+  /* Columns (spec D14): content width in ch plus the cell's 12 px of padding. The spec's bare 13ch for Time clips
+     "15:54:26.290" by a few pixels at every size, so the padding is added instead, plus 2 px of slack on Time and PID–TID (the only columns whose text must not be cut:
+     the shaped width can round up past an exact ch). Lvl keeps 40 px for its header.
+     A resize writes an inline width on the <col>; Enter or Home removes it, back to these. */
+  .lgrid > colgroup > col.k-plat { width: calc(max(18px, var(--log-fs) * 1.3) + 10px); }
+  .lgrid > colgroup > col.k-ts { width: calc(12ch + 14px); }
+  .lgrid > colgroup > col.k-lvl { width: max(calc(1ch + 12px), 40px); }
+  .lgrid > colgroup > col.k-tag { width: calc(18ch + 12px); }
+  .lgrid > colgroup > col.k-app { width: calc(20ch + 12px); }
+  .lgrid > colgroup > col.k-pid { width: calc(11ch + 14px); }
+
+  /* Header (spec: 28 px, sticky, --surface). Sticky on thead, its row and each cell, as before: WebKit needs the cells. */
+  .lgrid > thead { position: sticky; top: 0; z-index: 2; }
+  .lgrid > thead > tr { position: sticky; top: 0; }
+  .lgrid > thead > tr > th {
+    position: sticky; top: 0; height: 28px; padding: 0 6px; text-align: left; white-space: nowrap; user-select: none;
+    background: var(--surface); border-bottom: 1px solid var(--hairline);
+    font: 600 var(--ui-fs-xs)/1 var(--font-ui); letter-spacing: .04em; text-transform: uppercase; color: var(--text-2);
+  }
+  .lgrid > thead > tr > th > .h { display: block; overflow: hidden; text-overflow: ellipsis; }
+  /* Column resize separators (grid.js): a 24 px hit area centred on the boundary, inside the next header cell; a
+     1 px --border line on hover, keyboard focus or drag (spec "Log grid"). */
+  .lgrid > thead > tr > th > .col-sep { position: absolute; top: 0; bottom: 0; left: -12px; width: 24px; cursor: col-resize; touch-action: none; }
+  .lgrid > thead > tr > th > .col-sep::after { content: ""; position: absolute; top: 6px; bottom: 6px; left: 11px; width: 1px; }
+  .lgrid > thead > tr > th > .col-sep:hover::after, .lgrid > thead > tr > th > .col-sep:focus-visible::after, .lgrid > thead > tr > th > .col-sep[data-drag]::after { background: var(--border); }
+  .lgrid > thead > tr > th > .col-sep:focus-visible { outline-offset: -2px; }
+
+  /* Rows: one line each, cut with an ellipsis. Time, App / Device and PID–TID are meta; the message is --text
+     (spec D15: whole-line colour is opt-in, P14). */
+  .lgrid > tbody > tr > td { height: var(--row-h); padding: 0 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+  .lgrid > tbody > tr > td.c-ts, .lgrid > tbody > tr > td.c-app, .lgrid > tbody > tr > td.c-pid { color: var(--text-2); }
+  .lgrid > tbody > tr > td.c-lvl { color: var(--lv); font-weight: 700; }
+  .lgrid > tbody > tr:hover { background: var(--row-hover); }
+  /* Level (spec "Level colours"): the letter's colour, and for W, E and F a tint and a 3 px stripe. The stripe is an
+     inset shadow on the badge cell: WebKit gives a <tr> no reliable positioned ::before. */
+  .lgrid > tbody > tr.l-v { --lv: var(--lv-v); }
+  .lgrid > tbody > tr.l-d { --lv: var(--lv-d); }
+  .lgrid > tbody > tr.l-i { --lv: var(--lv-i); }
+  .lgrid > tbody > tr.l-w { --lv: var(--lv-w); background: var(--tint-w); }
+  .lgrid > tbody > tr.l-e { --lv: var(--lv-e); background: var(--tint-e); }
+  .lgrid > tbody > tr.l-f { --lv: var(--lv-f); background: var(--tint-f); }
+  .lgrid > tbody > tr.l-w > td.c-plat, .lgrid > tbody > tr.l-e > td.c-plat, .lgrid > tbody > tr.l-f > td.c-plat { box-shadow: inset 3px 0 0 var(--lv); }
+  /* Hover on a tinted row mixes into the tint (measured, foundation "Tint + hover"). */
+  .lgrid > tbody > tr.l-w:not([aria-selected="true"]):hover { background: color-mix(in srgb, var(--row-hover) 50%, var(--tint-w)); }
+  .lgrid > tbody > tr.l-e:not([aria-selected="true"]):hover { background: color-mix(in srgb, var(--row-hover) 50%, var(--tint-e)); }
+  .lgrid > tbody > tr.l-f:not([aria-selected="true"]):hover { background: color-mix(in srgb, var(--row-hover) 50%, var(--tint-f)); }
+  /* Selection replaces the tint with --row-sel and the stripe with the accent bar. Until P9's drawer, the selected
+     row wraps its message, so a long line can be read in full (the only row that is not one line high). */
+  .lgrid > tbody > tr[aria-selected="true"] { background: var(--row-sel); }
+  .lgrid > tbody > tr[aria-selected="true"] > td.c-plat { box-shadow: inset 3px 0 0 var(--accent); }
+  .lgrid > tbody > tr[aria-selected="true"] > td.c-msg { white-space: pre-wrap; word-break: break-all; }
+
+  /* Text picked with the mouse. The foundation's ::selection is --row-sel, the open row's own background, so a pick
+     inside it vanished (and on other rows it is 1.2:1 against --bg). --accent behind --bg text: 7.3:1 dark, 7.1:1 light,
+     and at least 5.9:1 against --row-sel, --row-hover and the W/E/F tints (Chromium; the figures use the declared colour).
+     The 99% mix is deliberate: WebKit lightens or fades an opaque ::selection background (blendWithWhite, or alpha 0.8 in
+     dark), which would cost an estimated 2 points of contrast (unverified on screen), and leaves a non-opaque one as declared. Chromium paints the same
+     colour either way. Per element and outside WebKit's @supports block: WebKit does not pass ::selection down (so a cell's
+     own rule, and one for its <mark>), and Chromium takes it too. Forced colours keep the system Highlight. */
+  .lgrid > tbody > tr > td::selection, .lgrid > tbody > tr > td > mark::selection { background: color-mix(in srgb, var(--accent) 99%, transparent); color: var(--bg); }
+
+  /* Platform badge (spec "Sizes": max(18px, log size × 1.3)), the badge cell's ::before: no node per row. The
+     alternative text after the slash is what a screen reader reads; a WebKit without it keeps the first value. The
+     badge is block-level, out of the cell's line box: an inline badge at vertical-align: middle sits about 5 px below
+     the baseline, past the strut, and grows a Compact row by about 1 px at 13–20 px. The td's vertical-align centres it. */
+  .lgrid > tbody > tr > td.c-plat { padding: 0 5px; text-align: center; }
+  .lgrid > tbody > tr > td.c-plat::before {
+    display: grid; place-items: center; margin-inline: auto; border-radius: 4px;
+    width: max(18px, calc(var(--log-fs) * 1.3)); height: max(18px, calc(var(--log-fs) * 1.3));
+    font: 700 max(10px, calc(var(--log-fs) * .75))/1 var(--font-ui);
+  }
+  .lgrid > tbody > tr.p-a > td.c-plat::before { content: "A"; content: "A" / "Android"; color: var(--plat-android); background: color-mix(in srgb, var(--plat-android) 14%, var(--surface)); }
+  .lgrid > tbody > tr.p-i > td.c-plat::before { content: "i"; content: "i" / "iOS"; color: var(--plat-ios); background: color-mix(in srgb, var(--plat-ios) 14%, var(--surface)); }
+
+  /* Search hits (P6 marks the first hit only). */
+  .lgrid mark { background: var(--match-bg); color: var(--match-fg); border-radius: 2px; }
+
+  /* Windows High Contrast drops backgrounds and shadows: selection becomes an outline, the stripe a border. */
+  @media (forced-colors: active) {
+    #logWrapper.grid-focus::after { box-shadow: none; outline: 2px solid Highlight; outline-offset: -2px; }
+    .lgrid > tbody > tr[aria-selected="true"] { outline: 2px solid Highlight; outline-offset: -2px; }
+    .lgrid > tbody > tr.l-w > td.c-plat, .lgrid > tbody > tr.l-e > td.c-plat, .lgrid > tbody > tr.l-f > td.c-plat { box-shadow: none; border-left: 3px solid CanvasText; }
+  }
+}
