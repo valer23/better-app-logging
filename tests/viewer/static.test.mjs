@@ -886,7 +886,7 @@ test('log grid: text picked with the mouse shows on every row, the open one incl
     const rules = gridCss().filter(r => r.selectors.includes(sel));
     assert.equal(rules.length, 1, sel);
     assert.deepEqual(rules[0].atRules, ['@layer app'], `${sel}: in no @supports or @media, so WebKit (no ::selection inheritance) and Chromium both take it`);
-    assert.equal(gridDecl(sel, 'background'), 'var(--accent)', sel);
+    assert.equal(gridDecl(sel, 'background'), 'color-mix(in srgb, var(--accent) 99%, transparent)', `${sel}: --accent, kept just short of opaque so WebKit does not lighten or fade it`);
     assert.equal(gridDecl(sel, 'color'), 'var(--bg)', sel);
     assert.notEqual(gridDecl(sel, 'background'), gridDecl('.lgrid > tbody > tr[aria-selected="true"]', 'background'), `${sel}: not the open row's background`);
     assert.notEqual(gridDecl(sel, 'background'), fsel.background, `${sel}: not the foundation's --row-sel`);
