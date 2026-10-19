@@ -319,7 +319,7 @@ Overlays: command palette · bug report sheet · iOS stall sheet · drop overlay
 - **Header (52).** Traffic-light space at left; at right an icon button `panel-left` "Hide sidebar" (tooltip "Hide sidebar ⌘B").
 - **Command trigger** (margin 0 12 8): a full-width input-styled button with `search` icon, "Search actions…" and kbd "⌘K".
 - **Sections** (padding 4 8, gap 12). Each has a collapsible header button (`aria-expanded`) with chevron, section label and count.
-  - **DEVICES.** One 48 px row per device: platform badge ("A" or "i"), name (13/500), and a status line. Statuses are "Streaming · 842/s" (ok dot), "Connecting…" (spinner), "Stalled 15 s" (warn clock), "Ready · stopped" (idle dot), "Needs Trust" (warn), "Disconnected" (idle) and "Driver missing" (err). A second line "312 dropped" in `--warn` with a warning icon appears when that device's stream dropped lines. Clicking the row toggles the device in the filter (`aria-pressed`; `aria-current` when it is the only device shown). Hover or focus reveals "Stop streaming {name}" or "Start streaming {name}" and "More for {name}". The menu holds Start/Stop streaming, Re-pair iPhone (iOS), Setup guide and Copy device info. Last row: link "Devices & setup" with kbd ⌘2.
+  - **DEVICES.** One 48 px row per device: platform badge ("A" or "i"), name (13/500), and a status line. Statuses are "Streaming · 842/s" (ok dot), "Connecting…" (spinner), "Stalled 15 s" (warn clock), "Ready · stopped" (idle dot), "Needs Trust" (warn), "Disconnected" (idle) and "Driver missing" (err). A second line "312 dropped" in `--warn` with a warning icon appears when that device's stream dropped lines. Clicking the row toggles the device in the filter (`aria-pressed`; `aria-current` when it is the only device shown). Hover or focus reveals "Stop streaming {name}" or "Start streaming {name}" and "More for {name}". The menu holds Start/Stop streaming, the checkbox "Quiet system noise" (iOS, in its own group; it keeps the menu open), Re-pair iPhone (iOS), Setup guide and Copy device info. Quiet system noise makes the bridge run idevicesyslog with -q and an app-kept exclusion list, so common iOS system processes never reach the app or its exports (unlike the ⌥4 "Hide system noise" preset, which only hides lines). While it is on, the iPhone's Streaming, Stalled and Ready lines end in " · quiet" ("Streaming · 842/s · quiet"). Last row: link "Devices & setup" with kbd ⌘2.
   - **SESSIONS.** "Live session" (`radio` icon, line count, `aria-current="page"` when shown), each opened file (`file-text`, line count), then "Open log file…" ⌘O.
   - **SAVED FILTERS.** One row per preset (`bookmark`, name, kbd ⌥n; tooltip shows the query); the preset whose query equals the current query is `aria-current`. Last row "Save current filter" ⌘S.
   - **MARKERS.** One row per marker: flag icon in `--marker`, "M2 Pairing drops after OTA", time in mono 12 at right. The current marker is `aria-current`. Hover reveals "Rename marker M2" and "Delete marker M2". Rename edits in place (Enter commits, Esc cancels).
@@ -389,7 +389,7 @@ Height 84 = 8 padding + 36 query bar + 4 gap + 28 chip row (36 px tall with −4
 
 #### Status bar (`--status-h`, `.chrome`, top hairline, padding 0 12, gap 12; polite announcements at most once per 5 s)
 
-- Left: one ghost button per device (platform badge, name, rate "842/s", "1.9k/s", "connecting…", "stopped" or "stalled"); clicking toggles that device in the filter. Then the drops button in `--warn` (warning icon, "312 lines dropped", `aria-haspopup="dialog"`).
+- Left: one ghost button per device (platform badge, name, rate "842/s", "1.9k/s", "connecting…", "stopped" or "stalled", ending in " · quiet" on the iPhone while Quiet system noise is on); clicking toggles that device in the filter. Then the drops button in `--warn` (warning icon, "312 lines dropped", `aria-haspopup="dialog"`).
 - Right: "Lines 18 100–18 400 of 47 106" (only while Follow is off) and `·`; "10 selected" with a "Clear selection" × (only with a selection) and `·`; "Retained 48 310 of 500 000" and `·` (hidden under 1000 px); "Following" with an ok dot or "Not following" in `--text-2` (tooltip carries the retained text); `·`; a ghost button "⌘K Commands".
 - **Drops popover** (320, opens upward): "312 lines dropped from iPhone 15" / "The viewer fell behind at 2.7k lines/s, so the bridge dropped the oldest unsent lines. The log shows a gap row where it happened, and exports will have the same gap. Resets on Clear." / "Jump to gap". If the gap has scrolled out of retention, a toast says "The gap has scrolled out of the retained lines".
 
@@ -708,6 +708,9 @@ Bottom right, 16 px above the status bar (shifted left of an open drawer), 356 w
 | Device stopped | info | Stopped Pixel 8 Pro | Lines already captured stay in this session. | — |
 | Re-pair | check | iPhone 15 re-paired | Streaming again · iOS 18.2 | — |
 | Device info | check | Copied device info | Pixel 8 Pro · Android 15 · 3A091FDJH00ABC | — |
+| Quiet system noise on | info | Quiet system noise on | Lines from common iOS system processes are dropped before they reach the log, so exports leave them out too. | — |
+| Quiet system noise off | info | Quiet system noise off | Lines from every iOS process reach the log again. | — |
+| Quiet system noise failed | alert (err) | Quiet system noise did not change | The app did not answer. Try again. | Retry |
 | Exported | check | Exported 47 106 lines | HS-1234-OTA-pairing_2-devices_2026-10-14_1554.txt | Show in folder |
 | Error | alert (err) | Export failed | Disk is full. Free some space and try again. | Retry |
 
@@ -857,7 +860,7 @@ All settings are client-side `localStorage` (origin `http://localhost:8780`), ea
 | `applogs-viewer.glassMode` | `'on'` / `'off'` | Read once; if `applogs-viewer.material` is absent, write `'glass'` for `'on'` and `'solid'` otherwise. The old key is left in place so a downgrade still works. |
 | `applogs-viewer.material` | — | `'solid'` or `'glass'`. Pre-paint writes `data-material`, forcing `solid` unless `data-platform="mac"`. |
 | `applogs-viewer.uiSize` | — | `'s'`, `'m'` or `'l'`. Pre-paint writes `data-ui` to avoid a layout flash. |
-| `applogs-viewer.settings` | — | One JSON object for the rest of Settings (fonts, contrast, motion, density, wrap, tints, columns, timestamp format, highlight rules, detection, shortcuts and overrides, retention, export defaults, bug report defaults). |
+| `applogs-viewer.settings` | — | One JSON object for the rest of Settings (fonts, contrast, motion, density, wrap, tints, columns, timestamp format, highlight rules, detection, shortcuts and overrides, retention, export defaults, bug report defaults, Quiet system noise and its one-time hint). |
 | `applogs-viewer.presets` | — | JSON array of `{name, q}`; the ⌥ key is the position. Seeded with the four examples. |
 | `applogs-viewer.onboarded` | — | Set when onboarding finishes or is skipped; "Show onboarding again" clears it. |
 
@@ -884,6 +887,7 @@ Markers, session names and selections are per session and in memory; they leave 
 | Live streams | Exists: `ws://localhost:8765` (Android) and `:8766` (iOS), read-only frames `log`, `devices`, `error`, `dropped`. Start/Stop is opening or closing the socket; the bridges run regardless. |
 | Device lists, auto-detect | Exists: `GET /devices/android` (`id, name, model, product, status`) and `GET /devices/ios` (`id, name, version`). Auto-detect is client polling (iOS costs two process spawns per device per poll, so poll it at 5–10 s and pause while hidden). |
 | Re-pair, unpair, pair | Exists: `POST /ios/repair`, `/ios/unpair`, `/ios/pair`. |
+| Quiet system noise | Exists: POST /ios/quiet {on} → {on}; restarts idevicesyslog (gap under 1 s) only on a change. Off at each launch; the page re-sends a saved "on" at load. |
 | Apple Devices driver status | Exists: `GET /ios-driver-status`. |
 | iOS stall | Exists: `error` frame containing "stalled" after 15 s. The client keeps substring matching. |
 | Drops | Exists: per-platform `dropped` frames. The gap row is placed where the frame arrives. |

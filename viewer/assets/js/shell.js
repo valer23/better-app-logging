@@ -38,8 +38,12 @@
     };
   }
 
+  // Where an iPhone row and its status-bar button add " · quiet" (Quiet system noise): only while the iPhone
+  // is there to filter. Connecting, an error, a missing driver or no device say what is wrong instead.
+  const QUIET_STATES = Object.freeze(['streaming', 'stalled', 'ready']);
+
   // The status line of a sidebar device row (spec "Window frame and sidebar"), in spec copy.
-  // s: { live, state, text (setStatus), detected, driverMissing, noDevice (live, but the bridge reports the phone gone), stalledFor (the stall threshold in s, or -1), rate, dropped }
+  // s: { live, state, text (setStatus), detected, driverMissing, noDevice (live, but the bridge reports the phone gone), stalledFor (the stall threshold in s, or -1), rate, dropped, quiet (iOS: Quiet system noise is on) }
   // → { state: the shape the row shows, tone, text, drops: the second line or '' }
   function deviceStatus(s) {
     let state;
@@ -53,6 +57,7 @@
     else if (s.driverMissing) { state = 'driver'; tone = 'err'; text = 'Driver missing'; }
     else if (s.detected) { state = 'ready'; tone = 'idle'; text = 'Ready · stopped'; }
     else { state = 'disconnected'; tone = 'idle'; text = 'Disconnected'; }
+    if (s.quiet && QUIET_STATES.includes(state)) text += ' · quiet';
     return { state, tone, text, drops: s.dropped > 0 ? `${num(s.dropped)} dropped` : '' };
   }
 
@@ -240,10 +245,33 @@
     const stalled = { android: false, ios: false };
     const devState = { android: null, ios: null };   // what each row shows, for the status bar (live.js)
     const tickFns = [];
-    function act(p, what) {
+    // Quiet system noise (iOS): the bridge runs idevicesyslog with -q and its own exclusions (POST /ios/quiet,
+    // src-tauri/src/bridge/ios.rs), so those processes' lines never reach the page. prefs keeps the choice;
+    // the page re-sends a saved "on" at load (applogs-viewer.html), since the bridge starts with it off.
+    let quiet = prefs.getSettings().iosQuiet === 'on';
+    let quietSeq = 0;   // the newest request: an older one that fails must not undo a newer choice
+    prefs.onChange(ps => { quiet = ps.settings.iosQuiet === 'on'; });
+    function setQuiet(on) {
+      prefs.patchSettings({ iosQuiet: on ? 'on' : 'off' });
+      sync();
+      ui.toast(on
+        ? { key: 'ios-quiet', kind: 'info', title: 'Quiet system noise on', desc: 'Lines from common iOS system processes are dropped before they reach the log, so exports leave them out too.' }
+        : { key: 'ios-quiet', kind: 'info', title: 'Quiet system noise off', desc: 'Lines from every iOS process reach the log again.' });
+      const seq = ++quietSeq;
+      new Promise(res => res(actions.setIosQuiet(on))).catch(err => {
+        warn('Quiet system noise request failed', err);
+        if (seq !== quietSeq) return;
+        prefs.patchSettings({ iosQuiet: on ? 'off' : 'on' });
+        sync();
+        ui.toast({ key: 'ios-quiet', kind: 'error', title: 'Quiet system noise did not change', desc: 'The app did not answer. Try again.',
+          action: { label: 'Retry', run: () => setQuiet(on) } });
+      });
+    }
+    function act(p, what, it) {
       if (what === 'stream') actions.toggleStream(p);
       else if (what === 'repair') actions.repair(p);
       else if (what === 'setup') actions.setup(p);
+      else if (what === 'quiet') setQuiet(it.getAttribute('aria-checked') === 'true');   // ui.menu has flipped it
     }
     function buildRow(p, dev, key) {
       const P = PLATFORM[p];
@@ -270,11 +298,15 @@
       r.li = dom.el('li', { class: 'dev-row', dataset: { platform: p } }, r.main, dom.el('span', { class: 'dev-actions' }, r.start, r.more));
       const item = (what, text) => dom.el('button', { type: 'button', class: 'menu-item', role: 'menuitem', tabindex: '-1', dataset: { act: what } }, text);
       r.streamItem = item('stream');
+      // iOS: Quiet system noise in its own group; a checkbox keeps the menu open (ui.menu).
+      r.quietItem = p === 'ios' ? dom.el('button', { type: 'button', class: 'menu-item', role: 'menuitemcheckbox', 'aria-checked': 'false', tabindex: '-1',
+        dataset: { act: 'quiet' } }, dom.icon('check', 'menu-check'), dom.el('span', { text: 'Quiet system noise' })) : null;
+      const sep = () => dom.el('div', { class: 'menu-sep', role: 'separator' });
       r.surface = dom.portal(dom.el('div', { class: 'menu ov', hidden: true },
         dom.el('div', { role: 'menu', id: dom.uid('devmenu'), 'aria-label': `More for ${name}` },
-          r.streamItem, p === 'ios' ? item('repair', 'Re-pair iPhone') : null, item('setup', 'Setup guide'))), 'popover');
+          r.streamItem, r.quietItem ? [sep(), r.quietItem, sep()] : null, p === 'ios' ? item('repair', 'Re-pair iPhone') : null, item('setup', 'Setup guide'))), 'popover');
       r.menu = ui.menu(r.more, r.surface, {
-        onSelect: it => act(p, it.dataset.act),
+        onSelect: it => act(p, it.dataset.act, it),
         onOpen: () => r.li.setAttribute('data-menu', 'open'),
         onClose: () => r.li.removeAttribute('data-menu'),
       });
@@ -313,8 +345,9 @@
         const live = !!st.live[p];
         const busy = st.status[p].state === 'connecting';
         const s = deviceStatus({ live, state: st.status[p].state, text: st.status[p].text, detected: !!dev.id, noDevice: !!st.noDevice[p],
-          driverMissing: p === 'ios' && st.driverMissing, stalledFor: stalledFor(p, live), rate: rates[p], dropped: st.dropped[p] });
-        devState[p] = { state: s.state, rate: rates[p], name: r.name };
+          driverMissing: p === 'ios' && st.driverMissing, stalledFor: stalledFor(p, live), rate: rates[p], dropped: st.dropped[p], quiet: p === 'ios' && quiet });
+        devState[p] = { state: s.state, rate: rates[p], name: r.name, quiet: p === 'ios' && quiet && QUIET_STATES.includes(s.state) };
+        setAttr(r.quietItem, 'aria-checked', String(quiet));   // diffed; null-safe for Android
         setAttr(r.li, 'data-state', s.state);
         setAttr(r.li, 'data-tone', s.tone);
         setText(r.status, s.text);
@@ -381,7 +414,7 @@
     win.setInterval(tick, TICK_MS);
     return {
       sync,
-      // Each device row's { state, rate, name } after the last sync or tick (the toolbar and status bar).
+      // Each device row's { state, rate, name, quiet } after the last sync or tick (the toolbar and status bar).
       devices: () => devState,
       // Runs fn after every tick's refresh (the toolbar's badge and the status bar, live.js).
       onTick(fn) { tickFns.push(fn); },
@@ -397,6 +430,6 @@
   }
 
   const ALV = g.ALV || (g.ALV = {});
-  ALV.shellPure = Object.freeze({ num, fmtRate, createRateMeter, deviceStatus, themeView, DRAG_BANDS, STALL_SECONDS, setText, setAttr, setHidden });
+  ALV.shellPure = Object.freeze({ num, fmtRate, createRateMeter, deviceStatus, QUIET_STATES, themeView, DRAG_BANDS, STALL_SECONDS, setText, setAttr, setHidden });
   ALV.createShell = createShell;
 })(typeof window !== 'undefined' ? window : globalThis);

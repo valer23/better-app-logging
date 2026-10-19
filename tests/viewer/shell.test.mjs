@@ -338,8 +338,8 @@ test('DEVICES: drops line, filter toggle (aria-pressed, aria-current when the on
   assert.deepEqual(calls.at(-1), ['setup', 'android']);
   i.more.click();
   const iosItems = p.byId[i.more.getAttribute('aria-controls')].children;
-  assert.deepEqual(iosItems.map(texts), ['Start streaming', 'Re-pair iPhone', 'Setup guide']);
-  iosItems[1].click();
+  assert.deepEqual(iosItems.map(texts), ['Start streaming', '', 'Quiet system noise', '', 'Re-pair iPhone', 'Setup guide'], 'iOS: Quiet system noise in its own group');
+  iosItems[4].click();
   assert.deepEqual(calls.at(-1), ['repair', 'ios']);
   state.status.ios = { state: 'connecting', text: 'Connecting…' };
   shell.sync();
@@ -591,4 +591,68 @@ test('rail: ⌘B does nothing over the legacy setup or stall modal (collapsing w
   assert.deepEqual([cmdB(), prefs.get('sidebar')], [null, 'expanded']);
   modal.className = 'modal-overlay';
   assert.deepEqual([cmdB(), prefs.get('sidebar')], ['view.sidebar', 'collapsed'], 'a closed modal does not block it');
+});
+
+// ---- Quiet system noise (iOS) ----
+
+const IOS = () => ({ live: { android: false, ios: true }, devices: { android: { id: '', name: '' }, ios: { id: 'u1', name: 'iPhone Val' } } });
+const quietOf = (p, more) => p.byId[more.getAttribute('aria-controls')].children.find(n => n.getAttribute('role') === 'menuitemcheckbox');
+const flush = () => new Promise(r => setImmediate(r));
+
+test('deviceStatus: quiet adds "· quiet" while the iPhone streams, stalls or is ready, nowhere else', () => {
+  const b = { live: true, state: 'connected', text: 'Connected', detected: true, driverMissing: false, stalledFor: -1, rate: 842, dropped: 0, quiet: true };
+  assert.equal(S.deviceStatus(b).text, 'Streaming · 842/s · quiet');
+  assert.equal(S.deviceStatus({ ...b, stalledFor: 15 }).text, 'Stalled 15 s · quiet');
+  assert.equal(S.deviceStatus({ ...b, live: false }).text, 'Ready · stopped · quiet');
+  assert.equal(S.deviceStatus({ ...b, live: false, state: 'connecting' }).text, 'Connecting…');
+  assert.equal(S.deviceStatus({ ...b, live: false, state: 'error', text: 'No device' }).text, 'No device');
+  assert.equal(S.deviceStatus({ ...b, live: false, driverMissing: true }).text, 'Driver missing');
+  assert.equal(S.deviceStatus({ ...b, live: false, detected: false }).text, 'Disconnected');
+  assert.equal(S.deviceStatus({ ...b, quiet: false }).text, 'Streaming · 842/s');
+});
+
+test('Quiet system noise: a checkbox between Start/Stop and Re-pair that stays open, persists, asks the bridge, shows "· quiet" and one keyed toast', () => {
+  const { p, calls, prefs } = shellPage({ st: IOS() });
+  const i = parts(row(p, 'ios'));
+  i.more.click();
+  const m = p.byId[i.more.getAttribute('aria-controls')];
+  assert.deepEqual(m.children.map(n => n.getAttribute('role')), ['menuitem', 'separator', 'menuitemcheckbox', 'separator', 'menuitem', 'menuitem']);
+  const q = quietOf(p, i.more);
+  assert.deepEqual([texts(q), q.getAttribute('aria-checked'), calls.length], ['Quiet system noise', 'false', 0], 'nothing is sent until it changes');
+  q.click();
+  assert.deepEqual([i.more.getAttribute('aria-expanded'), q.getAttribute('aria-checked'), prefs.getSettings().iosQuiet, calls.at(-1)],
+    ['true', 'true', 'on', ['setIosQuiet', true]]);
+  assert.equal(i.status.textContent, 'Streaming · 0/s · quiet');
+  assert.match(texts(p.byId.toastLive), /^Quiet system noise on/);
+  q.click();
+  assert.equal(p.byId.toastLive.children.length, 1, 'keyed: replaced, not stacked');
+  assert.match(texts(p.byId.toastLive), /^Quiet system noise off/);
+  assert.deepEqual([i.status.textContent, calls.at(-1)], ['Streaming · 0/s', ['setIosQuiet', false]]);
+  const a = parts(row(p, 'android'));
+  a.more.click();
+  assert.equal(quietOf(p, a.more), undefined, 'Android: no Quiet system noise');
+});
+
+test('Quiet system noise: a failed request puts the choice back with a Retry error; an older failure never undoes a newer choice', async () => {
+  let fail = true;
+  const { p, prefs } = shellPage({ st: IOS(), actions: { setIosQuiet: on => (fail && on ? Promise.reject(new Error('down')) : Promise.resolve()) } });
+  const i = parts(row(p, 'ios'));
+  i.more.click();
+  const q = quietOf(p, i.more);
+  q.click();
+  await flush();
+  assert.deepEqual([prefs.getSettings().iosQuiet, q.getAttribute('aria-checked'), i.status.textContent], ['off', 'false', 'Streaming · 0/s']);
+  const err = p.byId.toastAlerts.children[0];
+  assert.deepEqual([err.getAttribute('role'), texts(err).startsWith('Quiet system noise did not change'), p.byId.toastLive.children.length],
+    ['alert', true, 0], 'the keyed toast moved to the alert region');
+  fail = false;
+  err.children[2].click();   // Retry
+  await flush();
+  assert.deepEqual([prefs.getSettings().iosQuiet, q.getAttribute('aria-checked')], ['on', 'true']);
+  fail = true;
+  q.click();   // off: succeeds
+  q.click();   // on: fails…
+  q.click();   // …but off came after it
+  await flush();
+  assert.equal(prefs.getSettings().iosQuiet, 'off', 'the newest choice stands');
 });

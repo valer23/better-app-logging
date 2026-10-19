@@ -30,6 +30,7 @@ test('status-bar copy: line count, Retained with the #45 note, drops (singular /
   assert.equal(L.dropDetail(1, 'Pixel 8 Pro', 0).desc, 'The viewer fell behind, so the bridge dropped the oldest unsent lines. Exports will have the same gap. Resets on Clear.');
   assert.deepEqual(['streaming', 'connecting', 'stalled', 'ready', 'disconnected', 'driver', 'error'].map(s => L.deviceRate(s, 842)),
     ['842/s', 'connecting…', 'stalled', 'stopped', 'stopped', 'stopped', 'stopped']);
+  assert.deepEqual([L.deviceRate('streaming', 842, true), L.deviceRate('stalled', 0, true), L.deviceRate('ready', 0, true)], ['842/s · quiet', 'stalled · quiet', 'stopped · quiet']);
 });
 
 test('streamBadge: the spec states, File and Paused winning over Streaming', () => {
@@ -353,4 +354,16 @@ test('live.sync() with nothing changed writes nothing to the toolbar, the status
   state.paused = true;
   live.sync();
   assert.ok(writes.length > 0, 'the watch sees a real change');
+});
+
+test('status bar: the iPhone rate ends in "· quiet" while Quiet system noise is on, and only while the iPhone is there', () => {
+  const { live, shell, state, prefs, $ } = livePage({ st: { live: { android: false, ios: true }, devices: { android: { id: '', name: '' }, ios: { id: 'u1', name: 'iPhone 15' } } } });
+  assert.equal($('sbIosRate').textContent, '0/s');
+  prefs.patchSettings({ iosQuiet: 'on' });
+  shell.sync(); live.sync();
+  assert.deepEqual([$('sbIosRate').textContent, $('sbAndroidRate').textContent], ['0/s · quiet', 'stopped'], 'the rate describes the button, so it is announced');
+  state.live.ios = false;
+  state.devices.ios = { id: '', name: '' };
+  shell.sync(); live.sync();
+  assert.equal($('sbIosRate').textContent, 'stopped', 'no iPhone: nothing to filter');
 });
