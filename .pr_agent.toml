@@ -6,10 +6,14 @@
 # GitGuardian, and on-demand code-reviewer subagents.
 
 [config]
-# OpenAI only (the workflow passes OPENAI_KEY). No fallback: a failed call surfaces as a
-# failed Action run instead of silently switching to a different model.
-model = "gpt-5.6-luna"
+# Routed through OpenRouter (the workflow passes the OPENROUTER_KEY secret as OPENROUTER_API_KEY).
+# No fallback: a failed call surfaces as a failed Action run instead of silently
+# switching to a different model.
+model = "openrouter/openai/gpt-5.6-luna"
 fallback_models = []
+# OpenRouter-prefixed ids are not in PR-Agent's token table; pin the context size
+# OpenRouter reports for openai/gpt-5.6-luna (1.05M) so lookup never fails.
+custom_model_max_tokens = 1050000
 # Verbose 0 = terse output. We prefer concise PR comments.
 verbosity_level = 0
 # Publish reviews as PR comments (default).

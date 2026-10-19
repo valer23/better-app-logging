@@ -5,10 +5,11 @@ name: PR Agent
 # Behaviour (model, review focus, ignored paths, release-PR skip) lives in .pr_agent.toml, which
 # PR-Agent reads from the default branch.
 #
-# Requires the OPENAI_KEY repository secret (Settings > Secrets and variables > Actions).
+# Requires the OPENROUTER_KEY repository secret (Settings > Secrets and variables > Actions):
+# an OpenRouter API key (https://openrouter.ai/settings/keys). Models are routed via OpenRouter.
 #
 # `pull_request` (not `pull_request_target`): fork PRs get no secrets, so they are not reviewed,
-# and an outside contributor cannot run a workflow holding the OpenAI key.
+# and an outside contributor cannot run a workflow holding the OpenRouter key.
 on:
   pull_request:
     types: [opened, reopened, ready_for_review]
@@ -40,7 +41,7 @@ jobs:
       - name: PR Agent
         uses: The-PR-Agent/pr-agent@981344be2755e303df501e18e3f60b848a188a80 # v0.48.0
         env:
-          OPENAI_KEY: ${{ secrets.OPENAI_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           github_action_config.auto_describe: "true"
           github_action_config.auto_review: "true"
