@@ -607,8 +607,10 @@ function jumpToOldest() {
 }
 // Focus is parked on Follow (or Pause) after a keyboard jump (or Resume) and Enter activates on keydown, so a held
 // key's auto-repeat would keep toggling it. A keyboard Resume while lines wait below keeps focus on the pill's button
-// (the pill turns into the jump pill), so a held Enter would jump to the latest line at once: it is guarded too.
-for (const id of ['autoScrollBtn', 'pauseBtn', 'newerPillBtn']) document.getElementById(id).addEventListener('keydown', e => { if (e.repeat && (e.key === 'Enter' || e.key === ' ')) e.preventDefault(); });
+// (the pill turns into the jump pill), so a held Enter would jump to the latest line at once: it is guarded too. The
+// empty tile's fix button keeps focus under a new label, or hands it to Reset filter, after a fix: a held Enter would run
+// the next fix, then clear the search text and PID / App field unasked.
+for (const id of ['autoScrollBtn', 'pauseBtn', 'newerPillBtn', 'gridEmptyFix', 'gridEmptyReset']) document.getElementById(id).addEventListener('keydown', e => { if (e.repeat && (e.key === 'Enter' || e.key === ' ')) e.preventDefault(); });
 
 // ── Live retention ──
 // Live lines kept in memory; older ones are dropped so long sessions can't grow the heap without

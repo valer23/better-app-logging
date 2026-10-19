@@ -775,9 +775,9 @@ test('paused pill: while following too; "Buffer full · resuming skips to the ne
   assert.equal(v.doc.getElementById('logTable').classList.contains('newer-room'), false, 'and no spacer');
 });
 
-test('held Enter: Follow, Pause and the pill button ignore keydown auto-repeat (a keyboard Resume with lines below keeps focus on the pill)', () => {
+test('held Enter: Follow, Pause, the pill button and the empty tile\'s fix and Reset buttons ignore keydown auto-repeat (a keyboard Resume with lines below keeps focus on the pill; a fix hands focus to the next button, review F3)', () => {
   const v = boot();
-  for (const id of ['autoScrollBtn', 'pauseBtn', 'newerPillBtn']) {
+  for (const id of ['autoScrollBtn', 'pauseBtn', 'newerPillBtn', 'gridEmptyFix', 'gridEmptyReset']) {
     const ev = { key: 'Enter', repeat: true, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
     for (const fn of v.doc.listeners.get(`${id}:keydown`) || []) fn(ev);
     assert.equal(ev.defaultPrevented, true, `#${id}: a held Enter does not activate it again`);
