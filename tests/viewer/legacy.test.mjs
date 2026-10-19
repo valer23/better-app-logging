@@ -278,7 +278,7 @@ const settle = () => new Promise(r => setImmediate(r));
 test('shellState has the shape the shell reads: live, status, devices, driverMissing, lines, dropped and enabled', () => {
   const { run } = loadLegacy([], { document: stickyDocument() });
   const st = run('shellState()');
-  assert.deepEqual(Object.keys(st).sort(), ['buffered', 'cur', 'devices', 'driverMissing', 'dropped', 'enabled', 'gridShown', 'lines', 'live', 'maxRetained', 'noDevice', 'paused', 'sessions', 'status']);
+  assert.deepEqual(Object.keys(st).sort(), ['buffered', 'cleared', 'cur', 'devices', 'driverMissing', 'dropped', 'enabled', 'gridShown', 'levels', 'lines', 'live', 'maxRetained', 'noDevice', 'paused', 'query', 'sessions', 'status', 'tag']);
   assert.deepEqual([st.cur === run('liveSession'), st.sessions[0] === run('liveSession'), st.sessions[1] === run('fileSession')], [true, true, true]);
   assert.equal(st.dropped, run('liveSession.dropped'), 'the same object, so a drop shows without a copy');
   assert.equal(st.lines, run('wsLines'));

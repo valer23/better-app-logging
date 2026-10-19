@@ -39,6 +39,36 @@ test('pillView: Paused wins over new lines, singular and plural, thin-space grou
   assert.equal(v({ below: -2 }), null);
 });
 
+test('emptyView: no matches with each spec cause in order and its fix; after Clear; streaming but silent; the phone gone; otherwise none', () => {
+  const v = o => G.emptyView({ kind: 'live', all: 0, shown: 0, cleared: false, paused: false, levelsOff: false, devicesOff: false, tag: '', query: false, waiting: [], gone: [], ...o });
+  const m = v({ all: 48310 });
+  assert.deepEqual([m.title, m.desc, m.fix, m.reset, m.icon, m.spin], ['No lines match this filter', '0 of 48\u2009310 lines in view. No retained line matches the level and device chips.', null, true, 'search-x', false]);
+  assert.deepEqual([v({ all: 5, levelsOff: true, devicesOff: true, tag: 'x' }).fix, v({ all: 5, levelsOff: true }).fixLabel], ['levels', 'Turn levels back on'], 'levels first');
+  assert.deepEqual([v({ all: 5, devicesOff: true, tag: 'x' }).fix, v({ all: 5, devicesOff: true }).desc], ['devices', '0 of 5 lines in view. Both devices are hidden.']);
+  assert.deepEqual([v({ all: 5, tag: 'bt_stack' }).desc, v({ all: 5, tag: 'bt_stack' }).fixLabel], ['0 of 5 lines in view. No retained line matches tag:bt_stack.', 'Remove tag:bt_stack']);
+  assert.deepEqual([v({ all: 5, query: true }).desc, v({ all: 5, query: true }).fix, v({ all: 5, query: true }).reset, v({ all: 5, query: true }).say, v({ all: 5, tag: 'x', query: true }).fix],
+    ['0 of 5 lines in view.', null, true, 'No lines match this filter.', 'tag'], 'the search or PID / App field filters: the count and Reset filter, no invented cause; a tag still names itself');
+  assert.equal(v({ all: 5, shown: 1 }), null, 'rows show: no tile');
+  assert.equal(v({ kind: 'file' }), null, 'an empty file session shows the dropzone');
+  assert.equal(v({ kind: 'file', all: 3 }).title, 'No lines match this filter', 'a filtered-out file still says why');
+  const c = v({ cleared: true, waiting: ['Pixel 8 Pro'] });
+  assert.deepEqual([c.title, c.desc, c.icon, c.spin, c.skeleton], ['Waiting for new lines…', 'The view was cleared. New lines appear here as they arrive.', 'loader', true, false], 'Clear wins over waiting');
+  const w = v({ waiting: ['Pixel 8 Pro', 'iPhone 15'] });
+  assert.deepEqual([w.title, w.desc, w.skeleton, w.reset], ['Waiting for the first lines from Pixel 8 Pro and iPhone 15…', '', true, false]);
+  assert.equal(v({ waiting: ['iPhone 15'], paused: true }), null, 'paused: the lines are buffered, the paused pill says so');
+  assert.equal(v({ cleared: true }), null, 'Clear with nothing streaming: the device panel shows instead (#70)');
+  const g = v({ gone: ['iPhone 15'] });
+  assert.deepEqual([g.title, g.desc, g.icon, g.spin, g.skeleton, g.reset, g.say], ['iPhone 15 was unplugged', 'Plug it back in to continue.', 'unplug', false, false, false, 'iPhone 15 was unplugged.'],
+    'the open stream\'s phone is gone (noDevice, #70): the spec\'s Disconnected copy');
+  const g2 = v({ gone: ['Pixel 8 Pro', 'iPhone 15'] });
+  assert.deepEqual([g2.title, g2.desc], ['Pixel 8 Pro and iPhone 15 were unplugged', 'Plug them back in to continue.']);
+  assert.equal(v({ gone: ['iPhone 15'], cleared: true }).title, 'iPhone 15 was unplugged', 'gone wins over Clear: nothing arrives until it is back');
+  assert.equal(v({ gone: ['iPhone 15'], waiting: ['Pixel 8 Pro'] }).title, 'Waiting for the first lines from Pixel 8 Pro…', 'one device still streams');
+  assert.equal(v({}), null, 'no device and no lines: the device cards (P8: "No logs yet")');
+  assert.equal(v({ all: 9 }).key === v({ all: 10 }).key, false, 'the count is shown, so it is in the key');
+  assert.equal(v({ all: 9 }).say, v({ all: 10 }).say, 'but not in the announcement');
+});
+
 test('rowClass: level and platform in one class string; ASSERT is the F class; unknown levels read as Verbose', () => {
   assert.equal(G.rowClass('ERROR', 'ios'), 'l-e p-i');
   assert.equal(G.rowClass('WARN', 'android'), 'l-w p-a');
@@ -136,12 +166,13 @@ function gridPage({ headerText = false } = {}) {
     assert.equal(hs.length, texts.length);
     hs.forEach((h, i) => { h.textContent = texts[i]; });
   }
-  const st = { cur: { kind: 'live', filtered: [] }, gridShown: true };
+  const st = { cur: { kind: 'live', all: [], filtered: [] }, live: { android: false, ios: false }, noDevice: { android: false, ios: false },
+    enabled: new Set(['android', 'ios']), levels: 6, tag: '', query: false, cleared: false, paused: false, gridShown: true };
   const ticks = [];
   const calls = [];
-  const shell = { onTick: fn => ticks.push(fn) };
+  const shell = { onTick: fn => ticks.push(fn), devices: () => ({ android: { name: 'Pixel 8 Pro' }, ios: { name: 'iPhone 15' } }) };
   const actions = new Proxy({}, { get: (o, k) => (...a) => calls.push([k, ...a]) });
-  const grid = p.ALV.createGrid({ doc: p.doc, dom: p.dom, keys: p.keys, shell, state: () => st, actions });
+  const grid = p.ALV.createGrid({ doc: p.doc, dom: p.dom, ui: p.ui, keys: p.keys, shell, state: () => st, actions });
   const ths = p.byId.headerRow.children;
   const cols = p.byId.colgroup.children;
   const seps = ths.flatMap(th => th.children.filter(c => c.attrs.role === 'separator'));
@@ -249,13 +280,13 @@ test('aria-rowcount: filtered lines plus the header row, written on sync and on 
   let writes = 0;
   const real = t.setAttribute.bind(t);
   t.setAttribute = (k, v) => { if (k === 'aria-rowcount') writes++; real(k, v); };
-  st.cur = { filtered: new Array(48310) };
+  st.cur = { kind: 'live', all: new Array(48310), filtered: new Array(48310) };
   grid.sync();
   assert.equal(t.attrs['aria-rowcount'], '48311');
   assert.equal(ticks.length, 1, 'the grid follows the shell tick (twice a second), not the drain');
   for (let i = 0; i < 10; i++) ticks[0]();
   assert.equal(writes, 1, 'unchanged: no write');
-  st.cur = { filtered: [] };
+  st.cur = { kind: 'live', all: [], filtered: [] };
   ticks[0]();
   assert.deepEqual([t.attrs['aria-rowcount'], writes], ['1', 2]);
 });
@@ -348,10 +379,10 @@ test('stream keys: Space pauses and F toggles Follow only with the grid focused,
   assert.equal(press(p, t, 'f', { code: 'KeyF' }), 'stream.follow');
   assert.equal(press(p, p.byId.clearBtn, ' ', { code: 'Space' }), null, 'outside the grid Space is the focused control\'s');
   assert.equal(press(p, p.byId.filterbar, 'f', { code: 'KeyF' }), null, 'a single key never fires outside the grid (WCAG 2.1.4)');
-  st.cur = { kind: 'file', filtered: [] };
+  st.cur = { kind: 'file', all: [], filtered: [] };
   assert.equal(press(p, t, ' ', { code: 'Space' }), null, 'a file session has nothing to pause: Space scrolls');
   assert.equal(press(p, t, 'f', { code: 'KeyF' }), null);
-  st.cur = { kind: 'live', filtered: [] };
+  st.cur = { kind: 'live', all: [], filtered: [] };
   p.keys.setSingleKeys(false);
   assert.equal(press(p, t, ' ', { code: 'Space' }), null, 'single keys can be switched off (Settings → Shortcuts, P14)');
   assert.deepEqual(calls.map(c => c[0]), ['togglePause', 'toggleAutoScroll']);
@@ -362,4 +393,43 @@ test('stream keys: Pause and Follow carry aria-keyshortcuts and show their key i
   assert.deepEqual([p.byId.pauseBtn.getAttribute('aria-keyshortcuts'), p.byId.pauseKbd.textContent], ['Space', 'Space']);
   assert.deepEqual([p.byId.autoScrollBtn.getAttribute('aria-keyshortcuts'), p.byId.followKbd.textContent], ['End Meta+ArrowDown', 'End']);
   assert.equal(p.keys.label('stream.follow'), 'F');
+});
+
+// ---- Empty states (P5b) ----
+test('empty tile: written only when it changes, announced only when its cause does; the fix and Reset filter call resetFilter', () => {
+  const { p, grid, st, calls } = gridPage();
+  const $ = id => p.byId[id];
+  grid.syncEmpty();
+  assert.equal($('gridEmpty').hidden, true, 'nothing to say: hidden');
+  st.cur = { kind: 'live', all: new Array(500), filtered: [] };
+  st.levels = 0;
+  grid.syncEmpty();
+  assert.deepEqual([$('gridEmpty').hidden, $('gridEmptyTitle').textContent, $('gridEmptyDesc').textContent, $('gridEmptyFix').textContent, $('gridEmptyFix').hidden, $('gridEmptyReset').hidden],
+    [false, 'No lines match this filter', '0 of 500 lines in view. All levels are turned off.', 'Turn levels back on', false, false]);
+  assert.deepEqual([$('gridEmptyUse').getAttribute('href'), $('gridEmptyIcon').getAttribute('class'), $('gridEmptySkel').hidden], ['#i-search-x', 'icon', true]);
+  p.advance(6000);
+  assert.equal($('announcer').textContent, 'No lines match this filter. All levels are turned off.');
+  $('gridEmptyFix').click();
+  $('gridEmptyReset').click();
+  assert.deepEqual(calls.filter(c => c[0] === 'resetFilter'), [['resetFilter', 'levels'], ['resetFilter', 'all']]);
+  let writes = 0;
+  const title = $('gridEmptyTitle');
+  const desc = Object.getOwnPropertyDescriptor(title, 'textContent');
+  Object.defineProperty(title, 'textContent', { get: () => desc.value, set: x => { writes++; desc.value = x; } });
+  for (let i = 0; i < 5; i++) grid.syncEmpty();
+  assert.equal(writes, 0, 'unchanged: no write (it runs once per flush)');
+  st.cur = { kind: 'live', all: [], filtered: [] };
+  st.levels = 6;
+  st.live = { android: false, ios: true };
+  grid.syncEmpty();
+  assert.deepEqual([$('gridEmptyTitle').textContent, $('gridEmptyDesc').hidden, $('gridEmptySkel').hidden, $('gridEmptyIcon').getAttribute('class'), $('gridEmptyFix').hidden, $('gridEmptyReset').hidden],
+    ['Waiting for the first lines from iPhone 15…', true, false, 'icon spin', true, true]);
+  st.noDevice = { android: false, ios: true };   // #70: the bridge reported the phone gone, the socket stays open
+  grid.syncEmpty();
+  assert.deepEqual([$('gridEmptyTitle').textContent, $('gridEmptyDesc').textContent, $('gridEmptyDesc').hidden, $('gridEmptySkel').hidden, $('gridEmptyUse').getAttribute('href'), $('gridEmptyIcon').getAttribute('class')],
+    ['iPhone 15 was unplugged', 'Plug it back in to continue.', false, true, '#i-unplug', 'icon'], 'not "Waiting for the first lines": the sidebar row reads Disconnected');
+  st.noDevice = { android: false, ios: false };
+  st.cur = { kind: 'live', all: [1], filtered: [1] };
+  grid.syncEmpty();
+  assert.equal($('gridEmpty').hidden, true, 'the first line hides it');
 });

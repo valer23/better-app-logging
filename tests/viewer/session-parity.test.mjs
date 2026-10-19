@@ -814,3 +814,55 @@ test('pill focus: a pointer click drops the pill button focus first (no parking 
   v.run('pillAction({ detail: 1 })');
   assert.notEqual(focusId(v), 'pauseBtn');
 });
+
+// P5b: the grid's empty states (assets/js/grid.js) read these through shellState, and parse failures become a toast.
+test('empty states: Clear on Live says "Waiting for new lines…" until a line arrives; resetFilter turns the filters back on', () => {
+  const v = boot();
+  v.run('iosLive = true');                // a device streams (with none, Clear shows the device panel: #70)
+  v.send(3); v.api.flushBatch();
+  v.api.clearLogs();
+  assert.equal(v.run('shellState().cleared'), true);
+  v.send(1, 3); v.api.flushBatch();
+  assert.equal(v.run('shellState().cleared'), false, 'the first line ends it');
+  v.run("enabledLevels.clear(); enabledPlatforms.delete('ios'); document.getElementById('tagFilter').value = 'bt'; document.getElementById('search').value = 'x'");
+  assert.deepEqual([v.run('shellState().levels'), v.run('shellState().tag'), v.run('shellState().query')], [0, 'bt', true]);
+  v.run("resetFilter('levels')");
+  assert.deepEqual([v.run('enabledLevels.size'), v.run('enabledPlatforms.size'), v.doc.getElementById('tagFilter').value], [6, 1, 'bt'], 'one fix at a time');
+  v.run("resetFilter('all')");
+  assert.deepEqual([v.run('enabledPlatforms.size'), v.doc.getElementById('tagFilter').value, v.doc.getElementById('search').value, v.doc.getElementById('pidFilter').value], [2, '', '', '']);
+  assert.equal(v.run('shellState().query'), false);
+  assert.equal(v.run('liveSession.query === filterGen'), true, 'refiltered');
+});
+
+test('a file the viewer cannot read raises an error toast that names it, not an alert', () => {
+  const v = boot();
+  v.run("globalThis.__toasts = []; ALV.ui.toast = s => (__toasts.push(s), { dismiss() {} }); alert = () => { throw new Error('alert'); }");
+  v.go('toFile');
+  v.api.handleFile({ name: 'notes.zip', text: 'nothing here' });
+  v.api.handleFile({ name: 'bad.json', text: '{ broken' });
+  assert.deepEqual(JSON.parse(JSON.stringify(v.run('__toasts'))), [
+    { kind: 'error', title: "Can't read notes.zip", desc: 'Use .logcat, .txt, .csv or .json.' },
+    { kind: 'error', title: "Can't read bad.json", desc: 'Use .logcat, .txt, .csv or .json.' },
+  ]);
+  assert.equal(display(v, 'dropzone'), '', 'the dropzone stays, to try another file');
+});
+
+test('empty states keep #70: Clear with nothing streaming shows the device panel and no tile; Clear while streaming keeps the grid; a phone gone says so', () => {
+  const v = boot();
+  const tile = () => (v.doc.getElementById('gridEmpty').hidden ? '' : v.text('gridEmptyTitle'));
+  v.doc.hidden = false;                   // a hidden window skips the per-flush refresh (the tick catches up)
+  v.send(3); v.api.flushBatch();
+  v.run('refreshLiveView()');
+  assert.deepEqual([display(v, 'logWrapper'), v.run('shellState().gridShown'), tile()], ['', true, ''], 'lines kept, nothing streaming: the grid, and End and Home act on it');
+  v.api.clearLogs();
+  assert.deepEqual([display(v, 'livePanel'), v.run('shellState().gridShown'), v.run('shellState().cleared'), tile()], ['', false, false, ''], 'the device panel, not "Waiting for new lines…"');
+  v.run('iosLive = true; refreshLiveView()');
+  assert.deepEqual([display(v, 'logWrapper'), tile()], ['', 'Waiting for the first lines from iPhone…'], 'a device streaming but silent');
+  v.send(2, 3); v.api.flushBatch();
+  v.api.clearLogs();
+  assert.deepEqual([display(v, 'logWrapper'), tile()], ['', 'Waiting for new lines…'], 'Clear while streaming keeps the (empty) grid');
+  v.run("setNoDevice('ios', true)");
+  assert.equal(tile(), 'iPhone was unplugged', 'noDevice: the sidebar row reads Disconnected, the badge is idle, the grid says why it is empty');
+  v.send(1, 5); v.api.flushBatch();
+  assert.equal(tile(), '', 'a line hides it');
+});

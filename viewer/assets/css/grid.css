@@ -112,6 +112,18 @@
   /* Paused (spec "States"): a 2 px --warn line at the top of the grid, over the header. */
   #logWrapper.is-paused::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 2px; z-index: 7; background: var(--warn); pointer-events: none; }
 
+  /* Empty states (spec "Log grid"): a tile under the header, over the empty table, with six skeleton rows (one
+     gradient, no row nodes) while a device streams but no line came yet. */
+  #gridEmpty { --rh: max(18px, calc(var(--log-fs) * var(--row-k))); position: absolute; top: 28px; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; align-items: center; gap: 24px; padding: 12px 16px; overflow: hidden; }
+  #gridEmpty[hidden] { display: none; }
+  .grid-skel { align-self: stretch; flex: none; height: calc(var(--rh) * 6); background: repeating-linear-gradient(var(--fill-hover) 0 calc(var(--rh) - 6px), transparent 0 var(--rh)); border-radius: 4px; }
+  .grid-tile { display: flex; flex-direction: column; align-items: center; gap: 8px; max-width: 440px; margin-top: 36px; text-align: center; }
+  .grid-skel:not([hidden]) + .grid-tile { margin-top: 0; }
+  .grid-tile > .icon { width: 24px; height: 24px; color: var(--text-2); }
+  .grid-tile-title { font-size: var(--section-fs); font-weight: 600; }
+  .grid-tile-desc { margin: 0; color: var(--text-2); }
+  .grid-tile-actions { display: flex; gap: 8px; margin-top: 4px; }
+
   /* Search hits (P6 marks the first hit only). */
   .lgrid mark { background: var(--match-bg); color: var(--match-fg); border-radius: 2px; }
 

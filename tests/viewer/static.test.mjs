@@ -956,6 +956,15 @@ test('the pill is opaque in both materials: no rule gives it a backdrop-filter, 
     'the grid is opaque, and so is what floats over it (roadmap §5.1)');
 });
 
+test('empty states: one tile in #logWrapper under the header, filled by grid.js; the legacy file alerts are gone', () => {
+  const tile = findById(root, 'gridEmpty');
+  assert.deepEqual([tile.parent.attrs.id, 'hidden' in tile.attrs], ['logWrapper', true]);
+  for (const id of ['gridEmptySkel', 'gridEmptyIcon', 'gridEmptyUse', 'gridEmptyTitle', 'gridEmptyDesc', 'gridEmptyFix', 'gridEmptyReset']) assert.ok(closestWithin(findById(root, id), '[id=gridEmpty]', root), `#${id}`);
+  assert.equal(gridDecl('#gridEmpty', 'top'), '28px', 'under the 28 px header');
+  assert.equal(gridDecl('#gridEmpty[hidden]', 'display'), 'none', 'its display: flex must not beat [hidden]');
+  assert.doesNotMatch(inlineScripts(html).at(-1).code, /alert\('(No log lines found|Failed to parse file)/);
+});
+
 test('column resize lives in grid.js: the legacy initResizeHandles and its .col-resize-handle are gone', () => {
   const code = inlineScripts(html).at(-1).code;
   assert.doesNotMatch(code, /initResizeHandles|col-resize-handle/);

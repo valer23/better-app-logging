@@ -57,14 +57,58 @@
     return null;
   }
 
+  // The grid's empty state (spec "Log grid", empty states), or null while it shows rows. e: { kind, all, shown,
+  // cleared (no line since a Clear), paused, levelsOff, devicesOff, tag (the tag filter), query (the search or PID /
+  // App field filters), waiting: [the names of the devices streaming], gone: [the names of the devices whose stream is
+  // open but whose phone the bridge reported gone (noDevice)] }. → { key, say, icon, spin, title, desc, fix, fixLabel,
+  // reset, skeleton }: key changes when anything shown changes, say (the announcement) only when the state or its
+  // cause does. fix is what the fix button resets: 'levels' | 'devices' | 'tag' | null. An empty file session shows
+  // the dropzone, and an empty live session with no open stream the device panel (refreshLiveView, #70): no tile.
+  function emptyView(e) {
+    const { num } = g.ALV.shellPure;
+    if (e.shown > 0) return null;
+    const none = { fix: null, fixLabel: '', reset: false, skeleton: false, desc: '' };
+    if (e.all > 0) {
+      const [cause, fix, fixLabel] = e.levelsOff ? ['All levels are turned off.', 'levels', 'Turn levels back on']
+        : e.devicesOff ? ['Both devices are hidden.', 'devices', 'Show both devices']
+          : e.tag ? [`No retained line matches tag:${e.tag}.`, 'tag', `Remove tag:${e.tag}`]
+            // The search or PID / App field filters too: the chips are not the cause, and the spec's query causes
+            // (NOT tag, tag:x chips) are P6's, so the tile shows the count and Reset filter only.
+            : e.query ? ['', null, '']
+              : ['No retained line matches the level and device chips.', null, ''];
+      const tail = cause ? ` ${cause}` : '';
+      const desc = `0 of ${num(e.all)} lines in view.${tail}`;
+      return { ...none, key: `match|${desc}`, say: `No lines match this filter.${tail}`, icon: 'search-x', spin: false,
+        title: 'No lines match this filter', desc, fix, fixLabel, reset: true };
+    }
+    if (e.kind !== 'live') return null;
+    // Every open stream's phone is gone (noDevice: the sidebar row reads Disconnected, the badge is idle): the spec's
+    // Disconnected copy, without the time it was unplugged (not recorded). No button: the bridge resumes by itself.
+    if (e.gone.length && !e.waiting.length) {
+      const title = `${e.gone.join(' and ')} ${e.gone.length > 1 ? 'were' : 'was'} unplugged`;
+      return { ...none, key: `gone|${title}`, say: `${title}.`, icon: 'unplug', spin: false, title,
+        desc: `Plug ${e.gone.length > 1 ? 'them' : 'it'} back in to continue.` };
+    }
+    // After Clear, while a device streams. With nothing streaming, Clear shows the device panel instead (#70).
+    if (e.cleared && e.waiting.length) {
+      return { ...none, key: 'cleared', say: 'Waiting for new lines…', icon: 'loader', spin: true, title: 'Waiting for new lines…',
+        desc: 'The view was cleared. New lines appear here as they arrive.' };
+    }
+    if (e.waiting.length && !e.paused) {
+      const title = `Waiting for the first lines from ${e.waiting.join(' and ')}…`;
+      return { ...none, key: `wait|${title}`, say: title, icon: 'loader', spin: true, title, skeleton: true };
+    }
+    return null;
+  }
+
   // ---- DOM ----
 
-  // createGrid({ doc, dom, keys, shell, state, actions }) → { sync() }. Adds a resize separator on each RESIZABLE
-  // boundary of #headerRow, makes the scroller the shortcut registry's grid root, binds the stream keys and keeps
-  // aria-rowcount current. state() is the legacy shellState(); actions are legacy functions: jumpToEnd,
-  // jumpToOldest, togglePause, toggleAutoScroll, updateNewerPill.
-  function createGrid({ doc, dom, keys, shell, state, actions }) {
-    const { setAttr, setText } = g.ALV.shellPure;   // shell.js loads first
+  // createGrid({ doc, dom, ui, keys, shell, state, actions }) → { sync(), syncEmpty() }. Adds a resize separator on
+  // each RESIZABLE boundary of #headerRow, makes the scroller the shortcut registry's grid root, binds the stream
+  // keys, keeps aria-rowcount current and shows the empty states. state() is the legacy shellState(); actions are
+  // legacy functions: jumpToEnd, jumpToOldest, togglePause, toggleAutoScroll, updateNewerPill, resetFilter(what).
+  function createGrid({ doc, dom, ui, keys, shell, state, actions }) {
+    const { setAttr, setText, setHidden } = g.ALV.shellPure;   // shell.js loads first
     const $ = id => doc.getElementById(id);
     const table = $('logTableEl');
     const scroller = $('logTable');
@@ -165,19 +209,58 @@
       if (tr && tr._message && tr._message.ts) td.title = String(tr._message.ts);
     });
 
+    // ---- Empty states (spec): no matches (with the cause and its fix), after Clear, a device streaming but silent.
+    // updateNewerPill (once per flush) and sync call this; it writes only when the tile changes and announces only
+    // when the state or its cause does (ui.announce: at most once per 5 s). ----
+    let emptyKey = null;
+    let emptySaid = '';
+    let emptyFix = null;
+    const fixBtn = $('gridEmptyFix');
+    if (fixBtn) fixBtn.addEventListener('click', () => { if (emptyFix) actions.resetFilter(emptyFix); });
+    if ($('gridEmptyReset')) $('gridEmptyReset').addEventListener('click', () => actions.resetFilter('all'));
+    function syncEmpty() {
+      const st = state();
+      const dev = shell.devices();
+      const name = p => (dev[p] && dev[p].name) || (p === 'ios' ? 'iPhone' : 'Android device');
+      // An open stream whose phone the bridge reported gone (noDevice) is not streaming: the toolbar badge and the
+      // sidebar row say the same (#70).
+      const open = ['android', 'ios'].filter(p => st.live[p]);
+      const waiting = open.filter(p => !st.noDevice[p]).map(name);
+      const gone = open.filter(p => st.noDevice[p]).map(name);
+      const v = emptyView({ kind: st.cur.kind, all: st.cur.all.length, shown: st.cur.filtered.length, cleared: st.cleared, paused: st.paused,
+        levelsOff: st.levels === 0, devicesOff: st.enabled.size === 0, tag: st.tag, query: !!st.query, waiting, gone });
+      const key = v ? v.key : '';
+      if (key === emptyKey) return;
+      emptyKey = key;
+      setHidden($('gridEmpty'), !v);
+      if (!v) { emptySaid = ''; return; }
+      setAttr($('gridEmptyIcon'), 'class', v.spin ? 'icon spin' : 'icon');
+      setAttr($('gridEmptyUse'), 'href', `#i-${v.icon}`);
+      setText($('gridEmptyTitle'), v.title);
+      setText($('gridEmptyDesc'), v.desc);
+      setHidden($('gridEmptyDesc'), !v.desc);
+      emptyFix = v.fix;
+      setText(fixBtn, v.fixLabel);
+      setHidden(fixBtn, !v.fix);
+      setHidden($('gridEmptyReset'), !v.reset);
+      setHidden($('gridEmptySkel'), !v.skeleton);
+      if (v.say !== emptySaid) { emptySaid = v.say; ui.announce(v.say); }
+    }
+
     // ---- aria-rowcount (spec): the shown session's filtered lines plus the header row. Written on shellSync and the
     // shell's tick (twice a second), never from the drain, and only when it changed. The tick also refreshes the
-    // paused pill's count: a paused stream runs no flush. ----
+    // paused pill's count (a paused stream runs no flush) and the empty state. ----
     function sync() {
       setAttr(table, 'aria-rowcount', String(state().cur.filtered.length + 1));
       ring();
       actions.updateNewerPill();
+      syncEmpty();
     }
     shell.onTick(sync);
-    return { sync };
+    return { sync, syncEmpty };
   }
 
   const ALV = g.ALV || (g.ALV = {});
-  ALV.gridPure = Object.freeze({ timeOf, rowClass, ROW_CLASS, LEVEL_CLASS: Object.freeze(LEVEL_CLASS), RESIZABLE, COL_MIN, COL_MAX, clampCol, resizeKey, pillView });
+  ALV.gridPure = Object.freeze({ timeOf, rowClass, ROW_CLASS, LEVEL_CLASS: Object.freeze(LEVEL_CLASS), RESIZABLE, COL_MIN, COL_MAX, clampCol, resizeKey, pillView, emptyView });
   ALV.createGrid = createGrid;
 })(typeof window !== 'undefined' ? window : globalThis);
