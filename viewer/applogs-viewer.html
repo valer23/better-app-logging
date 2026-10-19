@@ -435,6 +435,9 @@ const liveStatus = { android: { state: 'disconnected', text: 'Disconnected' }, i
 const deviceInfo = { android: { id: '', name: '' }, ios: { id: '', name: '' } };
 let iosDriverMissing = false;
 let androidLive = false, iosLive = false;
+// The device detection a Start streaming is waiting on, per platform (detectThenConnect); null when none.
+const detecting = { android: null, ios: null };
+const DETECT_TIMEOUT_MS = 8000;   // /devices/ios runs idevice_id + ideviceinfo with no timeout of its own
 let livePaused = false;
 let pendingBatch = [], batchTimer = null;   // the live ingest queue: one drain, into the live session
 const PAGE = 500;
@@ -1056,10 +1059,31 @@ function noteFrame(e, platform) {
   else if (platform === 'ios' && shell && d.startsWith('{"type":"error"') && d.toLowerCase().includes('stalled')) shell.markStalled('ios');
 }
 
+// Start streaming with no device in the picker: run the platform's detection, then connect if it found one, else
+// "No device". The pickers are filled only at startup and by the legacy card's ↻, and the card is hidden once any
+// stream shows, so a device plugged in after launch could never start. Detecting shows as Connecting… (the
+// sidebar row is busy). One detection per platform at a time; a Stop meanwhile (disconnect*) drops it. No polling (P8).
+async function detectThenConnect(platform) {
+  if (detecting[platform]) return;                     // a second Start while detecting
+  const android = platform === 'android';
+  const token = detecting[platform] = {};
+  setStatus(platform, 'connecting', 'Connecting…');
+  document.getElementById(android ? 'androidBtn' : 'iosBtn').disabled = true;
+  const load = (android ? loadAndroidDevices() : loadIosDevices()).catch(e => console.warn('[detectThenConnect]', e));
+  await Promise.race([load, new Promise(r => setTimeout(r, DETECT_TIMEOUT_MS))]);
+  if (detecting[platform] !== token) return;           // stopped meanwhile
+  detecting[platform] = null;
+  const sel = document.getElementById(android ? 'androidDeviceSelect' : 'iosDeviceSelect');
+  if (sel && sel.value) { if (android) connectAndroid(); else connectIos(); return; }
+  resetConnectBtn(platform);
+  setStatus(platform, 'error', 'No device');
+  setTimeout(() => { const s = liveStatus[platform]; if (s.state === 'error' && s.text === 'No device') setStatus(platform, 'disconnected', 'Disconnected'); }, 1500);
+}
+
 // ── WebSocket: Android ──
 function connectAndroid() {
   const sel = document.getElementById('androidDeviceSelect');
-  if (!sel || !sel.value) { setStatus('android','error','No device'); setTimeout(() => setStatus('android','disconnected','Disconnected'), 1500); return; }
+  if (!sel || !sel.value || detecting.android) { detectThenConnect('android'); return; }   // nothing picked yet, or a detection in flight
   setStatus('android', 'connecting', 'Connecting…');
   document.getElementById('androidBtn').disabled = true;
   wsAndroid = new WebSocket('ws://localhost:8765');
@@ -1077,6 +1101,7 @@ function disconnectAndroid() {
     wsAndroid.close();
     wsAndroid = null;
   }
+  detecting.android = null;   // a Stop drops a pending Start
   resetConnectBtn('android');
   androidLive = false;
   setStatus('android','disconnected','Disconnected');
@@ -1088,7 +1113,7 @@ function toggleAndroid() { androidLive ? disconnectAndroid() : connectAndroid();
 // ── WebSocket: iOS ──
 function connectIos() {
   const sel = document.getElementById('iosDeviceSelect');
-  if (!sel || !sel.value) { setStatus('ios','error','No device'); setTimeout(() => setStatus('ios','disconnected','Disconnected'), 1500); return; }
+  if (!sel || !sel.value || detecting.ios) { detectThenConnect('ios'); return; }   // nothing picked yet, or a detection in flight
   setStatus('ios', 'connecting', 'Connecting…');
   document.getElementById('iosBtn').disabled = true;
   wsIos = new WebSocket('ws://localhost:8766');
@@ -1104,6 +1129,7 @@ function disconnectIos() {
     wsIos.close();
     wsIos = null;
   }
+  detecting.ios = null;   // a Stop drops a pending Start
   resetConnectBtn('ios');
   iosLive = false;
   setStatus('ios','disconnected','Disconnected');

@@ -299,6 +299,66 @@ test('loadDevices fills deviceInfo on the list, restore, empty and error paths; 
   assert.deepEqual([info().ios, run('shellState().driverMissing')], [NONE, false], 'a failed discovery clears the device; a missing endpoint fails open');
 });
 
+// ---- Start streaming detects when the picker holds no device (a device plugged in after launch) ----
+function startPage() {
+  const page = loadLegacy([], { document: stickyDocument() });
+  page.run(`globalThis.__answers = {}; fetch = url => __answers[url]();
+    globalThis.__sockets = []; WebSocket = function (url) { __sockets.push(url); return {}; };
+    globalThis.__timers = []; setTimeout = (fn, ms) => { __timers.push([fn, ms]); return 0; };
+    __answers['/ios-driver-status'] = () => Promise.resolve({ ok: true, json: () => Promise.resolve({ available: true }) });
+    document.getElementById('androidDeviceSelect').value = ''; document.getElementById('iosDeviceSelect').value = '';`);
+  return { ...page,
+    devices: (p, list) => page.run(`__answers['/devices/${p}'] = () => Promise.resolve({ ok: true, json: () => Promise.resolve({ devices: ${JSON.stringify(list)} }) })`),
+    fire: ms => page.run(`__timers.filter(t => t[1] === ${ms}).forEach(t => t[0]())`),
+    status: p => JSON.parse(JSON.stringify(page.run(`liveStatus.${p}`))),
+    sockets: () => JSON.parse(JSON.stringify(page.run('__sockets'))) };
+}
+
+test('Start streaming with no device picked detects first, then connects an iPhone plugged in while Android streams', async () => {
+  const p = startPage();
+  p.run('androidLive = true');
+  p.devices('ios', [{ id: 'u1', name: 'iPhone 15' }]);
+  p.run('toggleIos()');                                 // the row's Start / More "Start streaming"
+  assert.deepEqual(p.status('ios'), { state: 'connecting', text: 'Connecting…' }, 'detecting: the row is busy');
+  assert.deepEqual(p.sockets(), [], 'no socket before a device is known');
+  await settle();
+  assert.deepEqual(JSON.parse(JSON.stringify(p.run('deviceInfo.ios'))), { id: 'u1', name: 'iPhone 15' });
+  assert.deepEqual(p.sockets(), ['ws://localhost:8766']);
+  assert.deepEqual([p.run('androidLive'), p.run('detecting.ios')], [true, null]);
+});
+
+test('Start streaming keeps "No device" when detection finds none or fails, and opens no socket', async () => {
+  const p = startPage();
+  p.devices('android', []);
+  p.run('toggleAndroid()'); await settle();
+  assert.deepEqual(p.status('android'), { state: 'error', text: 'No device' });
+  assert.equal(p.run(`document.getElementById('androidBtn').disabled`), false, 'the legacy Connect is usable again');
+  p.run(`__answers['/devices/ios'] = () => Promise.resolve({ ok: false, status: 500 })`);
+  p.run('connectIos()'); await settle();
+  assert.deepEqual([p.status('ios'), p.sockets()], [{ state: 'error', text: 'No device' }, []]);
+  p.fire(1500);
+  assert.deepEqual([p.status('android').state, p.status('ios').state], ['disconnected', 'disconnected']);
+});
+
+test('a second Start while detecting opens one socket; a Stop meanwhile drops it; a hung detection gives up', async () => {
+  const p = startPage();
+  p.run(`globalThis.__release = []; __answers['/devices/ios'] = () => new Promise(r => __release.push(() =>
+    r({ ok: true, json: () => Promise.resolve({ devices: [{ id: 'u1', name: 'iPhone 15' }] }) })));`);
+  p.run('toggleIos(); toggleIos()');
+  p.run(`document.getElementById('iosDeviceSelect').value = 'u1'; connectIos()`);   // a startup list lands, then Connect
+  assert.deepEqual([p.run('__release.length'), p.sockets()], [1, []]);
+  p.run('__release[0]()'); await settle();
+  assert.deepEqual(p.sockets(), ['ws://localhost:8766'], 'exactly one socket');
+  p.run(`wsIos = null; document.getElementById('iosDeviceSelect').value = ''; __release = []; connectIos(); disconnectIos();`);
+  p.run('__release[0]()'); await settle();
+  assert.deepEqual([p.sockets().length, p.status('ios').state], [1, 'disconnected'], 'a late answer after Stop connects nothing');
+  p.run(`__timers = []; __release = []; document.getElementById('iosDeviceSelect').value = ''; connectIos();`);   // the late list above filled the picker
+  p.fire(8000); await settle();
+  assert.deepEqual([p.status('ios'), p.run('detecting.ios')], [{ state: 'error', text: 'No device' }, null]);
+  p.run('__release[0]()'); await settle();
+  assert.equal(p.sockets().length, 1, 'the late list fills the picker only');
+});
+
 // ---- The Liquid Glass switch moved into the toolbar's More menu (P4b): setGlass and its startup re-sync ----
 
 // A fetch that records the requests and answers 200.
