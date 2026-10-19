@@ -878,6 +878,31 @@ test('log grid: the focus ring is drawn on #logWrapper (it does not scroll), not
   assert.ok(hc && C.declarations(hc.body).some(d => d.prop === 'outline' && /Highlight/.test(d.value)), 'forced colours drop box-shadow: an outline');
 });
 
+test('log grid: text picked with the mouse shows on every row, the open one included (--accent behind --bg text, both engines)', () => {
+  // The foundation paints ::selection with --row-sel, the open row's own background: a pick inside it was invisible.
+  const f = C.cssRules(read(path.join(ASSETS, 'css', 'foundation.css')));
+  const fsel = Object.fromEntries(C.declarations(f.find(r => r.selectors.includes('.app::selection')).body).map(d => [d.prop, d.value]));
+  for (const sel of ['.lgrid > tbody > tr > td::selection', '.lgrid > tbody > tr > td > mark::selection']) {
+    const rules = gridCss().filter(r => r.selectors.includes(sel));
+    assert.equal(rules.length, 1, sel);
+    assert.deepEqual(rules[0].atRules, ['@layer app'], `${sel}: in no @supports or @media, so WebKit (no ::selection inheritance) and Chromium both take it`);
+    assert.equal(gridDecl(sel, 'background'), 'var(--accent)', sel);
+    assert.equal(gridDecl(sel, 'color'), 'var(--bg)', sel);
+    assert.notEqual(gridDecl(sel, 'background'), gridDecl('.lgrid > tbody > tr[aria-selected="true"]', 'background'), `${sel}: not the open row's background`);
+    assert.notEqual(gridDecl(sel, 'background'), fsel.background, `${sel}: not the foundation's --row-sel`);
+  }
+  assert.ok(!gridCss().some(r => r.atRules.some(a => /forced-colors/.test(a)) && r.selectors.some(s => s.includes('::selection'))), 'forced colours keep the system Highlight');
+  const tokens = sel => Object.fromEntries(C.declarations(f.find(r => r.selectors.includes(sel)).body).map(d => [d.prop, d.value]));
+  const lum = hex => hex.slice(1).match(/../g).map(h => parseInt(h, 16) / 255)
+    .map(c => c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4).reduce((s, c, i) => s + c * [0.2126, 0.7152, 0.0722][i], 0);
+  const ratio = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); };
+  for (const theme of ['.app[data-theme="dark"]', '.app[data-theme="light"]']) {
+    const t = tokens(theme);
+    assert.ok(ratio(t['--bg'], t['--accent']) >= 4.5, `${theme}: picked text on the highlight (WCAG 1.4.3)`);
+    for (const k of ['--row-sel', '--bg', '--row-hover', '--tint-w', '--tint-e', '--tint-f']) assert.ok(ratio(t['--accent'], t[k]) >= 3, `${theme}: the highlight against ${k} (WCAG 1.4.11)`);
+  }
+});
+
 test('log grid: the legacy table rules are gone from legacy.css, and no stylesheet keys on [aria-rowcount]', () => {
   const legacy = C.cssRules(read(path.join(ASSETS, 'css', 'legacy.css'))).flatMap(r => r.selectors);
   const stale = legacy.filter(s => /(^|[\s>(])(table|thead|tbody|td|th|mark)\b|plat-badge|lvl-badge|col-resize-handle|new-row|plat-cell|lg-msg|lg-app|#logWrapper|\.(ts|pid|tag)(?![\w-])/.test(s));

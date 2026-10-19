@@ -76,6 +76,13 @@
   .lgrid > tbody > tr[aria-selected="true"] > td.c-plat { box-shadow: inset 3px 0 0 var(--accent); }
   .lgrid > tbody > tr[aria-selected="true"] > td.c-msg { white-space: pre-wrap; word-break: break-all; }
 
+  /* Text picked with the mouse. The foundation's ::selection is --row-sel, the open row's own background, so a pick
+     inside it vanished (and on other rows it is 1.2:1 against --bg). --accent behind --bg text: 7.3:1 dark, 7.1:1 light,
+     and at least 5.9:1 against --row-sel, --row-hover and the W/E/F tints. Per element and outside WebKit's @supports
+     block: WebKit does not pass ::selection down (so a cell's own rule, and one for its <mark>), and Chromium takes it too.
+     Forced colours keep the system Highlight. */
+  .lgrid > tbody > tr > td::selection, .lgrid > tbody > tr > td > mark::selection { background: var(--accent); color: var(--bg); }
+
   /* Platform badge (spec "Sizes": max(18px, log size × 1.3)), the badge cell's ::before: no node per row. The
      alternative text after the slash is what a screen reader reads; a WebKit without it keeps the first value. The
      badge is block-level, out of the cell's line box: an inline badge at vertical-align: middle sits about 5 px below
