@@ -1,0 +1,48 @@
+name: PR Agent
+
+# Self-hosted PR-Agent (https://github.com/The-PR-Agent/pr-agent): auto /describe + /review on
+# every non-draft PR, and on-demand slash commands (/improve, /ask "...", /review) in PR comments.
+# Behaviour (model, review focus, ignored paths, release-PR skip) lives in .pr_agent.toml, which
+# PR-Agent reads from the default branch.
+#
+# Requires the OPENAI_KEY repository secret (Settings > Secrets and variables > Actions).
+#
+# `pull_request` (not `pull_request_target`): fork PRs get no secrets, so they are not reviewed,
+# and an outside contributor cannot run a workflow holding the OpenAI key.
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: pr-agent-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  pr_agent:
+    name: PR Agent
+    # PR events: skip bots and drafts. Comment events: only PR comments, only from people with
+    # write-level association, so a drive-by commenter cannot spend API credits.
+    if: >-
+      github.event.sender.type != 'Bot' && (
+        (github.event_name == 'pull_request' && !github.event.pull_request.draft) ||
+        (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: PR Agent
+        uses: The-PR-Agent/pr-agent@981344be2755e303df501e18e3f60b848a188a80 # v0.48.0
+        env:
+          OPENAI_KEY: ${{ secrets.OPENAI_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          github_action_config.auto_describe: "true"
+          github_action_config.auto_review: "true"
+          # /improve stays on demand (comment `/improve` on the PR), matching .pr_agent.toml.
+          github_action_config.auto_improve: "false"

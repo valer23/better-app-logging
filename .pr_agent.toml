@@ -1,21 +1,23 @@
-# Qodo Merge (PR-Agent) configuration.
-# Docs: https://qodo-merge-docs.qodo.ai/usage-guide/configuration_options/
+# PR-Agent configuration, run as a GitHub Action (.github/workflows/pr-agent.yml).
+# Read from the default branch, so edits take effect once merged to main.
+# Docs: https://github.com/The-PR-Agent/pr-agent/blob/main/pr_agent/settings/configuration.toml
 #
 # Stacked on top of: GitHub Actions CI (.github/workflows/ci.yml),
 # GitGuardian, and on-demand code-reviewer subagents.
 
 [config]
-# Use the strongest reasoning model available; fall back gracefully.
-model = "gpt-5"
-fallback_models = ["gpt-4.1", "claude-3-7-sonnet-20250219"]
+# OpenAI only (the workflow passes OPENAI_KEY). No fallback: a failed call surfaces as a
+# failed Action run instead of silently switching to a different model.
+model = "gpt-5.6-luna"
+fallback_models = []
 # Verbose 0 = terse output. We prefer concise PR comments.
 verbosity_level = 0
 # Publish reviews as PR comments (default).
 publish_output = true
-# Skip the marketing footer Qodo appends to every comment.
+# Skip the marketing footer PR-Agent appends to every comment.
 ai_disclaimer_title = ""
 ai_disclaimer = ""
-# Skip Qodo on release PRs — they're pure version bumps (Cargo.toml +
+# Skip PR-Agent on release PRs — they're pure version bumps (Cargo.toml +
 # Cargo.lock + tauri.conf.json), so a code review burns a paid credit for
 # zero signal. Belt-and-braces: match both the branch convention and the
 # commit/PR title convention. Both keys accept regex patterns and MUST
@@ -88,7 +90,7 @@ Avoid suggestions that:
 [ignore]
 # Don't burn tokens reviewing build outputs, vendored binaries, or generated bindings.
 # Cargo.lock is intentionally NOT ignored — committed lockfile + no dependency-audit
-# step in CI means we want Qodo to flag unexpected resolution shifts.
+# step in CI means we want PR-Agent to flag unexpected resolution shifts.
 glob = [
   "src-tauri/target/**",
   "src-tauri/vendor/**",
