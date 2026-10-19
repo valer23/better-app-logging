@@ -61,19 +61,28 @@
     return { state, tone, text, drops: s.dropped > 0 ? `${num(s.dropped)} dropped` : '' };
   }
 
-  // The one-time Quiet system noise hint: step() is true once, the first time `rate` has stayed above `over`
-  // lines/s for `forMs` while armed. A dip, or disarming, restarts the clock.
+  // The one-time Quiet system noise hint: step() is true once, the first time the volume over the last `forMs`
+  // averages more than `over` lines/s while armed. It judges a window of a running count (lines received plus
+  // lines the backend dropped), not each sample, so a bursty phone and a viewer that falls behind both count.
+  // Disarming restarts the window. rate() is the last window average, in lines/s.
   function createLoudWatch({ over = 3000, forMs = 10000 } = {}) {
-    let since = null;
+    const samples = [];
     let fired = false;
+    let avg = 0;
     return {
-      step(t, rate, armed) {
-        if (fired || !armed || !(rate > over)) { since = null; return false; }
-        if (since === null) since = t;
-        if (t - since < forMs) return false;
+      step(t, total, armed) {
+        if (fired || !armed) { samples.length = 0; return false; }
+        samples.push({ t, total });
+        while (samples.length > 2 && t - samples[1].t >= forMs) samples.shift();
+        const a = samples[0];
+        const span = t - a.t;
+        if (span < forMs) return false;
+        avg = (total - a.total) * 1000 / span;
+        if (avg <= over) return false;
         fired = true;
         return true;
       },
+      rate() { return avg; },
     };
   }
 
@@ -106,6 +115,9 @@
   // The iOS bridge calls a stream stalled after this many seconds of silence (STREAM_STALL_TIMEOUT_SECS in
   // src-tauri/src/bridge/ios.rs). The row says exactly this: spec "Stalled 15 s", not a running timer.
   const STALL_SECONDS = 15;
+  // …and this many while Quiet system noise is on (QUIET_STALL_TIMEOUT_SECS): -q hides most lines, so a locked
+  // or idle phone is silent for longer on a healthy stream.
+  const STALL_SECONDS_QUIET = 60;
   const TICK_MS = 500;   // the counts and rates refresh twice a second (spec: at most 4 times), off the drain
   const LOUD_RATE = 3000;   // the hint: the iPhone sends more than this many lines/s…
   const LOUD_MS = 10000;    // …for this long, with Quiet system noise off
@@ -270,13 +282,13 @@
     let quietSeq = 0;   // the newest request: an older one that fails must not undo a newer choice
     let hintSeen = prefs.getSettings().iosQuietHint === 'seen';
     prefs.onChange(ps => { quiet = ps.settings.iosQuiet === 'on'; hintSeen = ps.settings.iosQuietHint === 'seen'; });
-    // The one-time hint (spec toasts), on the tick: streaming, not stalled, quiet off, never shown. The flag is
-    // stored before the toast shows.
+    // The one-time hint (spec toasts), on the tick: streaming, not stalled, quiet off, never shown. It counts
+    // lines received plus lines the backend dropped for this client. The flag is stored before the toast shows.
     const loud = createLoudWatch({ over: LOUD_RATE, forMs: LOUD_MS });
     function hintQuiet(st) {
-      if (!loud.step(now(), rates.ios, !!st.live.ios && !stalled.ios && !quiet && !hintSeen && !!devState.ios)) return;
+      if (!loud.step(now(), st.lines.ios + (st.dropped.ios || 0), !!st.live.ios && !stalled.ios && !quiet && !hintSeen && !!devState.ios)) return;
       prefs.patchSettings({ iosQuietHint: 'seen' });
-      ui.toast({ key: 'ios-quiet', kind: 'info', title: `${devState.ios.name} is sending ${num(Math.round(rates.ios / 100) * 100)} lines/s`,
+      ui.toast({ key: 'ios-quiet', kind: 'info', title: `${devState.ios.name} is sending ${num(Math.round(loud.rate() / 100) * 100)} lines/s`,
         desc: 'Quiet system noise drops common iOS system processes before they reach the log.', action: { label: 'Turn on', run: () => setQuiet(true) } });
     }
     function setQuiet(on) {
@@ -355,7 +367,7 @@
     }
     function stalledFor(p, live) {
       if (!live) stalled[p] = false;
-      return stalled[p] ? STALL_SECONDS : -1;
+      return stalled[p] ? (p === 'ios' && quiet ? STALL_SECONDS_QUIET : STALL_SECONDS) : -1;
     }
     function syncDevices(st) {
       let detected = 0;
@@ -459,6 +471,6 @@
   }
 
   const ALV = g.ALV || (g.ALV = {});
-  ALV.shellPure = Object.freeze({ num, fmtRate, createRateMeter, deviceStatus, QUIET_STATES, createLoudWatch, themeView, DRAG_BANDS, STALL_SECONDS, setText, setAttr, setHidden });
+  ALV.shellPure = Object.freeze({ num, fmtRate, createRateMeter, deviceStatus, QUIET_STATES, createLoudWatch, themeView, DRAG_BANDS, STALL_SECONDS, STALL_SECONDS_QUIET, setText, setAttr, setHidden });
   ALV.createShell = createShell;
 })(typeof window !== 'undefined' ? window : globalThis);

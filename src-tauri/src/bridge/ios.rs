@@ -28,6 +28,22 @@ use crate::tooling;
 /// the child lets the outer `spawn` loop reconnect from scratch.
 const STREAM_STALL_TIMEOUT_SECS: u64 = 15;
 
+/// The same, while "Quiet system noise" is on. The watchdog is fed only by lines
+/// that reach stdout, and `-q`/`-e` drop 93-99 % of an iPhone's volume inside
+/// idevicesyslog, so a locked or idle phone can stay silent for longer than 15 s
+/// on a healthy stream. Not yet measured on a locked iPhone with `-q` for minutes
+/// (open item in the PR); the page mirrors this value (`STALL_SECONDS_QUIET`).
+const QUIET_STALL_TIMEOUT_SECS: u64 = 60;
+
+/// The silence that counts as a stall for the current setting.
+fn stall_timeout(quiet: bool) -> Duration {
+    Duration::from_secs(if quiet {
+        QUIET_STALL_TIMEOUT_SECS
+    } else {
+        STREAM_STALL_TIMEOUT_SECS
+    })
+}
+
 const STALL_HINT: &str = concat!(
     "iOS log stream stalled — restarting idevicesyslog. ",
     "If this repeats, the pair record is usually stale: ",
@@ -132,17 +148,25 @@ async fn run_once(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    stream_child(tx, &children::GLOBAL, &mut cmd, changed).await
+    stream_child(
+        tx,
+        &children::GLOBAL,
+        &mut cmd,
+        changed,
+        stall_timeout(quiet),
+    )
+    .await
 }
 
-/// Spawns `cmd` in `reg`, streams its stdout until EOF, a stall or a quiet
-/// change, then kills and reaps it before returning, so two children never
+/// Spawns `cmd` in `reg`, streams its stdout until EOF, `stall_after` of
+/// silence or a quiet change, then kills and reaps it before returning, so two children never
 /// overlap. `reg` is a parameter so the tests use their own registry.
 async fn stream_child(
     tx: &broadcast::Sender<String>,
     reg: &'static Registry,
     cmd: &mut tokio::process::Command,
     changed: &mut watch::Receiver<bool>,
+    stall_after: Duration,
 ) -> Result<Respawn, String> {
     // Registered with `children` so it is killed on app exit — `kill_on_drop`
     // alone never fires there (see children.rs). The registry owns the child
@@ -175,7 +199,7 @@ async fn stream_child(
     let activity = Arc::new(Notify::new());
 
     let read_loop = read_lines(stdout, tx.clone(), activity.clone());
-    let stall_watch = watch_for_stall(activity.clone());
+    let stall_watch = watch_for_stall(activity.clone(), stall_after);
 
     let outcome = tokio::select! {
         r = read_loop => r,
@@ -195,7 +219,10 @@ async fn stream_child(
             Ok(Respawn::Now)
         }
         StreamOutcome::Stalled => {
-            tracing::warn!("[ios] stream stalled after {STREAM_STALL_TIMEOUT_SECS}s — respawning");
+            tracing::warn!(
+                "[ios] stream stalled after {}s — respawning",
+                stall_after.as_secs()
+            );
             emit_error(tx, STALL_HINT);
             // Return Ok so the outer `spawn` loop respawns silently without
             // also emitting a generic "ios bridge error: stream stalled" frame
@@ -300,16 +327,11 @@ async fn read_lines(
 }
 
 /// Arms only after the first ping, then fires if no ping arrives within
-/// `STREAM_STALL_TIMEOUT_SECS`. Caller respawns the child on return.
-async fn watch_for_stall(activity: Arc<Notify>) -> StreamOutcome {
+/// `stall_after`. Caller respawns the child on return.
+async fn watch_for_stall(activity: Arc<Notify>, stall_after: Duration) -> StreamOutcome {
     activity.notified().await;
     loop {
-        match tokio::time::timeout(
-            Duration::from_secs(STREAM_STALL_TIMEOUT_SECS),
-            activity.notified(),
-        )
-        .await
-        {
+        match tokio::time::timeout(stall_after, activity.notified()).await {
             Ok(()) => continue,
             Err(_) => return StreamOutcome::Stalled,
         }
@@ -376,6 +398,15 @@ mod tests {
         assert!(!rx.has_changed().unwrap());
     }
 
+    #[test]
+    fn quiet_waits_longer_before_calling_the_stream_stalled() {
+        assert_eq!(stall_timeout(false), Duration::from_secs(15));
+        assert!(
+            stall_timeout(true) >= Duration::from_secs(60),
+            "-q hides most lines, so silence is normal on an idle phone"
+        );
+    }
+
     #[tokio::test]
     async fn backoff_ends_early_on_a_quiet_change() {
         let (q, mut rx) = watch::channel(false);
@@ -405,7 +436,7 @@ mod tests {
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped())
                     .kill_on_drop(true);
-                stream_child(&tx, reg, &mut cmd, &mut rx).await
+                stream_child(&tx, reg, &mut cmd, &mut rx, stall_timeout(false)).await
             });
             tokio::time::sleep(Duration::from_millis(100)).await;
             assert_eq!(reg.len(), 1, "the child runs");
@@ -423,6 +454,28 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn silence_after_the_first_ping_is_a_stall_after_the_given_time() {
+            let reg = leaked();
+            let (_q, mut rx) = watch::channel(false);
+            let (tx, mut seen) = broadcast::channel::<String>(16);
+            let mut cmd = tokio::process::Command::new("sh");
+            cmd.args(["-c", "echo '[connected:X]'; sleep 30"])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true);
+            let res = tokio::time::timeout(
+                Duration::from_secs(5),
+                stream_child(&tx, reg, &mut cmd, &mut rx, Duration::from_millis(300)),
+            )
+            .await
+            .expect("stall not seen");
+            assert!(matches!(res, Ok(Respawn::AfterBackoff)), "{res:?}");
+            assert_eq!(reg.len(), 0);
+            let frames: Vec<String> = std::iter::from_fn(|| seen.try_recv().ok()).collect();
+            assert!(frames.iter().any(|f| f.contains("stalled")), "{frames:?}");
+        }
+
+        #[tokio::test]
         async fn child_exit_is_an_error_and_is_reaped() {
             let reg = leaked();
             let (_q, mut rx) = watch::channel(false);
@@ -433,7 +486,7 @@ mod tests {
                 .kill_on_drop(true);
             let res = tokio::time::timeout(
                 Duration::from_secs(2),
-                stream_child(&tx, reg, &mut cmd, &mut rx),
+                stream_child(&tx, reg, &mut cmd, &mut rx, stall_timeout(false)),
             )
             .await
             .expect("EOF not seen");

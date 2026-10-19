@@ -66,7 +66,7 @@ Both users get equal weight. Every frequent action has a visible control (QA) an
 | D10 | Onboarding stepper | A 280 px left rail with a vertical stepper and "Step n of 4". | Uses the wide window, and progress stays visible. |
 | D11 | Devices layout | A full-width card list, max 880 px, one card per detected device. Cards expand in place. | Steppers and callouts need width. |
 | D12 | Single-key shortcuts | Active only while the log list has focus, with an off switch (WCAG 2.1.4). A global marker key ⌃⌥M works from any app. | Avoids clashes with typing and screen readers. |
-| D13 | iOS stall timeout | 15 s. | Matches `STREAM_STALL_TIMEOUT_SECS = 15` in the iOS bridge. |
+| D13 | iOS stall timeout | 15 s. | Matches `STREAM_STALL_TIMEOUT_SECS = 15` in the iOS bridge. While Quiet system noise is on it is 60 s (`QUIET_STALL_TIMEOUT_SECS`, row "Stalled 60 s · quiet"): -q hides most lines, so an idle phone is silent on a healthy stream. |
 | D14 | Column order | Platform · Time · Lvl · Tag · App / Device · PID–TID · Message. | The level sits next to the time; PID–TID stays visible. |
 | D15 | Level colour | The message text stays neutral. Level colour goes on the letter, the 3 px stripe (W, E, F), a row tint (W, E, F) and the chip. "Color whole line by level" is opt-in. | Readability. Every level colour passes on every row background anyway. |
 | D16 | Glass opacity | Chrome alpha 0.80 dark, 0.78 light. Tinted fills always mix over the opaque surface. | Measured: tints directly on glass failed. |
@@ -711,7 +711,7 @@ Bottom right, 16 px above the status bar (shifted left of an open drawer), 356 w
 | Quiet system noise on | info | Quiet system noise on | Lines from common iOS system processes are dropped before they reach the log, so exports leave them out too. | — |
 | Quiet system noise off | info | Quiet system noise off | Lines from every iOS process reach the log again. | — |
 | Quiet system noise failed | alert (err) | Quiet system noise did not change | The app did not answer. Try again. | Retry |
-| Quiet system noise hint (once, iPhone over 3 000 lines/s for 10 s, quiet off) | info | iPhone 15 is sending 6 200 lines/s | Quiet system noise drops common iOS system processes before they reach the log. | Turn on |
+| Quiet system noise hint (once, iPhone averaging over 3 000 lines/s across 10 s, lines the backend dropped included, quiet off) | info | iPhone 15 is sending 6 200 lines/s | Quiet system noise drops common iOS system processes before they reach the log. | Turn on |
 | Exported | check | Exported 47 106 lines | HS-1234-OTA-pairing_2-devices_2026-10-14_1554.txt | Show in folder |
 | Error | alert (err) | Export failed | Disk is full. Free some space and try again. | Retry |
 

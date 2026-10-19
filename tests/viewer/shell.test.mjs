@@ -657,15 +657,23 @@ test('Quiet system noise: a failed request puts the choice back with a Retry err
   assert.equal(prefs.getSettings().iosQuiet, 'off', 'the newest choice stands');
 });
 
-test('loud watch: once, after 10 s over 3 000/s while armed; a dip or disarm restarts the clock', () => {
+test('loud watch: once, when a 10 s window averages over 3 000/s while armed; bursts count, disarming restarts the window', () => {
   const w = S.createLoudWatch({ over: 3000, forMs: 10000 });
-  assert.deepEqual([w.step(0, 6200, true), w.step(9500, 6200, true), w.step(10000, 6200, true), w.step(10500, 6200, true)], [false, false, true, false]);
-  const v = S.createLoudWatch({ over: 3000, forMs: 10000 });
-  v.step(0, 6200, true); v.step(5000, 2000, true);
-  assert.deepEqual([v.step(14000, 6200, true), v.step(24000, 6200, true)], [false, true]);
+  // a steady 6 200/s: the count grows by 3 100 every 500 ms
+  assert.deepEqual([w.step(0, 0, true), w.step(9500, 58900, true), w.step(10000, 62000, true), w.step(10500, 65100, true)], [false, false, true, false]);
+  assert.equal(w.rate(), 6200);
+  // bursty: 9 000 lines in one second, 1 000 in the next, and so on (5 000/s on average, a 1 s rate dips to 1 000)
+  const b = S.createLoudWatch({ over: 3000, forMs: 10000 });
+  const fired = [];
+  for (let s = 0; s <= 10; s++) fired.push(b.step(s * 1000, Math.ceil(s / 2) * 9000 + Math.floor(s / 2) * 1000, true));
+  assert.deepEqual([fired.slice(0, 10).includes(true), fired[10]], [false, true], 'fires on the window, not on a dip');
+  // a quiet phone never fires, however long
+  const q = S.createLoudWatch({ over: 3000, forMs: 10000 });
+  assert.deepEqual([0, 20000, 40000, 60000].map(t => q.step(t, t / 10, true)), [false, false, false, false]);
+  // disarmed: the window restarts
   const d = S.createLoudWatch({ over: 3000, forMs: 10000 });
-  d.step(0, 6200, true); d.step(5000, 6200, false);
-  assert.equal(d.step(12000, 6200, true), false);
+  d.step(0, 0, true); d.step(5000, 31000, false);
+  assert.equal(d.step(12000, 74000, true), false);
 });
 
 test('Quiet system noise hint: over 3 000 lines/s for 10 s with quiet off, once ever; Turn on enables it', () => {
@@ -679,4 +687,27 @@ test('Quiet system noise hint: over 3 000 lines/s for 10 s with quiet off, once 
   prefs.patchSettings({ iosQuiet: 'off' });
   for (let k = 0; k < 40; k++) { state.lines.ios += 3100; p.advance(500); }
   assert.ok(!texts(p.byId.toastLive).includes('is sending'), 'never twice');
+});
+
+test('Quiet system noise hint: a bursty iPhone and a viewer that drops lines still trigger it', () => {
+  const bursty = shellPage({ st: IOS() });
+  for (let k = 0; k < 30; k++) { bursty.state.lines.ios += k % 4 < 2 ? 8000 : 400; bursty.p.advance(500); }   // avg 2 100 per 500 ms: ~4 200/s, 1 s rate dips to 1 700
+  assert.match(texts(bursty.p.byId.toastLive), /is sending/, 'bursts average over the window');
+  const behind = shellPage({ st: IOS() });
+  for (let k = 0; k < 30; k++) { behind.state.lines.ios += 1000; behind.state.dropped.ios += 2500; behind.p.advance(500); }   // 2 000 received/s, 5 000 dropped/s
+  assert.match(texts(behind.p.byId.toastLive), new RegExp(`is sending 7${T}000 lines/s`), 'lines the backend dropped count');
+  const calm = shellPage({ st: IOS() });
+  for (let k = 0; k < 60; k++) { calm.state.lines.ios += 400; calm.p.advance(500); }   // 800/s
+  assert.ok(!texts(calm.p.byId.toastLive).includes('is sending'), 'a calm phone gets no hint');
+});
+
+test('a stall on a Quiet iPhone says 60 s: the bridge waits longer while -q hides most lines', () => {
+  assert.equal(S.STALL_SECONDS_QUIET, 60);
+  const { p, shell, prefs } = shellPage({ st: IOS() });
+  const i = parts(row(p, 'ios'));
+  shell.markStalled('ios');
+  assert.equal(i.status.textContent, 'Stalled 15 s');
+  prefs.patchSettings({ iosQuiet: 'on' });
+  shell.sync();
+  assert.equal(i.status.textContent, 'Stalled 60 s · quiet');
 });
