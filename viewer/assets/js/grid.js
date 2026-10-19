@@ -48,19 +48,19 @@
   function rowPx(fs, density) { return Math.max(18, fs * (density === 'compact' ? 1.4 : 1.6)); }
   function screenRows(height, fs, density) { return height > 0 ? Math.ceil(height / rowPx(fs, density)) : 0; }
 
-  // The arrival highlight's budget. A row's fade lasts ARRIVAL_MS (= --t-arrival), longer than the gap between two
-  // flushes, so "at most a screenful per flush" lets the last four flushes' rows glow at once. The invariant is on the
-  // fade, not the flush: the rows lit within any ARRIVAL_MS window never exceed one screenful. One leaky bucket
-  // enforces it in constant time (a level and a timestamp, no array, no layout read): capacity and refill are each half
-  // a screenful, so a window admits at most the capacity plus what refills in it, which is the screenful. A single
-  // flush above half a screenful is therefore skipped and spends nothing (a deliberate deviation from the spec's
-  // per-flush screenful). st = { level, at } is mutated; `now` and ARRIVAL_MS are in ms.
+  // The arrival highlight's budget. The spec's rule is per flush: a flush above one screenful lights nothing, and any
+  // flush up to a screenful lights. A row's fade lasts ARRIVAL_MS (= --t-arrival), longer than the gap between two
+  // flushes, so on top of that rule one leaky bucket bounds how many rows fade at once, in constant time (a level and a
+  // timestamp, no array, no layout read): capacity is one screenful and it refills a screenful per ARRIVAL_MS. A flush
+  // above the capacity is skipped and spends nothing, which is the spec's rule; the rows lit within any ARRIVAL_MS window
+  // never exceed the capacity plus its refill, two screenfuls. Ordinary streams are untouched: on a 37-row screen every
+  // 150 ms flush of up to about 60 lines/s glows; a sustained rate above the refill (a screenful per 600 ms) is thinned
+  // to it. st = { level, at } is mutated; `now` and ARRIVAL_MS are in ms.
   const ARRIVAL_MS = 600;
   function arrive(st, n, now, screen) {
-    const cap = Math.floor(screen / 2);
-    if (!(n > 0) || n > cap) return false;
-    const level = Math.max(0, st.level - Math.max(0, now - st.at) * cap / ARRIVAL_MS);
-    if (level + n > cap) return false;
+    if (!(n > 0) || n > screen) return false;
+    const level = Math.max(0, st.level - Math.max(0, now - st.at) * screen / ARRIVAL_MS);
+    if (level + n > screen) return false;
     st.level = level + n; st.at = now;
     return true;
   }
