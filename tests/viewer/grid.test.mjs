@@ -433,3 +433,55 @@ test('empty tile: written only when it changes, announced only when its cause do
   grid.syncEmpty();
   assert.equal($('gridEmpty').hidden, true, 'the first line hides it');
 });
+
+test('empty tile: a stale session (its filtered list lags the filter) shows no tile and says nothing', () => {
+  const { p, grid, st } = gridPage();
+  st.cur = { kind: 'file', all: new Array(4), filtered: [] };
+  st.stale = true;
+  grid.syncEmpty();
+  p.advance(6000);
+  assert.deepEqual([p.byId.gridEmpty.hidden, p.byId.announcer.textContent || ''], [true, ''], 'stale: not a no-match state');
+  st.stale = false;                       // the render refiltered it and nothing matches: now it is true
+  grid.syncEmpty();
+  assert.equal(p.byId.gridEmpty.hidden, false);
+  assert.equal(p.byId.gridEmptyTitle.textContent, 'No lines match this filter');
+  assert.match(p.byId.announcer.textContent, /^No lines match this filter/);
+});
+
+test('empty tile: focus moves off a button the tile hides (Reset filter, or the fix) onto the control that takes over', () => {
+  const { p, grid, st } = gridPage();
+  const $ = id => p.byId[id];
+  st.cur = { kind: 'live', all: new Array(500), filtered: [] };
+  st.levels = 0;
+  grid.syncEmpty();                       // fix: Turn levels back on, plus Reset filter
+  p.focus($('gridEmptyReset'));
+  st.cur = { kind: 'live', all: new Array(500), filtered: [1] };
+  grid.syncEmpty();                       // lines match: the whole tile goes
+  assert.deepEqual([$('gridEmpty').hidden, p.doc.activeElement], [true, $('logTableEl')], 'Reset filter pressed: focus on the grid');
+  st.cur = { kind: 'live', all: new Array(500), filtered: [] };
+  st.levels = 0;
+  grid.syncEmpty();
+  p.focus($('gridEmptyFix'));
+  st.levels = 6; st.query = true;         // the fix is no longer offered, Reset filter stays
+  grid.syncEmpty();
+  assert.deepEqual([$('gridEmpty').hidden, $('gridEmptyFix').hidden, p.doc.activeElement], [false, true, $('gridEmptyReset')], 'the fix goes: focus on Reset filter');
+  st.query = false; st.levels = 0;
+  grid.syncEmpty();
+  p.focus($('gridEmptyFix'));
+  st.cur = { kind: 'live', all: new Array(500), filtered: [1] };
+  grid.syncEmpty();
+  assert.equal(p.doc.activeElement, $('logTableEl'), 'the fix pressed and lines now match: focus on the grid');
+  st.cur = { kind: 'live', all: new Array(500), filtered: [] };
+  st.levels = 0;
+  grid.syncEmpty();
+  p.focus($('logTableEl'));
+  st.cur = { kind: 'live', all: new Array(500), filtered: [1] };
+  grid.syncEmpty();
+  assert.equal(p.doc.activeElement, $('logTableEl'), 'focus elsewhere is not moved');
+  p.focus($('search'));
+  st.cur = { kind: 'live', all: new Array(500), filtered: [] };
+  grid.syncEmpty();
+  st.cur = { kind: 'live', all: new Array(500), filtered: [1] };
+  grid.syncEmpty();
+  assert.equal(p.doc.activeElement, $('search'), 'a focused control outside the tile keeps focus');
+});

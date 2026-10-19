@@ -927,6 +927,8 @@ function shellState() {
     get gridShown() { return document.getElementById('logWrapper').classList.contains('visible') && !document.querySelector('.modal-overlay.visible'); },
     // The grid's empty states (grid.js): no line since a Clear on Live, the filter's levels and tag, and whether the
     // search or PID / App field filters too (the no-match tile then names no cause).
+    // stale: the shown session's filtered list lags the filter (a file just opened, before its render): no tile yet.
+    stale: cur.query !== filterGen,
     cleared: liveClearedSeq === nextSeq, levels: enabledLevels.size, tag: document.getElementById('tagFilter').value,
     query: !!document.getElementById('search').value || !!document.getElementById('pidFilter').value,
   };

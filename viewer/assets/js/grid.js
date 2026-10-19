@@ -58,6 +58,7 @@
   }
 
   // The grid's empty state (spec "Log grid", empty states), or null while it shows rows. e: { kind, all, shown,
+  // stale (cur.filtered is out of date: the session's filter generation lags, as after a file open until its render),
   // cleared (no line since a Clear), paused, levelsOff, devicesOff, tag (the tag filter), query (the search or PID /
   // App field filters), waiting: [the names of the devices streaming], gone: [the names of the devices whose stream is
   // open but whose phone the bridge reported gone (noDevice)] }. → { key, say, icon, spin, title, desc, fix, fixLabel,
@@ -66,7 +67,9 @@
   // the dropzone, and an empty live session with no open stream the device panel (refreshLiveView, #70): no tile.
   function emptyView(e) {
     const { num } = g.ALV.shellPure;
-    if (e.shown > 0) return null;
+    // A stale session's filtered list says nothing about matches: the render or restoreView refilters it and calls
+    // updateNewerPill, which settles the tile. Saying "no match" now would announce a state that is not true.
+    if (e.shown > 0 || e.stale) return null;
     const none = { fix: null, fixLabel: '', reset: false, skeleton: false, desc: '' };
     if (e.all > 0) {
       const [cause, fix, fixLabel] = e.levelsOff ? ['All levels are turned off.', 'levels', 'Turn levels back on']
@@ -218,6 +221,7 @@
     const fixBtn = $('gridEmptyFix');
     if (fixBtn) fixBtn.addEventListener('click', () => { if (emptyFix) actions.resetFilter(emptyFix); });
     if ($('gridEmptyReset')) $('gridEmptyReset').addEventListener('click', () => actions.resetFilter('all'));
+    const focusAt = el => { if (el) el.focus({ preventScroll: true }); };
     function syncEmpty() {
       const st = state();
       const dev = shell.devices();
@@ -227,11 +231,16 @@
       const open = ['android', 'ios'].filter(p => st.live[p]);
       const waiting = open.filter(p => !st.noDevice[p]).map(name);
       const gone = open.filter(p => st.noDevice[p]).map(name);
-      const v = emptyView({ kind: st.cur.kind, all: st.cur.all.length, shown: st.cur.filtered.length, cleared: st.cleared, paused: st.paused,
+      const v = emptyView({ kind: st.cur.kind, all: st.cur.all.length, shown: st.cur.filtered.length, stale: !!st.stale, cleared: st.cleared, paused: st.paused,
         levelsOff: st.levels === 0, devicesOff: st.enabled.size === 0, tag: st.tag, query: !!st.query, waiting, gone });
       const key = v ? v.key : '';
       if (key === emptyKey) return;
       emptyKey = key;
+      // Hiding the button that has focus would drop it on <body> (updateNewerPill guards the pill the same way): park it
+      // on the control that takes over, the Reset filter button when only the fix goes, else the grid showing the lines.
+      const active = doc.activeElement;
+      if (active && active === fixBtn && !(v && v.fix)) focusAt(v && v.reset ? $('gridEmptyReset') : table);
+      else if (active && active === $('gridEmptyReset') && !(v && v.reset)) focusAt(table);
       setHidden($('gridEmpty'), !v);
       if (!v) { emptySaid = ''; return; }
       setAttr($('gridEmptyIcon'), 'class', v.spin ? 'icon spin' : 'icon');

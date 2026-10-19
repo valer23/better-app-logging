@@ -302,6 +302,37 @@ function deferFileIo(v) {
   };
 }
 
+test('a file open never shows or announces "no match" while its lines are not filtered yet (the stale tile)', () => {
+  const v = boot();
+  const io = deferFileIo(v);
+  const tile = () => (v.doc.getElementById('gridEmpty').hidden ? '' : v.text('gridEmptyTitle'));
+  v.run('globalThis.__said = []; ALV.ui.announce = s => __said.push(s)');
+  const said = () => JSON.parse(JSON.stringify(v.run('__said')));
+  v.go('toFile');
+  v.api.handleFile({ text: fileText(4) });
+  io.finishRead(0);                       // session reset: all = 4, filtered = [], query = -1 until the 50 ms render
+  assert.deepEqual([tile(), said()], ['', []], 'between the read and the render: no tile, nothing announced');
+  io.runTimers();
+  assert.equal(v.get('fileAll').length, 4);
+  assert.deepEqual([tile(), said(), v.run('fileSession.filtered.length')], ['', [], 4], 'rendered: the rows show, still no tile');
+});
+
+test('switching to a file session whose lines are not filtered yet shows no "no match" tile or announcement', () => {
+  const v = boot();
+  const io = deferFileIo(v);
+  const tile = () => (v.doc.getElementById('gridEmpty').hidden ? '' : v.text('gridEmptyTitle'));
+  v.run('globalThis.__said = []; ALV.ui.announce = s => __said.push(s)');
+  const said = () => JSON.parse(JSON.stringify(v.run('__said')));
+  v.go('toFile');
+  v.api.handleFile({ text: fileText(4) });
+  io.finishRead(0);
+  v.go('toLive');                         // away before the 50 ms render: the file session stays unfiltered
+  v.go('toFile');                         // selectSession's shellSync() runs before restoreView refilters it
+  assert.deepEqual([tile(), said()], ['', []], 'stale: not a no-match state');
+  assert.equal(v.run('fileSession.query === filterGen'), true, 'restoreView refiltered it');
+  assert.equal(v.run('fileSession.filtered.length'), 4);
+});
+
 test('Clear on File while a file is still being read cancels that load', () => {
   const v = boot();
   const io = deferFileIo(v);
