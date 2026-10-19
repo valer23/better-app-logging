@@ -897,3 +897,26 @@ test('empty states keep #70: Clear with nothing streaming shows the device panel
   v.send(1, 5); v.api.flushBatch();
   assert.equal(tile(), '', 'a line hides it');
 });
+
+// P5b: the arrival highlight (renderLiveTail asks buildRow for it; grid.screenRows is the screenful).
+test('arrival: the rows a flush appends to a followed tail, up to one screenful; none on a rebuild, while reading or past a screenful', () => {
+  const v = boot();
+  v.doc.hidden = false;
+  v.run('globalThis.__hl = []; { const real = buildRow; buildRow = (m, isNew) => (__hl.push(isNew), real(m, isNew)); }');
+  v.run('grid.screenRows = 10');
+  const flush = n => { v.run('__hl.length = 0'); v.send(n, v.run('nextSeq')); v.api.flushBatch(); return [...new Set(v.run('__hl'))]; };
+  v.run('liveSession.domStale = true');
+  assert.deepEqual(flush(2), [false], 'a rebuild of a few rows (a stale tail, fewer than a screenful) highlights nothing: the !full clause');
+  assert.deepEqual(flush(5), [true], '5 rows ≤ 10: highlighted');
+  assert.deepEqual(flush(11), [false], '11 rows > one screenful: none');
+  assert.deepEqual(flush(10), [true], 'exactly a screenful');
+  v.run('liveSession.domStale = true');
+  assert.deepEqual(flush(2), [false], 'a rebuild (stale tail) highlights nothing, even after a screenful has been built');
+  v.api.toggleAutoScroll();
+  v.doc.hidden = true;
+  assert.deepEqual(flush(2), [], 'reading: the window is frozen, nothing is built (#54)');
+  v.doc.hidden = false;
+  v.run("globalThis.__cleared = []; grid.clearArrival = tb => __cleared.push(tb)");
+  v.go('toFile');
+  assert.equal(v.run('__cleared[0] === liveSession.tbody'), true, 'switching away clears the highlight of the tbody it hides');
+});

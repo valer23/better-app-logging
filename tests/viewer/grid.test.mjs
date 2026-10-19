@@ -1,7 +1,7 @@
 // The log grid (roadmap P5): ALV.gridPure in an empty vm context, and the DOM side (createGrid) on the fake page.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadPureModules, pageScriptSrcs, loadLegacy, stickyDocument, read, HTML_PATH } from './_load.mjs';
+import { loadPureModules, pageScriptSrcs, loadLegacy, stickyDocument, read, HTML_PATH, memoryStorage, fakeMatchMedia, fakeRoot } from './_load.mjs';
 import { fakePage, mount } from './_fake.mjs';
 
 const G = loadPureModules('shell.js', 'grid.js').gridPure;
@@ -67,6 +67,11 @@ test('emptyView: no matches with each spec cause in order and its fix; after Cle
   assert.equal(v({}), null, 'no device and no lines: the device cards (P8: "No logs yet")');
   assert.equal(v({ all: 9 }).key === v({ all: 10 }).key, false, 'the count is shown, so it is in the key');
   assert.equal(v({ all: 9 }).say, v({ all: 10 }).say, 'but not in the announcement');
+});
+
+test('screenRows: rows in one screenful from the height, the log size and the density (spec "Sizes"); none while hidden', () => {
+  assert.deepEqual([G.rowPx(13, 'comfortable'), G.rowPx(13, 'compact'), G.rowPx(10, 'compact'), G.rowPx(20, 'comfortable')], [20.8, 18.2, 18, 32]);
+  assert.deepEqual([G.screenRows(500, 13, 'comfortable'), G.screenRows(500, 20, 'comfortable'), G.screenRows(500, 10, 'compact'), G.screenRows(0, 13, 'comfortable')], [25, 16, 28, 0]);
 });
 
 test('rowClass: level and platform in one class string; ASSERT is the F class; unknown levels read as Verbose', () => {
@@ -172,7 +177,13 @@ function gridPage({ headerText = false } = {}) {
   const calls = [];
   const shell = { onTick: fn => ticks.push(fn), devices: () => ({ android: { name: 'Pixel 8 Pro' }, ios: { name: 'iPhone 15' } }) };
   const actions = new Proxy({}, { get: (o, k) => (...a) => calls.push([k, ...a]) });
-  const grid = p.ALV.createGrid({ doc: p.doc, dom: p.dom, ui: p.ui, keys: p.keys, shell, state: () => st, actions });
+  const prefs = p.ALV.createPrefs({ storage: memoryStorage(), matchMedia: fakeMatchMedia(), userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)' });
+  prefs.boot(fakeRoot());
+  // A ResizeObserver whose callback the test fires: resize(h) reports a scroller content height of h px.
+  let observed = null;
+  p.win.ResizeObserver = class { constructor(fn) { this.fn = fn; } observe(el) { observed = { fn: this.fn, el }; } };
+  const resize = h => observed.fn([{ contentRect: { height: h } }]);
+  const grid = p.ALV.createGrid({ doc: p.doc, win: p.win, dom: p.dom, ui: p.ui, keys: p.keys, prefs, shell, state: () => st, actions });
   const ths = p.byId.headerRow.children;
   const cols = p.byId.colgroup.children;
   const seps = ths.flatMap(th => th.children.filter(c => c.attrs.role === 'separator'));
@@ -181,7 +192,7 @@ function gridPage({ headerText = false } = {}) {
     for (const fn of sep.listeners.keydown || []) fn(ev);
     return ev;
   };
-  return { p, grid, ths, cols, seps, key, st, ticks, calls };
+  return { p, grid, ths, cols, seps, key, st, ticks, calls, prefs, resize, observed: () => observed };
 }
 
 test('resize handles: one separator per boundary after Time, Lvl, Tag, App / Device and PID–TID, inside the next header cell', () => {
@@ -484,4 +495,27 @@ test('empty tile: focus moves off a button the tile hides (Reset filter, or the 
   st.cur = { kind: 'live', all: new Array(500), filtered: [1] };
   grid.syncEmpty();
   assert.equal(p.doc.activeElement, $('search'), 'a focused control outside the tile keeps focus');
+});
+
+// ---- Arrival highlight (P5b) ----
+test('arrival: screenRows follows the scroller\'s height, the log size and the density; animationend and clearArrival drop is-new', () => {
+  const { p, grid, prefs, resize, observed } = gridPage();
+  assert.equal(observed().el, p.byId.logTable, 'the scroller is observed');
+  assert.equal(grid.screenRows, 0, 'no height yet: nothing is highlighted');
+  resize(500);
+  assert.equal(grid.screenRows, 25);
+  prefs.set('logFontSize', 20);
+  assert.equal(grid.screenRows, 16);
+  prefs.patchSettings({ density: 'compact' });
+  assert.equal(grid.screenRows, 18);
+  const tr = p.doc.createElement('tr');
+  tr.className = 'l-i p-a is-new';
+  p.byId.tbody.appendChild(tr);
+  tr.fire('animationend', { animationName: 'other' });
+  assert.equal(tr.className, 'l-i p-a is-new', 'another animation leaves it');
+  tr.fire('animationend', { animationName: 'row-in' });
+  assert.equal(tr.className, 'l-i p-a', 'the highlight ran: the class goes, so a re-attached tbody does not replay it');
+  const lit = { classList: { remove: c => { lit.gone = c; } } };
+  grid.clearArrival({ querySelectorAll: sel => (assert.equal(sel, 'tr.is-new'), [lit]) });
+  assert.equal(lit.gone, 'is-new');
 });

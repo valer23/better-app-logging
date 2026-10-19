@@ -911,13 +911,19 @@ test('log grid: the legacy table rules are gone from legacy.css, and no styleshe
   assert.deepEqual(keyed, [], 'grid.js rewrites aria-rowcount: no style may depend on it');
 });
 
-test('buildRow sets no per-row tabindex, title, role or inline style, and grid.css animates nothing in P5a', () => {
+test('buildRow sets no per-row tabindex, title, role or inline style, and grid.css animates only the arrival highlight', () => {
   const code = inlineScripts(html).at(-1).code;
   const fn = code.slice(code.indexOf('\nfunction buildRow('), code.indexOf('\n}\n', code.indexOf('\nfunction buildRow(')));
   assert.ok(fn.length > 200, 'buildRow found');
   assert.doesNotMatch(fn, /tabindex|tabIndex|\.title\b|'title'|'role'|\.style\b|getBoundingClientRect|offset(Width|Height|Top)/);
   assert.match(fn, /tr\.className = rowClass\(m\.lvl, m\.platform\)/, 'one className write carries level and platform');
-  assert.ok(!gridCss().some(r => C.declarations(r.body).some(d => /^(transition|animation)/.test(d.prop))), 'no transition on rows (spec: none per row)');
+  const moving = gridCss().filter(r => C.declarations(r.body).some(d => /^(transition|animation)/.test(d.prop))).flatMap(r => r.selectors);
+  assert.deepEqual(moving, ['.lgrid > tbody > tr.is-new'], 'no transition on rows (spec: none per row); the 600 ms arrival only');
+  // The foundation's .log-row.is-new (a verbatim copy) is the only other is-new rule: a grid row never carries
+  // .log-row, so it never matches (one rejected class check per arrival row; mbt5's churn50 measures the cost).
+  const isNew = cssFiles.flatMap(f => C.cssRules(f.text).flatMap(r => r.selectors.filter(s => /\bis-new\b/.test(s)).map(s => `${path.basename(f.path)} ${s}`)));
+  assert.deepEqual(isNew.sort(), ['foundation.css .log-row.is-new', 'grid.css .lgrid > tbody > tr.is-new']);
+  assert.doesNotMatch(fn, /log-row/, 'buildRow never adds the foundation\'s .log-row');
 });
 
 test('stream keys: Pause and Follow carry a kbd (aria-hidden, shown from the 1 320 px toolbar) and their tooltips name the key', () => {

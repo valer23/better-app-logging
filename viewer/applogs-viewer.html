@@ -658,6 +658,7 @@ function selectSession(next) {
   const prev = cur, t = document.getElementById('logTable');
   if (next !== prev) {
     saveScroll(prev, t);
+    if (grid) grid.clearArrival(prev.tbody);   // a highlight cut short would replay when this tbody comes back
     prev.tbody.removeAttribute('id');
     prev.tbody.replaceWith(next.tbody);
     next.tbody.id = 'tbody';
@@ -913,7 +914,7 @@ shell = ALV.createShell({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, 
     repair: () => iosRepairFromHeader(), setup: p => showSetup(p), setIosQuiet: postIosQuiet } });
 liveUi = ALV.createLive({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, keys: ALV.keys, prefs: ALV.prefs, shell, state: shellState,
   actions: { togglePause, toggleAutoScroll, clear: clearLogs, zoom: setLogZoom, openFile: openLogFile, setGlass, togglePlatform } });
-grid = ALV.createGrid({ doc: document, dom: ALV.dom, ui: ALV.ui, keys: ALV.keys, shell, state: shellState,
+grid = ALV.createGrid({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, keys: ALV.keys, prefs: ALV.prefs, shell, state: shellState,
   actions: { jumpToEnd, jumpToOldest, togglePause, toggleAutoScroll, updateNewerPill, resetFilter } });
 function shellState() {
   return {
@@ -1549,9 +1550,10 @@ function renderLiveTail(s, firstNew) {
     // Only build rows that survive `cap` — anything older would be trimmed right away.
     const from = Math.max(full ? 0 : firstNew, filtered.length - cap);
     const frag = document.createDocumentFragment();
-    // No fade-in animation on live rows — at high volume every row would be
-    // opacity:0 and the table appears blank
-    for (let i = from; i < filtered.length; i++) frag.appendChild(buildRow(filtered[i], false));
+    // Arrival highlight (spec): the rows this flush appends to a followed tail, none when they are more than one
+    // screenful (grid.screenRows, kept off the drain: no layout read here). A rebuild highlights nothing.
+    const hl = !full && s.follow && filtered.length - from <= grid.screenRows;
+    for (let i = from; i < filtered.length; i++) frag.appendChild(buildRow(filtered[i], hl));
 
     if (full) {
       tbody.textContent = '';

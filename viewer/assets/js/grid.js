@@ -43,6 +43,11 @@
     return null;
   }
 
+  // Rows in one screenful of the grid (spec "Sizes": a row is max(18px, log size × 1.6), × 1.4 when Compact): the
+  // arrival highlight's limit. 0 while the grid has no height (hidden), so nothing is highlighted then.
+  function rowPx(fs, density) { return Math.max(18, fs * (density === 'compact' ? 1.4 : 1.6)); }
+  function screenRows(height, fs, density) { return height > 0 ? Math.ceil(height / rowPx(fs, density)) : 0; }
+
   // The jump pill and the paused pill (spec "States", "Follow, pause and the jump pill"): Paused wins over new lines.
   // → null (hidden) or { mode, icon, pre, num, unit, action, key }: "<pre><b>num</b><unit>" and a primary button
   // `action` with the kbd of binding `key`. Numbers use the thin-space grouping (shellPure.num, loaded first).
@@ -106,11 +111,12 @@
 
   // ---- DOM ----
 
-  // createGrid({ doc, dom, ui, keys, shell, state, actions }) → { sync(), syncEmpty() }. Adds a resize separator on
-  // each RESIZABLE boundary of #headerRow, makes the scroller the shortcut registry's grid root, binds the stream
-  // keys, keeps aria-rowcount current and shows the empty states. state() is the legacy shellState(); actions are
-  // legacy functions: jumpToEnd, jumpToOldest, togglePause, toggleAutoScroll, updateNewerPill, resetFilter(what).
-  function createGrid({ doc, dom, ui, keys, shell, state, actions }) {
+  // createGrid({ doc, win, dom, ui, keys, prefs, shell, state, actions }) → { sync(), syncEmpty(), screenRows,
+  // clearArrival(tbody) }. Adds a resize separator on each RESIZABLE boundary of #headerRow, makes the scroller the
+  // shortcut registry's grid root, binds the stream keys, keeps aria-rowcount current, shows the empty states and
+  // keeps the arrival highlight's screenful. state() is the legacy shellState(); actions are legacy functions:
+  // jumpToEnd, jumpToOldest, togglePause, toggleAutoScroll, updateNewerPill, resetFilter(what).
+  function createGrid({ doc, win, dom, ui, keys, prefs, shell, state, actions }) {
     const { setAttr, setText, setHidden } = g.ALV.shellPure;   // shell.js loads first
     const $ = id => doc.getElementById(id);
     const table = $('logTableEl');
@@ -266,10 +272,26 @@
       syncEmpty();
     }
     shell.onTick(sync);
-    return { sync, syncEmpty };
+
+    // ---- Arrival highlight (spec "Log grid"): the rows the last flush appended while following, none when that is
+    // more than one screenful. renderLiveTail reads api.screenRows, kept here from the scroller's height (a
+    // ResizeObserver) and the row height (log size, density): nothing is measured per flush. A row's is-new class
+    // goes when its animation ends; a tbody hidden mid-flight (selectSession) is cleared, or it would replay. ----
+    const api = { sync, syncEmpty, screenRows: 0, clearArrival };
+    let viewH = 0;
+    function recount() {
+      const ps = prefs.state();
+      api.screenRows = screenRows(viewH, ps.logFontSize, ps.settings.density);
+    }
+    if (win.ResizeObserver) new win.ResizeObserver(entries => { viewH = entries[entries.length - 1].contentRect.height; recount(); }).observe(scroller);
+    prefs.onChange(recount);
+    recount();
+    scroller.addEventListener('animationend', e => { if (e.animationName === 'row-in' && e.target.classList) e.target.classList.remove('is-new'); });
+    function clearArrival(tbody) { for (const tr of tbody.querySelectorAll('tr.is-new')) tr.classList.remove('is-new'); }
+    return api;
   }
 
   const ALV = g.ALV || (g.ALV = {});
-  ALV.gridPure = Object.freeze({ timeOf, rowClass, ROW_CLASS, LEVEL_CLASS: Object.freeze(LEVEL_CLASS), RESIZABLE, COL_MIN, COL_MAX, clampCol, resizeKey, pillView, emptyView });
+  ALV.gridPure = Object.freeze({ timeOf, rowClass, ROW_CLASS, LEVEL_CLASS: Object.freeze(LEVEL_CLASS), RESIZABLE, COL_MIN, COL_MAX, clampCol, resizeKey, pillView, emptyView, rowPx, screenRows });
   ALV.createGrid = createGrid;
 })(typeof window !== 'undefined' ? window : globalThis);

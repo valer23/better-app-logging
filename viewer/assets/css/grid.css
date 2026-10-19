@@ -75,6 +75,10 @@
   .lgrid > tbody > tr[aria-selected="true"] { background: var(--row-sel); }
   .lgrid > tbody > tr[aria-selected="true"] > td.c-plat { box-shadow: inset 3px 0 0 var(--accent); }
   .lgrid > tbody > tr[aria-selected="true"] > td.c-msg { white-space: pre-wrap; word-break: break-all; }
+  /* Arrival highlight (spec: 600 ms, the rows of the last flush while following): the foundation's row-in fades
+     --accent-subtle into the row's own background (the tr's: no td paints one). Reduce motion zeroes --t-arrival.
+     P5a left is-new unstyled; the foundation's own .log-row.is-new never matches a grid row (no .log-row class). */
+  .lgrid > tbody > tr.is-new { animation: row-in var(--t-arrival) var(--ease); }
 
   /* Text picked with the mouse. The foundation's ::selection is --row-sel, the open row's own background, so a pick
      inside it vanished (and on other rows it is 1.2:1 against --bg). --accent behind --bg text: 7.3:1 dark, 7.1:1 light,
