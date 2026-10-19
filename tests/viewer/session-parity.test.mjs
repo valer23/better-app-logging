@@ -682,3 +682,15 @@ test('End (jumpToEnd): Follow back on at the newest line; a file session moves i
   v.run('jumpToEnd()');
   assert.deepEqual([v.run('fileSession.renderedEnd'), v.run('fileSession.follow')], [1200, false], 'the last lines; a file never follows');
 });
+
+test('End (jumpToEnd) with Follow already on re-pins a window that slid back off the tail (#58 pinned scroll-back)', () => {
+  const v = boot();
+  v.doc.hidden = false;
+  v.send(1200); v.api.flushBatch();
+  v.api.togglePause();
+  v.run('dropBottomRows(liveSession.tbody, 100)');   // prependOlderRows with Follow on trims the bottom: renderedEnd falls below filtered.length
+  assert.deepEqual([v.run('liveSession.follow'), v.run('liveSession.renderedEnd') < v.run('liveSession.filtered.length')], [true, true], 'precondition: pinned, window short of the tail');
+  v.run('jumpToEnd()');
+  assert.equal(v.run('liveSession.follow'), true);
+  assert.equal(v.run('liveSession.renderedEnd'), v.run('liveSession.filtered.length'), 'End reaches the newest line, not the bottom of the slid-back window');
+});

@@ -531,7 +531,9 @@ function jumpToLatest(e) {
 function jumpToEnd() {
   const s = cur, t = document.getElementById('logTable');
   if (s.kind === 'live') {
-    if (!s.follow) toggleAutoScroll(); else t.scrollTop = t.scrollHeight;
+    if (!s.follow) toggleAutoScroll();
+    else if (s.domStale || s.renderedEnd < s.filtered.length) { s.domStale = true; renderLiveTail(s, s.filtered.length); s.renderFrom = -1; updateNewerPill(); }   // Follow on but the window slid back off the tail (#58 pinned scroll-back): re-pin as toggleAutoScroll does
+    else t.scrollTop = t.scrollHeight;
     return;
   }
   if (s.renderedEnd < s.filtered.length) {   // the window stops short of the end: rebuild it there, as applyFilters does
