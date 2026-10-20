@@ -16,6 +16,9 @@ fallback_models = ["openrouter/minimax/minimax-m3.1-flash:free"]
 # OpenRouter-prefixed ids are not in PR-Agent's token table; pin the context size
 # OpenRouter reports for both models (1M) so lookup never fails.
 custom_model_max_tokens = 1000000
+# PR-Agent's default max_model_tokens (32000) clips large diffs and drops whole files from
+# the review (#73 lost its tests). Free models are not billed per token; the cost is runtime.
+max_model_tokens = 200000
 # Verbose 0 = terse output. We prefer concise PR comments.
 verbosity_level = 0
 # Publish reviews as PR comments (default).
