@@ -91,7 +91,7 @@ test('toolbar and status bar are fixed-height flex: none children of #main under
 
 test('the page passes every action that shell.js and live.js call (the fake pages answer any action name, so a missing one only throws on a real click)', () => {
   const code = inlineScripts(html).at(-1).code;
-  for (const [file, factory] of [['shell.js', 'createShell'], ['live.js', 'createLive']]) {
+  for (const [file, factory] of [['shell.js', 'createShell'], ['live.js', 'createLive'], ['grid.js', 'createGrid']]) {
     const used = [...new Set([...read(path.join(ASSETS, 'js', file)).matchAll(/\bactions\.(\w+)/g)].map(m => m[1]))];
     const call = code.slice(code.indexOf(`ALV.${factory}(`));
     const open = call.indexOf('actions: {') + 'actions: '.length;
@@ -192,7 +192,7 @@ test('status bar: devices, drops (with its popover in the popover layer), the mo
   assert.doesNotMatch(inlineScripts(html).at(-1).code, /updateLiveBar|liveBar|getElementById\('stats'\)/);
   const tiers = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css'))).filter(r => r.atRules.some(a => a.startsWith('@container')));
   assert.deepEqual([...new Set(tiers.flatMap(r => r.atRules.filter(a => a.startsWith('@container'))))].sort(),
-    ['@container statusbar (max-width: 975px)', '@container toolbar (max-width: 1011px)', '@container toolbar (max-width: 1151px)'],
+    ['@container statusbar (max-width: 975px)', '@container toolbar (max-width: 1011px)', '@container toolbar (max-width: 1151px)', '@container toolbar (max-width: 1291px)'],
     'the spec\'s tiers, as border-box widths minus the padding');
   assert.deepEqual(tiers.filter(r => r.atRules.includes('@container statusbar (max-width: 975px)')).flatMap(r => r.selectors), ['#retainedText', '#retainedNote:not(:empty)'],
     'the narrow tier swaps the plain count for the #45 note alone; the #58 hint is never hidden (the legacy hint showed at every width), and the note itself is never hidden');
@@ -911,13 +911,64 @@ test('log grid: the legacy table rules are gone from legacy.css, and no styleshe
   assert.deepEqual(keyed, [], 'grid.js rewrites aria-rowcount: no style may depend on it');
 });
 
-test('buildRow sets no per-row tabindex, title, role or inline style, and grid.css animates nothing in P5a', () => {
+test('buildRow sets no per-row tabindex, title, role or inline style, and grid.css animates only the arrival highlight', () => {
   const code = inlineScripts(html).at(-1).code;
   const fn = code.slice(code.indexOf('\nfunction buildRow('), code.indexOf('\n}\n', code.indexOf('\nfunction buildRow(')));
   assert.ok(fn.length > 200, 'buildRow found');
   assert.doesNotMatch(fn, /tabindex|tabIndex|\.title\b|'title'|'role'|\.style\b|getBoundingClientRect|offset(Width|Height|Top)/);
   assert.match(fn, /tr\.className = rowClass\(m\.lvl, m\.platform\)/, 'one className write carries level and platform');
-  assert.ok(!gridCss().some(r => C.declarations(r.body).some(d => /^(transition|animation)/.test(d.prop))), 'no transition on rows (spec: none per row)');
+  const moving = gridCss().filter(r => C.declarations(r.body).some(d => /^(transition|animation)/.test(d.prop))).flatMap(r => r.selectors);
+  assert.deepEqual(moving, ['.lgrid > tbody > tr.is-new'], 'no transition on rows (spec: none per row); the 600 ms arrival only');
+  // The foundation's .log-row.is-new (a verbatim copy) is the only other is-new rule: a grid row never carries
+  // .log-row, so it never matches (one rejected class check per arrival row; mbt5's churn50 measures the cost).
+  const isNew = cssFiles.flatMap(f => C.cssRules(f.text).flatMap(r => r.selectors.filter(s => /\bis-new\b/.test(s)).map(s => `${path.basename(f.path)} ${s}`)));
+  assert.deepEqual(isNew.sort(), ['foundation.css .log-row.is-new', 'grid.css .lgrid > tbody > tr.is-new']);
+  assert.doesNotMatch(fn, /log-row/, 'buildRow never adds the foundation\'s .log-row');
+});
+
+test('stream keys: Pause and Follow carry a kbd (aria-hidden, shown from the 1 320 px toolbar) and their tooltips name the key', () => {
+  for (const [btn, kbd] of [['pauseBtn', 'pauseKbd'], ['autoScrollBtn', 'followKbd']]) {
+    const k = findById(root, kbd);
+    assert.deepEqual([k.parent.attrs.id, k.attrs.class, k.attrs['aria-hidden']], [btn, 'kbd tb-kbd', 'true'], `#${kbd}: the button's name stays its label`);
+  }
+  const tier = C.cssRules(read(path.join(ASSETS, 'css', 'shell.css'))).filter(r => r.atRules.includes('@container toolbar (max-width: 1291px)'));
+  assert.deepEqual(tier.flatMap(r => r.selectors), ['.tb-kbd'], 'spec B1: kbd hints from 1 320 px (border box) only');
+  const live = read(path.join(ASSETS, 'js', 'live.js'));
+  assert.match(live, /tip\('pauseBtn', \{ text: 'Pause stream', shortcut: 'stream\.pause' \}\)/);
+  assert.match(live, /tip\('autoScrollBtn', \{ text: 'Follow newest lines', shortcut: 'stream\.latest' \}\)/);
+});
+
+test('the pill: a group named by its count, a primary button with its kbd, outside the scroller; the legacy .newer-pill is gone', () => {
+  const pill = findById(root, 'newerPill');
+  assert.deepEqual([pill.tag, pill.attrs.class, pill.attrs.role, pill.attrs['aria-labelledby'], pill.parent.attrs.id], ['div', 'jump-pill', 'group', 'newerPillCount', 'logWrapper']);
+  const btn = findById(root, 'newerPillBtn');
+  assert.deepEqual([btn.tag, btn.attrs.class, btn.attrs.onclick, btn.parent], ['button', 'btn btn-primary btn-sm', 'pillAction(event)', pill]);
+  assert.deepEqual(findById(root, 'newerPillCount').children.map(c => `${c.tag}#${c.attrs.id}`), ['span#newerPillPre', 'b#newerPillNum', 'span#newerPillUnit'], 'spec: the number is bold');
+  assert.equal(findById(root, 'newerPillKbd').attrs['aria-hidden'], 'true');
+  assert.doesNotMatch(read(path.join(ASSETS, 'css', 'legacy.css')), /newer-pill|newer-room/);
+  assert.equal(gridDecl('#newerPill', 'bottom'), '16px', 'spec: 16 px above the status bar');
+  assert.equal(gridDecl('#logTable.newer-room::after', 'height'), '56px', 'the #57 spacer');
+  assert.equal(gridDecl('#logWrapper.is-paused::before', 'height'), '2px', 'spec: the paused warn line');
+  const code = inlineScripts(html).at(-1).code;
+  const fn = code.slice(code.indexOf('\nfunction updateNewerPill('), code.indexOf('\n}\n', code.indexOf('\nfunction updateNewerPill(')));
+  assert.doesNotMatch(fn, /getBoundingClientRect|offset(Width|Height|Top)|clientHeight|toLocaleString/, 'per flush: no layout read (scrollHeight only on a spacer change), thin-space numbers');
+});
+
+test('the pill is opaque in both materials: no rule gives it a backdrop-filter, an opacity or a see-through background (P5a judge)', () => {
+  const decls = cssFiles.flatMap(f => C.cssRules(f.text).filter(r => r.selectors.some(s => /newerPill|newer-pill|jump-pill/.test(s)))
+    .flatMap(r => C.declarations(r.body).map(d => ({ at: `${f.path} ${r.selectors.join(', ')}`, ...d }))));
+  assert.ok(decls.some(d => / \.jump-pill$/.test(d.at) && d.prop === 'background' && d.value === 'var(--raised)'), 'the foundation draws it on --raised: opaque in both themes and both materials');
+  assert.deepEqual(decls.filter(d => /backdrop-filter|^opacity$/.test(d.prop) || (/^background(-color)?$/.test(d.prop) && d.value !== 'var(--raised)')).map(d => `${d.at}: ${d.prop}`), [],
+    'the grid is opaque, and so is what floats over it (roadmap §5.1)');
+});
+
+test('empty states: one tile in #logWrapper under the header, filled by grid.js; the legacy file alerts are gone', () => {
+  const tile = findById(root, 'gridEmpty');
+  assert.deepEqual([tile.parent.attrs.id, 'hidden' in tile.attrs], ['logWrapper', true]);
+  for (const id of ['gridEmptySkel', 'gridEmptyIcon', 'gridEmptyUse', 'gridEmptyTitle', 'gridEmptyDesc', 'gridEmptyFix', 'gridEmptyReset']) assert.ok(closestWithin(findById(root, id), '[id=gridEmpty]', root), `#${id}`);
+  assert.equal(gridDecl('#gridEmpty', 'top'), '28px', 'under the 28 px header');
+  assert.equal(gridDecl('#gridEmpty[hidden]', 'display'), 'none', 'its display: flex must not beat [hidden]');
+  assert.doesNotMatch(inlineScripts(html).at(-1).code, /alert\('(No log lines found|Failed to parse file)/);
 });
 
 test('column resize lives in grid.js: the legacy initResizeHandles and its .col-resize-handle are gone', () => {

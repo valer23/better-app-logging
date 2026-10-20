@@ -65,16 +65,16 @@
     const usable = id => $(id).getAttribute('aria-disabled') !== 'true';
 
     // ---- Toolbar (spec): Pause, Follow, the log text size group, Export (its legacy controller), More, Clear.
-    // Space (Pause) and End (Follow) are bound in P5, and Clear's ⌘⌫ with its Undo in P12: until then their
-    // tooltips show no key. ----
+    // Space (Pause) and End (Follow) are bound by the grid (grid.js); a tooltip reads its key when it shows. Clear's
+    // ⌘⌫ comes with its Undo in P12: until then its tooltip shows no key. ----
     onClick('pauseBtn', () => actions.togglePause());
     onClick('autoScrollBtn', () => actions.toggleAutoScroll());
     onClick('clearBtn', () => actions.clear());
     onClick('zoomOutBtn', () => { if (usable('zoomOutBtn')) actions.zoom(-1); });
     onClick('zoomResetBtn', () => actions.zoom(0));
     onClick('zoomInBtn', () => { if (usable('zoomInBtn')) actions.zoom(1); });
-    const pauseTip = tip('pauseBtn', { text: 'Pause stream' });
-    tip('autoScrollBtn', { text: 'Follow newest lines' });
+    const pauseTip = tip('pauseBtn', { text: 'Pause stream', shortcut: 'stream.pause' });
+    tip('autoScrollBtn', { text: 'Follow newest lines', shortcut: 'stream.latest' });
     // ⌘= / ⌘− / ⌘0 stay on the legacy keydown listener (reserved in keys.js until P13), so they are labels.
     tip('zoomOutBtn', { text: 'Smaller log text', shortcut: { combo: 'Mod+-' } });
     tip('zoomResetBtn', { text: 'Reset', shortcut: { combo: 'Mod+0' } });

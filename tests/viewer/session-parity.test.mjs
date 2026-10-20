@@ -46,6 +46,8 @@ function boot() {
     drop(platform, count) { api.handleWsMsg({ data: JSON.stringify({ type: 'dropped', count }) }, platform); },
     text: id => doc.getElementById(id).textContent,
     title: id => doc.getElementById(id).title,
+    // P5b: the pill's text is "<pre><b>num</b><unit>" (spec: the number is bold), its button names its action.
+    pill: () => ['newerPillPre', 'newerPillNum', 'newerPillUnit'].map(id => doc.getElementById(id).textContent || '').join(''),
   };
 }
 
@@ -162,7 +164,7 @@ test('#54 and #57: with Follow off the window stays put and the pill counts the 
   assert.equal(v.get('liveRenderedEnd'), 5);
   v.doc.hidden = false;
   v.api.updateNewerPill();
-  assert.equal(v.text('newerPillCount'), '7 lines below');
+  assert.equal(v.pill(), '7 lines below');
 });
 
 test('#57: lines that arrive while the file session is shown count as lines below on return', () => {
@@ -177,7 +179,7 @@ test('#57: lines that arrive while the file session is shown count as lines belo
   assert.equal(v.get('liveRenderedEnd'), 5);
   v.doc.hidden = false;
   v.api.updateNewerPill();
-  assert.equal(v.text('newerPillCount'), '9 lines below');
+  assert.equal(v.pill(), '9 lines below');
 });
 
 test('the retention cap trims the live session while the file session is shown, and never the file', () => {
@@ -299,6 +301,37 @@ function deferFileIo(v) {
     runTimers: () => v.run('__timers.splice(0).forEach(f => f())'),
   };
 }
+
+test('a file open never shows or announces "no match" while its lines are not filtered yet (the stale tile)', () => {
+  const v = boot();
+  const io = deferFileIo(v);
+  const tile = () => (v.doc.getElementById('gridEmpty').hidden ? '' : v.text('gridEmptyTitle'));
+  v.run('globalThis.__said = []; ALV.ui.announce = s => __said.push(s)');
+  const said = () => JSON.parse(JSON.stringify(v.run('__said')));
+  v.go('toFile');
+  v.api.handleFile({ text: fileText(4) });
+  io.finishRead(0);                       // session reset: all = 4, filtered = [], query = -1 until the 50 ms render
+  assert.deepEqual([tile(), said()], ['', []], 'between the read and the render: no tile, nothing announced');
+  io.runTimers();
+  assert.equal(v.get('fileAll').length, 4);
+  assert.deepEqual([tile(), said(), v.run('fileSession.filtered.length')], ['', [], 4], 'rendered: the rows show, still no tile');
+});
+
+test('switching to a file session whose lines are not filtered yet shows no "no match" tile or announcement', () => {
+  const v = boot();
+  const io = deferFileIo(v);
+  const tile = () => (v.doc.getElementById('gridEmpty').hidden ? '' : v.text('gridEmptyTitle'));
+  v.run('globalThis.__said = []; ALV.ui.announce = s => __said.push(s)');
+  const said = () => JSON.parse(JSON.stringify(v.run('__said')));
+  v.go('toFile');
+  v.api.handleFile({ text: fileText(4) });
+  io.finishRead(0);
+  v.go('toLive');                         // away before the 50 ms render: the file session stays unfiltered
+  v.go('toFile');                         // selectSession's shellSync() runs before restoreView refilters it
+  assert.deepEqual([tile(), said()], ['', []], 'stale: not a no-match state');
+  assert.equal(v.run('fileSession.query === filterGen'), true, 'restoreView refiltered it');
+  assert.equal(v.run('fileSession.filtered.length'), 4);
+});
 
 test('Clear on File while a file is still being read cancels that load', () => {
   const v = boot();
@@ -650,4 +683,253 @@ test('File <-> Live brings back the right live view', () => {
   assert.equal(p.view(), 'logWrapper');
   p.api.clearLogs(); p.go('toFile'); p.go('toLive');
   assert.equal(p.view(), 'livePanel');
+});
+
+// P5b: Home and End (assets/js/grid.js binds them to these).
+test('Home (jumpToOldest): Follow off, the window rebuilt at the oldest retained line, the drain marker reset (#58 invariant)', () => {
+  const v = boot();
+  v.doc.hidden = false;
+  v.send(1200); v.api.flushBatch();
+  v.run('liveSession.renderFrom = 7');   // as if a drain were in progress: the rebuild owns the DOM from here, as applyFilters
+  v.run('jumpToOldest()');
+  assert.equal(v.run('liveSession.follow'), false);
+  assert.equal(v.run('liveSession.renderedEnd'), 500, 'PAGE rows from the head: the tbody is filtered[0, 500)');
+  assert.equal(v.run('liveSession.renderFrom'), -1);
+  assert.equal(v.run('liveSession.domStale'), false);
+  v.doc.hidden = true;                  // no layout in a stub: keep the window from sliding
+  v.send(10, 1200); v.api.flushBatch();
+  assert.equal(v.run('liveSession.renderedEnd'), 500, 'reading: the window stays put while lines arrive (#54)');
+});
+
+test('End (jumpToEnd): Follow back on at the newest line; a file session moves its window to its last lines', () => {
+  const v = boot();
+  v.doc.hidden = false;
+  v.send(1200); v.api.flushBatch();
+  v.run('jumpToOldest()');
+  v.run('jumpToEnd()');
+  assert.deepEqual([v.run('liveSession.follow'), v.run('liveSession.renderedEnd')], [true, 1200]);
+  v.run('setTimeout = f => (f(), 0)');
+  v.go('toFile');
+  v.api.handleFile({ text: fileText(1200) });
+  assert.equal(v.run('fileSession.renderedEnd'), 500, 'a loaded file shows its first page');
+  v.run('jumpToEnd()');
+  assert.deepEqual([v.run('fileSession.renderedEnd'), v.run('fileSession.follow')], [1200, false], 'the last lines; a file never follows');
+});
+
+test('End (jumpToEnd) with Follow already on re-pins a window that slid back off the tail (#58 pinned scroll-back)', () => {
+  const v = boot();
+  v.doc.hidden = false;
+  v.send(1200); v.api.flushBatch();
+  v.api.togglePause();
+  v.run('dropBottomRows(liveSession.tbody, 100)');   // prependOlderRows with Follow on trims the bottom: renderedEnd falls below filtered.length
+  assert.deepEqual([v.run('liveSession.follow'), v.run('liveSession.renderedEnd') < v.run('liveSession.filtered.length')], [true, true], 'precondition: pinned, window short of the tail');
+  v.run('jumpToEnd()');
+  assert.equal(v.run('liveSession.follow'), true);
+  assert.equal(v.run('liveSession.renderedEnd'), v.run('liveSession.filtered.length'), 'End reaches the newest line, not the bottom of the slid-back window');
+});
+
+// P5b: the paused pill (spec "States": Paused wins over new lines).
+test('paused pill: "Resume to see N buffered lines" wins over "N lines below"; its button resumes; the spacer is armed', () => {
+  const v = boot();
+  v.doc.hidden = false;
+  v.send(5); v.api.flushBatch();
+  v.api.toggleAutoScroll();               // reading: 3 lines will wait below
+  v.doc.hidden = true;
+  v.send(3, 5); v.api.flushBatch();
+  v.doc.hidden = false;
+  v.api.updateNewerPill();
+  assert.deepEqual([v.pill(), v.text('newerPillAction'), v.text('newerPillKbd')], ['3 lines below', 'Jump to latest', 'End']);
+  v.api.togglePause();
+  v.send(1201, 8);
+  v.api.updateNewerPill();
+  assert.deepEqual([v.pill(), v.text('newerPillAction'), v.text('newerPillKbd')], ['Resume to see 1\u2009201 buffered lines', 'Resume', 'Space'],
+    'thin-space grouping; paused wins');
+  assert.equal(v.doc.getElementById('logWrapper').classList.contains('is-paused'), true, 'the 2 px warn line');
+  assert.equal(v.doc.getElementById('logTable').classList.contains('newer-room'), true, 'the 56 px spacer');
+  v.run('pillAction({ detail: 1 })');
+  assert.equal(v.run('livePaused'), false, 'the button resumes');
+  v.api.updateNewerPill();
+  assert.equal(v.doc.getElementById('logWrapper').classList.contains('is-paused'), false);
+  assert.match(v.pill(), / lines below$/, 'resumed while reading: back to the jump pill');
+  v.run('pillAction({ detail: 1 })');
+  assert.equal(v.run('liveSession.follow'), true, 'Jump to latest turns Follow back on');
+});
+
+test('paused pill: while following too; "Buffer full · resuming skips to the newest lines" once the backlog overflowed; the tick refreshes the count', () => {
+  const v = boot();
+  v.doc.hidden = false;
+  v.run('MAX_RETAINED = 100');
+  v.send(5); v.api.flushBatch();
+  v.api.togglePause();
+  assert.equal(v.pill(), 'Resume to see 0 buffered lines');
+  assert.equal(v.doc.getElementById('logTable').classList.contains('newer-room'), true, 'following and paused: the spacer keeps the newest line above the pill');
+  v.send(1, 5);
+  v.run('grid.sync()');                   // the grid's tick: no flush runs while paused
+  assert.equal(v.pill(), 'Resume to see 1 buffered line');
+  v.send(150, 6);
+  v.run('grid.sync()');
+  assert.equal(v.pill(), 'Buffer full · resuming skips to the newest lines');
+  v.api.togglePause();
+  v.api.updateNewerPill();
+  assert.equal(v.doc.getElementById('newerPill').classList.contains('visible'), false, 'following again: no pill');
+  assert.equal(v.doc.getElementById('logTable').classList.contains('newer-room'), false, 'and no spacer');
+});
+
+test('held Enter: Follow, Pause, the pill button and the empty tile\'s fix and Reset buttons ignore keydown auto-repeat (a keyboard Resume with lines below keeps focus on the pill; a fix hands focus to the next button, review F3)', () => {
+  const v = boot();
+  for (const id of ['autoScrollBtn', 'pauseBtn', 'newerPillBtn', 'gridEmptyFix', 'gridEmptyReset']) {
+    const ev = { key: 'Enter', repeat: true, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+    for (const fn of v.doc.listeners.get(`${id}:keydown`) || []) fn(ev);
+    assert.equal(ev.defaultPrevented, true, `#${id}: a held Enter does not activate it again`);
+    const first = { key: 'Enter', repeat: false, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+    for (const fn of v.doc.listeners.get(`${id}:keydown`) || []) fn(first);
+    assert.equal(first.defaultPrevented, false, `#${id}: the first Enter (not a repeat) still activates it`);
+    const space = { key: ' ', repeat: false, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+    for (const fn of v.doc.listeners.get(`${id}:keydown`) || []) fn(space);
+    assert.equal(space.defaultPrevented, false, `#${id}: the first Space (not a repeat) still activates it`);
+  }
+});
+
+// Where the page parks focus when a keyboard activation hides or retargets the pill (behaviour change 19). A keyboard
+// activation (detail 0) keeps the pill button's focus, so the hide in updateNewerPill moves it to the toolbar button the
+// pill stood in for; a pointer click (detail 1) blurs it first. Resume with lines below turns the pill into the jump pill
+// instead of hiding it, so focus stays on the button.
+const focusId = v => v.doc.activeElement && v.doc.activeElement.id;
+function pillFocusBoot() {
+  const v = boot();
+  v.doc.hidden = false;
+  // The sticky elements are deepStubs: give the three ids the page reads focus through a real `id`.
+  for (const id of ['autoScrollBtn', 'pauseBtn', 'newerPillBtn']) v.doc.getElementById(id).id = id;
+  v.send(5); v.api.flushBatch();
+  return v;
+}
+test('pill focus: a keyboard Resume while following moves focus from the pill to Pause', () => {
+  const v = pillFocusBoot();
+  v.api.togglePause();
+  assert.equal(v.run('newerPillMode'), 'paused');
+  v.doc.getElementById('newerPillBtn').focus();
+  v.run('pillAction({ detail: 0 })');
+  assert.equal(v.run('livePaused'), false);
+  assert.equal(v.doc.getElementById('newerPill').classList.contains('visible'), false, 'following again: the pill is gone');
+  assert.equal(focusId(v), 'pauseBtn');
+});
+test('pill focus: a keyboard Jump to latest while reading moves focus from the pill to Follow', () => {
+  const v = pillFocusBoot();
+  v.api.toggleAutoScroll();
+  v.doc.hidden = true; v.send(3, 5); v.api.flushBatch(); v.doc.hidden = false;
+  v.api.updateNewerPill();
+  assert.equal(v.run('newerPillMode'), 'newer');
+  assert.match(v.pill(), /^3 lines below$/);
+  v.doc.getElementById('newerPillBtn').focus();
+  v.run('pillAction({ detail: 0 })');
+  assert.equal(v.run('liveSession.follow'), true);
+  assert.equal(focusId(v), 'autoScrollBtn');
+});
+test('pill focus: a keyboard Resume with lines below keeps focus on the pill, now the jump pill', () => {
+  const v = pillFocusBoot();
+  v.api.toggleAutoScroll();
+  v.doc.hidden = true; v.send(3, 5); v.api.flushBatch(); v.doc.hidden = false;
+  v.api.togglePause();
+  assert.equal(v.run('newerPillMode'), 'paused');
+  v.doc.getElementById('newerPillBtn').focus();
+  v.run('pillAction({ detail: 0 })');
+  assert.equal(v.run('livePaused'), false);
+  assert.equal(v.run('newerPillMode'), 'newer');
+  assert.match(v.pill(), / lines below$/);
+  assert.equal(focusId(v), 'newerPillBtn');
+});
+test('pill focus: a pointer click drops the pill button focus first (no parking on Follow)', () => {
+  const v = pillFocusBoot();
+  v.api.togglePause();
+  v.doc.getElementById('newerPillBtn').focus();
+  v.run('pillAction({ detail: 1 })');
+  assert.notEqual(focusId(v), 'pauseBtn');
+});
+
+// P5b: the grid's empty states (assets/js/grid.js) read these through shellState, and parse failures become a toast.
+test('empty states: Clear on Live says "Waiting for new lines…" until a line arrives; resetFilter turns the filters back on', () => {
+  const v = boot();
+  v.run('iosLive = true');                // a device streams (with none, Clear shows the device panel: #70)
+  v.send(3); v.api.flushBatch();
+  v.api.clearLogs();
+  assert.equal(v.run('shellState().cleared'), true);
+  v.send(1, 3); v.api.flushBatch();
+  assert.equal(v.run('shellState().cleared'), false, 'the first line ends it');
+  v.run("enabledLevels.clear(); enabledPlatforms.delete('ios'); document.getElementById('tagFilter').value = 'bt'; document.getElementById('search').value = 'x'");
+  assert.deepEqual([v.run('shellState().levels'), v.run('shellState().tag'), v.run('shellState().query')], [0, 'bt', true]);
+  v.run("resetFilter('levels')");
+  assert.deepEqual([v.run('enabledLevels.size'), v.run('enabledPlatforms.size'), v.doc.getElementById('tagFilter').value], [6, 1, 'bt'], 'one fix at a time');
+  v.run("resetFilter('all')");
+  assert.deepEqual([v.run('enabledPlatforms.size'), v.doc.getElementById('tagFilter').value, v.doc.getElementById('search').value, v.doc.getElementById('pidFilter').value], [2, '', '', '']);
+  assert.equal(v.run('shellState().query'), false);
+  assert.equal(v.run('liveSession.query === filterGen'), true, 'refiltered');
+});
+
+test('a file the viewer cannot read raises an error toast that names it, not an alert', () => {
+  const v = boot();
+  v.run("globalThis.__toasts = []; ALV.ui.toast = s => (__toasts.push(s), { dismiss() {} }); alert = () => { throw new Error('alert'); }");
+  v.go('toFile');
+  v.api.handleFile({ name: 'notes.zip', text: 'nothing here' });
+  v.api.handleFile({ name: 'bad.json', text: '{ broken' });
+  assert.deepEqual(JSON.parse(JSON.stringify(v.run('__toasts'))), [
+    { kind: 'error', title: "Can't read notes.zip", desc: 'Use .logcat, .txt, .csv or .json.' },
+    { kind: 'error', title: "Can't read bad.json", desc: 'Use .logcat, .txt, .csv or .json.' },
+  ]);
+  assert.equal(display(v, 'dropzone'), '', 'the dropzone stays, to try another file');
+});
+
+test('empty states keep #70: Clear with nothing streaming shows the device panel and no tile; Clear while streaming keeps the grid; a phone gone says so', () => {
+  const v = boot();
+  const tile = () => (v.doc.getElementById('gridEmpty').hidden ? '' : v.text('gridEmptyTitle'));
+  v.doc.hidden = false;                   // a hidden window skips the per-flush refresh (the tick catches up)
+  v.send(3); v.api.flushBatch();
+  v.run('refreshLiveView()');
+  assert.deepEqual([display(v, 'logWrapper'), v.run('shellState().gridShown'), tile()], ['', true, ''], 'lines kept, nothing streaming: the grid, and End and Home act on it');
+  v.api.clearLogs();
+  assert.deepEqual([display(v, 'livePanel'), v.run('shellState().gridShown'), v.run('shellState().cleared'), tile()], ['', false, false, ''], 'the device panel, not "Waiting for new lines…"');
+  v.run('iosLive = true; refreshLiveView()');
+  assert.deepEqual([display(v, 'logWrapper'), tile()], ['', 'Waiting for the first lines from iPhone…'], 'a device streaming but silent');
+  v.send(2, 3); v.api.flushBatch();
+  v.api.clearLogs();
+  assert.deepEqual([display(v, 'logWrapper'), tile()], ['', 'Waiting for new lines…'], 'Clear while streaming keeps the (empty) grid');
+  v.run("setNoDevice('ios', true)");
+  assert.equal(tile(), 'iPhone was unplugged', 'noDevice: the sidebar row reads Disconnected, the badge is idle, the grid says why it is empty');
+  v.send(1, 5); v.api.flushBatch();
+  assert.equal(tile(), '', 'a line hides it');
+});
+
+test('empty states: Clear while streaming, then Stop, then Start again shows the first-lines tile, not "Waiting for new lines…" (review F7)', () => {
+  const p = streamPage();
+  const tile = () => (p.doc.getElementById('gridEmpty').hidden ? '' : p.text('gridEmptyTitle'));
+  p.doc.hidden = false;
+  p.open('ios'); p.send(2); p.api.flushBatch();
+  p.api.clearLogs();
+  assert.deepEqual([p.run('shellState().cleared'), tile()], [true, 'Waiting for new lines…'], 'Clear while streaming');
+  p.run('disconnectIos()');
+  assert.deepEqual([p.view(), p.run('shellState().cleared')], ['livePanel', false], 'Stop: the device panel takes over and the Clear state ends with it');
+  p.open('ios');
+  assert.deepEqual([p.view(), p.run('shellState().cleared'), tile()], ['logWrapper', false, 'Waiting for the first lines from iPhone…'], 'a device started later');
+});
+
+// P5b: the arrival highlight (renderLiveTail asks grid.arrive, which budgets the lit rows per --t-arrival window).
+test('arrival: a flush that appends to a followed tail asks grid.arrive for the highlight; none on a rebuild or while reading', () => {
+  const v = boot();
+  v.doc.hidden = false;
+  v.run('globalThis.__hl = []; { const real = buildRow; buildRow = (m, isNew) => (__hl.push(isNew), real(m, isNew)); }');
+  v.run('globalThis.__asked = []; grid.arrive = n => (__asked.push(n), n <= 10)');
+  const flush = n => { v.run('__hl.length = 0; __asked.length = 0'); v.send(n, v.run('nextSeq')); v.api.flushBatch(); return [[...new Set(v.run('__hl'))], [...v.run('__asked')]]; };
+  v.run('liveSession.domStale = true');
+  assert.deepEqual(flush(2), [[false], []], 'a rebuild of a few rows (a stale tail) highlights nothing and spends no budget: the !full clause');
+  assert.deepEqual(flush(5), [[true], [5]], 'the gate is asked for the rows built, and says yes');
+  assert.deepEqual(flush(11), [[false], [11]], 'the gate says no: none lit');
+  assert.deepEqual(flush(10), [[true], [10]]);
+  v.run('liveSession.domStale = true');
+  assert.deepEqual(flush(2), [[false], []], 'a rebuild (stale tail) highlights nothing, even after a screenful has been built');
+  v.api.toggleAutoScroll();
+  v.doc.hidden = true;
+  assert.deepEqual(flush(2), [[], []], 'reading: the window is frozen, nothing is built or asked (#54)');
+  v.doc.hidden = false;
+  v.run("globalThis.__cleared = []; grid.clearArrival = tb => __cleared.push(tb)");
+  v.go('toFile');
+  assert.equal(v.run('__cleared[0] === liveSession.tbody'), true, 'switching away clears the highlight of the tbody it hides');
 });
