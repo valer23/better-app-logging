@@ -9,12 +9,16 @@
 # Routed through OpenRouter (the workflow passes the OPENROUTER_KEY secret as OPENROUTER_API_KEY).
 # Free (:free) models: no credits needed, but the account is capped at 50 free requests/day
 # (a PR costs ~2-6) and free endpoints may log prompts (acceptable: this repo is public).
-# The fallback covers rate limits or outages on the primary free endpoint.
+# The fallback covers rate limits, outages or unparseable answers from the primary.
+# Not inkling:free: OpenRouter gates it to agentic harnesses (403 for PR-Agent).
 model = "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"
-fallback_models = ["openrouter/thinkingmachines/inkling:free"]
-# OpenRouter-prefixed ids are not in PR-Agent's token table; pin the smaller of the two
-# context sizes OpenRouter reports (1M) so lookup never fails.
+fallback_models = ["openrouter/minimax/minimax-m3.1-flash:free"]
+# OpenRouter-prefixed ids are not in PR-Agent's token table; pin the context size
+# OpenRouter reports for both models (1M) so lookup never fails.
 custom_model_max_tokens = 1000000
+# PR-Agent's default max_model_tokens (32000) clips large diffs and drops whole files from
+# the review (#73 lost its tests). Free models are not billed per token; the cost is runtime.
+max_model_tokens = 200000
 # Verbose 0 = terse output. We prefer concise PR comments.
 verbosity_level = 0
 # Publish reviews as PR comments (default).
@@ -43,23 +47,51 @@ enable_review_labels_security = false
 enable_review_labels_effort = false
 # Focus the review checklist on what actually matters here.
 extra_instructions = """
-Repo conventions:
-- Rust 2021 edition, fmt + clippy enforced via CI (.github/workflows/ci.yml).
-- Single-binary Tauri v2 host (src-tauri/) + standalone HTML viewer (viewer/).
-- No separate frontend build step — viewer is embedded via include_str! at compile time.
-- Bundled adb + libimobiledevice tooling — never add a runtime dependency on system PATH for these.
-- Loopback-only network binds (127.0.0.1) on ports 8780/8765/8766. Never expose to non-loopback.
-- WebSocket Origin allowlist + CORS allowlist must stay tight.
+What this repo is:
+AppLogsViewer, a desktop app that streams live Android (`adb logcat`) and iOS (`idevicesyslog`)
+device logs into one viewer, and also opens saved log files (.logcat, .txt, .csv, .json). The
+log lines are device-controlled, untrusted input.
+
+Layout:
+- src-tauri/: Rust 2021, single-binary Tauri v2 host. bridge/android.rs + bridge/ios.rs run the
+  bundled tools and parse lines (parser.rs), ws_server.rs streams them over WebSocket (:8765
+  Android, :8766 iOS), http_server.rs serves the viewer on :8780. Bundled adb + libimobiledevice
+  (staged at build time by src-tauri/scripts/bundle-tooling-*, located by tooling.rs): never add a runtime
+  dependency on these from the system PATH.
+- viewer/applogs-viewer.html: the page, embedded with include_str! (http_server.rs).
+- viewer/assets/{css,js,fonts,icons}: embedded with include_bytes! through the FILES table in
+  src-tauri/src/viewer_assets.rs. A new or renamed asset needs its FILES line; the
+  assets_match_disk test fails otherwise. Fonts are pinned by viewer/assets/fonts/SHA256SUMS.
+- viewer/assets/js/*.js are classic scripts (not ES modules) that register on the global `ALV`
+  namespace: dom.js (DOM builders), ui.js (toasts, menus, popovers, tooltips, dialogs), keys.js
+  (shortcut registry, Esc stack), prefs.js (settings store), session.js (pure per-session view
+  state), grid.js (log grid), live.js (toolbar, status bar), shell.js (app shell, sidebar).
+- tests/viewer/*.test.mjs: zero-dependency tests run with `node --test` (Node 22) in CI. They
+  include static lints of the page and assets (HTML structure, id and handler contracts, XSS).
+- No npm, no package.json, no bundler or build step, no CDN: the app runs offline from
+  embedded files. cargo fmt + clippy + tests run in CI (.github/workflows/ci.yml).
+
+Security model (check before flagging):
+- Untrusted text reaches the DOM only as text. dom.js `el()` sets text via textContent or text
+  nodes and throws on HTML props; ui.js toasts and menus set title and desc via textContent;
+  log rows are built from text nodes. Before flagging XSS, find the sink in the code; do not
+  guess at code that is not in the diff. innerHTML may only be assigned '' (static.test.mjs
+  lints this).
+- CSP lives in src-tauri/tauri.conf.json (app.security.csp). Network binds are 127.0.0.1 only,
+  and ws_server.rs keeps an Origin allowlist (localhost/127.0.0.1:8780).
 
 Flag with HIGH severity:
-- Any non-loopback bind, broadened Origin/CORS allowlist, or removed CSP.
+- Any non-loopback bind, broadened Origin/CORS allowlist, or loosened or removed CSP.
 - Subprocess args built from user input without validation (UDID, search query, etc.).
-- innerHTML / outerHTML writes of log-derived (device-controlled) content.
-- Reintroduced LogStore writes without consumers — H8 ripped that out, do not bring it back.
+- innerHTML / outerHTML / insertAdjacentHTML / document.write with non-empty content.
+- New npm dependency, package.json, bundler, CDN script or remote font/stylesheet.
+- A viewer asset added or renamed without its viewer_assets.rs FILES entry.
+- Reintroduced LogStore writes without consumers: H8 removed that, do not bring it back.
 - Blocking I/O inside async (std::process::Command::output, fs reads) outside spawn_blocking.
-- Comment rot — references to deleted files (launcher.py, ios_bridge.py, search_shim.js, store.rs).
+- Comment rot: references to deleted files (launcher.py, ios_bridge.py, search_shim.js, store.rs).
 
-Skip nitpicks on: doc comments, README copy edits, formatting (handled by cargo fmt CI).
+Skip nitpicks on: doc comments, README copy edits, formatting (cargo fmt CI), and micro-costs
+such as one or two DOM lookups per key press.
 """
 
 [pr_description]
@@ -68,10 +100,15 @@ add_original_user_description = true
 keep_original_user_title = true
 generate_ai_title = false
 extra_instructions = """
-PR descriptions in this repo follow the pattern from PR #1 / #2:
-- Short Summary
-- Bulleted Changes (per file or per topic)
-- Test plan as a checklist
+PR descriptions in this repo use these ## headings, in this order. Skip a heading only when it
+does not apply (Fix is for bug fixes only). Keep them terse.
+- Summary: 1-2 lines, what changed and why.
+- What changed: bullets, by key file or module.
+- Problem / feature: the bug being fixed or the feature delivered.
+- Fix: bugs only; the root cause and how it was fixed.
+- Test plan: a [ ] checklist, manual and automated.
+- Deployment steps: migrations, env vars, secrets, restarts; "None" if pure code.
+- Verification: typecheck / lint / test status.
 Don't rewrite well-formed descriptions. Only fill in missing sections.
 """
 
@@ -90,6 +127,8 @@ Avoid suggestions that:
 - Reintroduce the native-search path (search_shim, /search route, store::search/scan).
 - Loosen CORS, Origin, or CSP allowlists.
 - Replace cargo fmt-blessed formatting with stylistic alternatives.
+- Add npm packages, a bundler, ES-module conversions or CDN assets to the viewer.
+- Swap textContent / dom.el() text for innerHTML or template-string markup.
 """
 
 [ignore]
