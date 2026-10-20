@@ -9,11 +9,12 @@
 # Routed through OpenRouter (the workflow passes the OPENROUTER_KEY secret as OPENROUTER_API_KEY).
 # Free (:free) models: no credits needed, but the account is capped at 50 free requests/day
 # (a PR costs ~2-6) and free endpoints may log prompts (acceptable: this repo is public).
-# The fallback covers rate limits or outages on the primary free endpoint.
+# The fallback covers rate limits, outages or unparseable answers from the primary.
+# Not inkling:free: OpenRouter gates it to agentic harnesses (403 for PR-Agent).
 model = "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"
-fallback_models = ["openrouter/thinkingmachines/inkling:free"]
-# OpenRouter-prefixed ids are not in PR-Agent's token table; pin the smaller of the two
-# context sizes OpenRouter reports (1M) so lookup never fails.
+fallback_models = ["openrouter/minimax/minimax-m3.1-flash:free"]
+# OpenRouter-prefixed ids are not in PR-Agent's token table; pin the context size
+# OpenRouter reports for both models (1M) so lookup never fails.
 custom_model_max_tokens = 1000000
 # Verbose 0 = terse output. We prefer concise PR comments.
 verbosity_level = 0
