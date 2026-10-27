@@ -9,6 +9,10 @@
      - the largest DOM row count of the shown table and of the live session's own tbody, next to
        FOLLOW_DOM_CAP and LIVE_DOM_CAP.
    Query: ?bench=<lines/s>[&burst=<lines/s during 1 s of every 5 s>][&scenario=follow|read|paused|behind][&secs=<5..120>]
+          [&q=<query text, URL-encoded>[&case=1][&re=1]][&cap=<lines>]
+     q       a filter applied before the run (setQuery, P6; case and re set Aa and .*), e.g. three active tokens:
+             &q=level%3AI%2B%20tag%3Ao%20%22bench%22 (level:I+ tag:o "bench", about two thirds of the lines pass).
+     cap     MAX_RETAINED for the run, so a 15 s run trims (the counts' trim path); paused sets its own 50 000.
      follow  Follow on (auto-scroll), the default.
      read    Follow off after 2 s with the table scrolled to the middle (frozen reading window, #54).
      paused  Pause on from the start, MAX_RETAINED lowered to 50 000 so the backlog overflows.
@@ -148,7 +152,7 @@
     clearInterval(timer);
     const behind = scenario === 'behind' ? switchChecks() : {};
     const result = {
-      scenario, rate, burst, secs, sent,
+      scenario, rate, burst, secs, sent, query, queryError, cap: MAX_RETAINED,
       flushes: flushes.length,
       flushP50Ms: pct(flushes, 0.5), flushP95Ms: pct(flushes, 0.95), flushMaxMs: pct(flushes, 1),
       feedP95Ms: pct(feeds, 0.95),
@@ -167,6 +171,14 @@
 
   iosLive = true;          // show the live table without a device
   refreshLiveView();
+  const query = q.get('q');
+  let queryError = null;
+  if (query !== null) {
+    const err = setQuery(query, { case: q.get('case') === '1', regex: q.get('re') === '1' });
+    if (err) { queryError = err.msg; console.warn(`dev-bench: q not applied: ${err.msg}`); }
+  }
+  const cap = parseInt(q.get('cap'), 10);
+  if (cap > 0) MAX_RETAINED = cap;
   if (scenario === 'paused') { MAX_RETAINED = 50000; togglePause(); }
   if (scenario === 'behind') {
     const lines = [];

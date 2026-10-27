@@ -4,7 +4,8 @@
 // document (tests/viewer/_load.mjs), document.hidden true: the drain takes its data path only.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadLegacy, stickyDocument } from './_load.mjs';
+import path from 'node:path';
+import { loadLegacy, stickyDocument, read, ASSETS } from './_load.mjs';
 
 const LV = ['VERBOSE', 'DEBUG', 'INFO', 'WARN', 'ERROR', 'ASSERT'];
 const TAGS = ['bt_stack', 'BluetoothGatt', 'chatty', 'kernel'];
@@ -144,4 +145,21 @@ test('the level toggles\' tooltips carry the counts: lines of each level that pa
   assert.equal(v.run('liveSession.filtered.length'), 2, 'bt_stack lines 0 (V) and 4 (E); line 8 (I) is hidden');
   assert.deepEqual([...v.run('levelBtns.map(b => b.title)')], ['Verbose, 1 line', 'Debug, 0 lines', 'Info, 1 line', 'Warning, 0 lines', 'Error, 1 line', 'Fatal, 0 lines'],
     'Info still counts its line: counts ignore the level filter');
+});
+
+test('dev-bench applies &q (with &case and &re) and &cap before the run and reports them; an invalid &q is reported, not applied', () => {
+  const bench = search => {
+    const v = boot();
+    v.run('globalThis').URLSearchParams = URLSearchParams;   // the loader's sandbox has no URL API of its own
+    v.run(`location.search = ${JSON.stringify(search)}`);
+    v.run(read(path.join(ASSETS, 'js', 'dev-bench.js')));
+    return v;
+  };
+  const v = bench('?bench=2000&q=level%3AI%2B%20tag%3Ao%20%22bench%22&case=1&cap=100000');
+  assert.equal(v.run('activeQuery.key'), v.run(`ALV.query.build('level:I+ tag:o "bench"', { case: true }, deviceInfo).q.key`));
+  assert.equal(v.run('MAX_RETAINED'), 100000);
+  const bad = bench('?bench=2000&q=%2Ftime(%2F&scenario=paused&cap=7');
+  assert.equal(bad.run('filterGen'), 0, 'the invalid query left the filter alone');
+  assert.equal(bad.run('MAX_RETAINED'), 50000, 'the paused scenario sets its own cap after &cap');
+  assert.match(read(path.join(ASSETS, 'js', 'dev-bench.js')), /\bquery, queryError, cap: MAX_RETAINED,/, 'the result reports them');
 });
