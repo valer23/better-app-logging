@@ -21,7 +21,7 @@ the PR body says which part landed. P16 requires every box ticked, except rows b
 - [ ] **Level toggles V D I W E A** → Level chips V D I W E **F** (= Fatal / Assert) with live counts, `level:`, ⌥ letter _(P6, P13)_
 - [ ] **Platform toggles Android / iOS** → Device chips (per device, with platform badge), `plat:` / `dev:` tokens, sidebar device row and status bar device button _(P6)_
 - [ ] **Auto-scroll toggle** → Toolbar Follow toggle (End); turns off on scroll-up and selection _(P5)_
-- [ ] **Pause / Resume** → Toolbar Pause (Space), "Paused · N buffered" badge, Resume pill _(P4, P5)_
+- [x] **Pause / Resume** → Toolbar Pause (Space), "Paused · N buffered" badge, Resume pill _(P4, P5)_
 - [ ] **Clear** → Toolbar far-right Clear (⌘⌫) with a 10 s Undo; "New session" in More _(P4, P12)_
 - [ ] **Stats "332 / 332 lines" + discarded notes** → Chip row "47 106 of 48 310 lines", status bar "Retained 48 310 of 500 000", buffer-full pill text, export notes _(P4, P6)_
 - [ ] **Export menu (Plain text / CSV / JSON, Filtered / All, warning note)** → Toolbar Export menu with the same formats and captions, scopes Filtered / All / Around marker / Selection, the same gap and discard notes; defaults in Settings → Export _(P3 (portal), P11, P14)_
@@ -41,8 +41,8 @@ the PR body says which part landed. P16 requires every box ticked, except rows b
 - [ ] **Device badge (WebSocket `devices` frame)** → Card meta, "Show raw device info", drawer Device field, bug report header _(P8, P9, P12)_
 - [ ] **Columns platform, Timestamp, PID-TID, Tag, App/Device, Lvl, Message** → The same seven columns in the order Platform, Time, Lvl, Tag, App / Device, PID–TID, Message; resizable, reorderable and hideable (Settings → Log view) _(P5, P14)_
 - [ ] **PID → package mapping (adb shell ps every 5 s)** → App / Device column and drawer field; switch and interval in Settings → Devices _(P5, P9, P14)_
-- [ ] **Column resize handles** → Kept, keyboard operable, plus reorder _(P5)_
-- [ ] **Scroll-back beyond 6 000 rows** → Unchanged; Home jumps to the oldest retained line _(P5)_
+- [x] **Column resize handles** → Kept, keyboard operable, plus reorder _(P5)_
+- [x] **Scroll-back beyond 6 000 rows** → Unchanged; Home jumps to the oldest retained line _(P5)_
 - [ ] **Row click selection (stops auto-scroll)** → The same, plus ⇧/⌘-click multi-select; ↵ or double-click opens the drawer _(P5, P9)_
 - [ ] **Stall modal (Re-pair / Dismiss, suppressed while paused)** → Stall sheet (Re-pair iPhone / Keep waiting), still suppressed while paused; sidebar "Stalled 15 s"; Live logs stall banner _(P8)_
 - [ ] **Dropzone + Browse file** → Window-wide drop overlay (new session or add to live), Devices drop strip, ⌘O, empty states _(P8, P11)_
@@ -56,7 +56,7 @@ the PR body says which part landed. P16 requires every box ticked, except rows b
 
 - [ ] **#45 retention cap: "N older discarded" / "N discarded, resume skips to newest" with tooltip** → status bar Retained text; `#exportNote` stays inside the Export menu _(P4, P11)_
 - [ ] **#46 server drops per platform, tooltip, reset on Clear (since P2 a loaded file is its own session and leaves the live counts alone)** → status bar drops button, sidebar device rows, gap rows _(P4, P10)_
-- [ ] **#54 Follow off freezes the table; new lines load only at the bottom** → unchanged semantics under Follow _(P5)_
+- [x] **#54 Follow off freezes the table; new lines load only at the bottom** → unchanged semantics under Follow _(P5)_
 - [ ] **#55 every reset goes through `discardBacklog(s)` for the session it resets: Clear (the shown session), file load (the file session), Undo; a session switch resets nothing and the live backlog survives a file load** → every reset path _(P2 done for Clear, file load and switch; P12 Undo)_
-- [ ] **#57 "N lines below · Jump to latest" pill, `updateNewerPill()` single hook, 56 px spacer** → jump pill, bottom-centre, portalled _(P5)_
-- [ ] **#58 sliding scroll-back through the retained history and "lines X–Y of Z" hint** → hint in the status bar while Follow is off _(P4, P5)_
+- [x] **#57 "N lines below · Jump to latest" pill, `updateNewerPill()` single hook, 56 px spacer** → jump pill, bottom-centre, portalled _(P5)_
+- [x] **#58 sliding scroll-back through the retained history and "lines X–Y of Z" hint** → hint in the status bar while Follow is off _(P4, P5)_
