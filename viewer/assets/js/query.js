@@ -279,6 +279,31 @@
     return compile(p.tokens, opts, devices);
   }
 
+  // P6a: the legacy filter bar as query text, so the old controls run through compile(). st = { search, case, regex,
+  // tag, pid, levels (names), plats (platform names) }. The search box is one phrase (or one /regex/ in regex mode),
+  // the Tag box one tag: token, the PID / App box pid:N when it is a number else app:, the level and platform toggles
+  // one level: and one dev: token. → text, or null when the regex-mode search is not a valid regex.
+  function fromLegacy(st) {
+    const out = [];
+    let mask = 0;
+    for (const l of st.levels) if (LV[l] >= 0) mask |= 1 << LV[l];
+    const lt = levelText(mask);
+    if (lt) out.push(lt);
+    const plats = new Set(st.plats);
+    const a = plats.has('android');
+    const i = plats.has('ios');
+    if (!a || !i) out.push(a ? 'dev:android' : i ? 'dev:ios' : 'dev:none');
+    if (st.tag) out.push(`tag:"${escQ(st.tag)}"`);
+    if (st.pid) out.push(/^\d+$/.test(st.pid) ? `pid:${st.pid}` : `app:"${escQ(st.pid)}"`);
+    if (st.search) {
+      if (st.regex) {
+        try { new RegExp(st.search); } catch (e) { return null; }
+        out.push(`/${st.search.replace(/\\[\s\S]|\//g, x => (x === '/' ? '\\/' : x))}/`);
+      } else out.push(`"${escQ(st.search)}"`);
+    }
+    return out.join(' ');
+  }
+
   const ALV = g.ALV || (g.ALV = {});
-  ALV.query = Object.freeze({ parse, serialize, compile, build, levelMask, levelText, LV, KEYS: Object.freeze(KEYS.slice()) });
+  ALV.query = Object.freeze({ parse, serialize, compile, build, levelMask, levelText, fromLegacy, LV, KEYS: Object.freeze(KEYS.slice()) });
 })(typeof window !== 'undefined' ? window : globalThis);
