@@ -1,0 +1,116 @@
+// The page side of the query (roadmap P6): the legacy script compiles the filter bar into ALV.query and runs it in the
+// drain, keeps every session's counts with it (flush, trim, Clear, file load, refilter), keeps the last valid filter on an
+// invalid regex, and shows the counts in the level toggles' tooltips. Run on the legacy inline script with a sticky
+// document (tests/viewer/_load.mjs), document.hidden true: the drain takes its data path only.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { loadLegacy, stickyDocument } from './_load.mjs';
+
+const LV = ['VERBOSE', 'DEBUG', 'INFO', 'WARN', 'ERROR', 'ASSERT'];
+const TAGS = ['bt_stack', 'BluetoothGatt', 'chatty', 'kernel'];
+const frame = (i, o = {}) => JSON.stringify({ type: 'log', ts: `2026 Oct 14 15:53:43.${String(i).padStart(6, '0')}`, pid: 50 + (i % 3), tid: 0,
+  tag: TAGS[i % 4], app: i % 3 ? '' : 'com.x', lvl: LV[i % 6], msg: `line ${i}`, ...o });
+
+function boot() {
+  const doc = stickyDocument();
+  const { api, run } = loadLegacy(['handleWsMsg', 'flushBatch', 'clearLogs', 'handleFile', 'selectSession', 'togglePause'], { document: doc });
+  let n = 0;
+  return {
+    api, run, doc,
+    send(count, platform = 'ios') { for (let i = 0; i < count; i++, n++) api.handleWsMsg({ data: frame(n) }, platform); },
+    field(id, value) { doc.getElementById(id).value = value; },
+    // The session's counts, and a full recount of its lines under the active query (null levels while it is stale).
+    counts(s = 'liveSession') {
+      const plain = c => ({ lvl: [...c.lvl], tags: Array.from(c.tags).map(([k, v]) => `${k}=${v}`).sort(), apps: Array.from(c.apps).map(([k, v]) => `${k}=${v}`).sort() });
+      const stale = run(`${s}.query !== filterGen`);
+      const got = plain(run(`${s}.counts`));
+      const want = plain(run(`ALV.counts.recount(ALV.counts.create(), ${s}.all, ${stale} ? null : activeQuery.gate)`));
+      if (stale) got.lvl = want.lvl;
+      return [got, want];
+    },
+  };
+}
+
+test('queryChanged turns the filter bar into query text; a filter that compiles the same refilters nothing', () => {
+  const v = boot();
+  v.send(30); v.api.flushBatch();
+  v.field('search', 'line 1');
+  v.run('queryChanged()');
+  assert.equal(v.run('filterGen'), 1);
+  assert.deepEqual(v.run('liveSession.filtered.map(m => m.msg)').join(','), 'line 1,line 10,line 11,line 12,line 13,line 14,line 15,line 16,line 17,line 18,line 19');
+  v.run('queryChanged()');
+  assert.equal(v.run('filterGen'), 1, 'the same text compiles to the same key: no refilter');
+  v.run('toggleSearchMod("regex")');
+  assert.equal(v.run('filterGen'), 2, '.* turns the search into a /regex/');
+  v.run("enabledLevels.delete('VERBOSE'); queryChanged()");
+  assert.equal(v.run('liveSession.filtered.length'), 9, 'line 1 and 10-19 without the VERBOSE ones (12, 18)');
+  assert.equal(v.run('setQuery("tag:bt")'), null);
+  assert.equal(v.run('liveSession.filtered.length'), 8, 'setQuery replaces the whole filter: tag bt_stack, every level');
+  assert.equal(v.run("liveSession.filtered.filter(m => m.lvl === 'VERBOSE').length"), 3);
+  assert.match(v.run('setQuery("tg:bt").msg'), /^Unknown field 'tg'/);
+  assert.equal(v.run('liveSession.filtered.length'), 8, 'an invalid query changes nothing');
+});
+
+test('an invalid regex search keeps the last valid filter applied and marks the .* button; a valid one clears the mark', () => {
+  const v = boot();
+  v.send(30); v.api.flushBatch();
+  v.run('toggleSearchMod("regex")');
+  v.field('search', 'line 2.');
+  v.run('queryChanged()');
+  const gen = v.run('filterGen');
+  assert.equal(v.run('liveSession.filtered.length'), 10, '/line 2./: line 20 to line 29');
+  v.field('search', 'line (2');
+  v.run('queryChanged()');
+  assert.deepEqual([v.run('filterGen'), v.run('liveSession.filtered.length')], [gen, 10], 'the last valid filter stays');
+  assert.equal(v.doc.getElementById('searchRegexBtn').classList.contains('error'), true);
+  v.field('search', 'line (2)');
+  v.run('queryChanged()');
+  assert.equal(v.doc.getElementById('searchRegexBtn').classList.contains('error'), false);
+  assert.equal(v.run('liveSession.filtered.length'), 11);
+});
+
+test('counts equal a full recount after a seeded sequence of frames, flushes, trims, a resume after overflow, Clear, filter changes and a session switch', () => {
+  const v = boot();
+  v.run('MAX_RETAINED = 120');
+  let seed = 5;
+  const r = n => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+  for (let step = 0; step < 400; step++) {
+    const op = r(12);
+    if (op < 6) v.send(1 + r(60), r(2) ? 'ios' : 'android');
+    else if (op === 6) v.api.flushBatch();
+    else if (op === 7) { v.field('tagFilter', ['', 'bt', 'kernel', 'x'][r(4)]); v.field('search', ['', 'line 1', '2'][r(3)]); v.run('queryChanged()'); }
+    else if (op === 8) v.run(`togglePlatform('${r(2) ? 'ios' : 'android'}')`);
+    else if (op === 9 && r(4) === 0) v.api.clearLogs();
+    else if (op === 10) v.api.selectSession(v.run(r(2) ? 'fileSession' : 'liveSession'));
+    else if (op === 11) { v.api.togglePause(); v.send(150); v.run('trimPausedBacklog(liveSession)'); v.api.togglePause(); }
+    const [got, want] = v.counts();
+    assert.deepEqual(got, want, `step ${step}, op ${op}`);
+  }
+  v.api.selectSession(v.run('liveSession'));
+  v.api.flushBatch();
+  const [got, want] = v.counts();
+  assert.deepEqual(got, want, 'back on Live, refiltered');
+  assert.ok(v.run('liveSession.discarded') > 0, 'the sequence trimmed');
+});
+
+test('a file load counts its tags and apps at once and its levels when rendered; Clear on it empties every count', () => {
+  const v = boot();
+  const text = Array.from({ length: 6 }, (_, i) => `Oct 14 15:53:43.00000${i} ${i % 2 ? 'bluetoothd' : 'SpringBoard'}(X)[57] <${i % 3 ? 'Notice' : 'Error'}>: file ${i}`).join('\n');
+  v.api.selectSession(v.run('fileSession'));
+  v.api.handleFile({ name: 'a.log', text });
+  assert.deepEqual(Array.from(v.run('fileSession.counts.tags')).map(([k, n]) => `${k}=${n}`).sort(), ['SpringBoard(X)=3', 'bluetoothd(X)=3']);
+  v.run('applyFilters()');
+  assert.deepEqual([...v.run('fileSession.counts.lvl')], [0, 0, 4, 0, 2, 0]);
+  v.api.clearLogs();
+  assert.deepEqual([[...v.run('fileSession.counts.lvl')], v.run('fileSession.counts.tags.size')], [[0, 0, 0, 0, 0, 0], 0]);
+});
+
+test('the level toggles\' tooltips carry the counts: lines of each level that pass the rest of the filter', () => {
+  const v = boot();
+  v.send(12); v.api.flushBatch();
+  v.field('tagFilter', 'bt');
+  v.run("enabledLevels.delete('INFO'); queryChanged(); syncLevelTitles()");
+  assert.equal(v.run('liveSession.filtered.length'), 2, 'bt_stack lines 0 (V) and 4 (E); line 8 (I) is hidden');
+  assert.deepEqual([...v.run('levelBtns.map(b => b.title)')], ['Verbose, 1 line', 'Debug, 0 lines', 'Info, 1 line', 'Warning, 0 lines', 'Error, 1 line', 'Fatal, 0 lines'],
+    'Info still counts its line: counts ignore the level filter');
+});

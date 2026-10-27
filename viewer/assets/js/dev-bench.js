@@ -175,7 +175,7 @@
         tag: TAGS[i % TAGS.length], app: '', lvl: LEVELS[i % LEVELS.length], msg: `file line ${i}`, platform: 'ios' });
     }
     discardBacklog(fileSession);              // what handleFile does with a parsed file
-    ALV.session.reset(fileSession, lines);
+    resetLines(fileSession, lines);
     fileSession.query = -1;
     selectSession(fileSession);               // refilters and renders the first page
     const t = document.getElementById('logTable');

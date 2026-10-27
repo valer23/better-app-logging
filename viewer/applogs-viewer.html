@@ -457,7 +457,9 @@ const fileSession = ALV.session.create('file', 'File');
 let cur = liveSession;
 liveSession.tbody = document.getElementById('tbody');   // the shown session's tbody carries id="tbody"
 fileSession.tbody = document.createElement('tbody');
-let filterGen = 0;   // bumped by queryChanged(); a session whose `query` differs is refiltered when shown
+liveSession.counts = ALV.counts.create();   // the level, tag and app counts (assets/js/counts.js), kept by the drain
+fileSession.counts = ALV.counts.create();
+let filterGen = 0;   // bumped by setQuery() when the filter changed; a session whose `query` differs is refiltered when shown
 // A session's DOM work is skipped while it is off screen: hidden window, or another session shown.
 function offscreen(s) { return s !== cur || document.hidden; }
 let wsAndroid = null, wsIos = null;
@@ -470,6 +472,10 @@ let grid = null;    // the log grid's header and ARIA (ALV.createGrid, assets/js
 const wsLines = { android: 0, ios: 0 };
 const liveStatus = { android: { state: 'disconnected', text: 'Disconnected' }, ios: { state: 'disconnected', text: 'Disconnected' } };
 const deviceInfo = { android: { id: '', name: '' }, ios: { id: '', name: '' } };
+// The compiled query (assets/js/query.js) that every session's `filtered` follows; setQuery() replaces it. Per line, the drain
+// asks activeQuery.gate(m) for the line's level index (-1: hidden by something other than the level filter), counts it, and
+// keeps the line when activeQuery.lvOk says its level is shown.
+let activeQuery = ALV.query.build('', {}, deviceInfo).q;
 let iosDriverMissing = false;
 let androidLive = false, iosLive = false;
 // Per platform, while its socket is open: the bridge reported the phone gone (setNoDevice). Reset when a socket opens.
@@ -626,13 +632,21 @@ let nextSeq = 0;                // arrival order of live lines; never reset, so 
 // The loss counters (discarded, overflowed, seqFloor, dropped) are per session: see session.js.
 
 // ── Level toggles ──
-LEVELS.forEach(lvl => {
+const levelBtns = LEVELS.map(lvl => {
   const btn = document.createElement('button');
   btn.className = 'lvl-btn active'; btn.dataset.lvl = lvl;
   btn.textContent = LEVEL_CHAR[lvl]; btn.title = lvl;
   btn.onclick = () => { enabledLevels.has(lvl) ? enabledLevels.delete(lvl) : enabledLevels.add(lvl); btn.classList.toggle('active', enabledLevels.has(lvl)); queryChanged(); };
   document.getElementById('levelToggles').appendChild(btn);
+  return btn;
 });
+// Each level toggle's tooltip carries its count (P6b's level chips show it): the shown session's lines of that level that
+// pass the rest of the filter, whatever the level toggles say. On the shell's tick (twice a second), written only on change.
+const LEVEL_TITLE = ['Verbose', 'Debug', 'Info', 'Warning', 'Error', 'Fatal'];
+function syncLevelTitles() {
+  const lv = cur.counts.lvl;
+  levelBtns.forEach((b, k) => { const t = `${LEVEL_TITLE[k]}, ${ALV.shellPure.num(lv[k])} ${lv[k] === 1 ? 'line' : 'lines'}`; if (b.title !== t) b.title = t; });
+}
 
 // ── Platform toggles ──
 const platBtns = {};
@@ -925,6 +939,7 @@ liveUi = ALV.createLive({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, 
   actions: { togglePause, toggleAutoScroll, clear: clearLogs, zoom: setLogZoom, openFile: openLogFile, setGlass, togglePlatform } });
 grid = ALV.createGrid({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, keys: ALV.keys, prefs: ALV.prefs, shell, state: shellState,
   actions: { jumpToEnd, jumpToOldest, togglePause, toggleAutoScroll, updateNewerPill, resetFilter } });
+shell.onTick(syncLevelTitles);
 function shellState() {
   return {
     cur, sessions: [liveSession, fileSession],
@@ -1026,7 +1041,7 @@ function handleFile(file) {
 
       document.getElementById('loadingText').textContent = `Rendering ${msgs.length.toLocaleString()} lines…`;
       discardBacklog(fileSession);
-      ALV.session.reset(fileSession, msgs);
+      resetLines(fileSession, msgs);
       fileSession.query = -1;   // not filtered yet: rendered below, or by selectSession if the user switched away meanwhile
       if (file.name) fileSession.name = file.name;   // the SESSIONS row shows it
       shellSync();
@@ -1496,9 +1511,11 @@ function flushBatch() {
   }
 
   const batch = pendingBatch; pendingBatch = [];    // O(1) swap, no splice
-  // While another session is shown and the filter changed (stale query), new lines skip the filter:
-  // `filtered` stops growing until restoreView refilters the live session.
-  const pass = s.query === filterGen ? makeFilter() : null;   // read filter inputs once per flush, not per row
+  // While another session is shown and the filter changed (stale query), new lines skip the filter and the level
+  // counts: `filtered` stops growing until restoreView refilters the live session (which recounts the levels).
+  const q = s.query === filterGen ? activeQuery : null;   // compiled once per filter change, not per flush or row
+  const gate = q === null ? null : q.gate, lvOk = q === null ? null : q.lvOk;
+  const counts = s.counts, lv = counts.lvl, countLine = ALV.counts.add;
   const all = s.all, filtered = s.filtered;         // trims splice in place, so both stay valid for the chunk
   if (s.renderFrom < 0) s.renderFrom = filtered.length;
   const t0 = performance.now();
@@ -1512,7 +1529,8 @@ function flushBatch() {
       const m = { ts: d.ts, pid: d.pid, tid: d.tid, tag: d.tag,
                   app: d.app||'', lvl: d.lvl, msg: d.msg, platform: d.platform, seq: nextSeq++ };
       all.push(m);
-      if (pass !== null && pass(m)) filtered.push(m);
+      countLine(counts, m);
+      if (gate !== null) { const k = gate(m); if (k >= 0) { lv[k]++; if (lvOk[k]) filtered.push(m); } }
     }
   } catch (err) {
     // Don't lose the rest of the backlog; drop only the frame that threw.
@@ -1701,7 +1719,7 @@ function clearLogs() {
   // shows (refreshLiveView, #70), and a device started after it shows "Waiting for the first lines from …".
   if (s === liveSession && (androidLive || iosLive)) liveClearedSeq = nextSeq;
   discardBacklog(s);
-  ALV.session.reset(s, []);
+  resetLines(s, []);
   s.tbody.innerHTML = '';
   if (s.kind === 'file') {
     fileLoadGen++;   // a load still reading or waiting to render is cancelled (see handleFile)
@@ -1712,6 +1730,13 @@ function clearLogs() {
   updateStats(); updateExportVisibility(); updateNewerPill(); shellSync();
 }
 
+// Every reset of a session's lines (Clear, a file load) goes through here, so its counts are rebuilt with them: the tag and
+// app maps now, the level counts on its next refilter (a file load sets its `query` stale; Clear leaves no line to count).
+function resetLines(s, lines) {
+  ALV.session.reset(s, lines);
+  ALV.counts.recount(s.counts, lines, null);
+}
+
 // ── Live retention ──
 // The trim is pure and per session (ALV.session.trim): it drops the oldest live lines in place,
 // keeps seq-less lines pinned, and moves the window indexes, the selection and the counters with
@@ -1719,7 +1744,9 @@ function clearLogs() {
 // dropAll: drop every live line (resume after a backlog overflow).
 function trimRetained(s, dropAll = false) {
   if (!dropAll && !(s.all.length > MAX_RETAINED)) return;   // fast path; NaN/Infinity = no cap
-  const cutoff = ALV.session.trim(s, MAX_RETAINED, TRIM_FRACTION, dropAll, nextSeq);
+  // The dropped run leaves the counts first; a stale session's level counts are rebuilt by its refilter instead.
+  const cutoff = ALV.session.trim(s, MAX_RETAINED, TRIM_FRACTION, dropAll, nextSeq,
+    (all, from, to) => ALV.counts.remove(s.counts, all, from, to, s.query === filterGen ? activeQuery.gate : null));
   if (cutoff < 0) return;
   dropTrimmedRows(s, cutoff);
   if (s === cur) updateStats();
@@ -1911,7 +1938,6 @@ function updateExportVisibility() {
 // ── Filtering ──
 let searchCaseSensitive = false;
 let searchRegexMode     = false;
-let searchRegex         = null; // compiled regex for current query (null when invalid or plain mode)
 
 function toggleSearchMod(kind) {
   if (kind === 'case')  { searchCaseSensitive = !searchCaseSensitive; document.getElementById('searchCaseBtn').classList.toggle('active', searchCaseSensitive); }
@@ -1919,58 +1945,25 @@ function toggleSearchMod(kind) {
   queryChanged();
 }
 
-function _compileSearchRegex(query) {
-  // Returns RegExp or null. Sets `error` class on regex button when invalid.
-  if (!query) return null;
-  const flags = searchCaseSensitive ? 'g' : 'gi';
-  const btn = document.getElementById('searchRegexBtn');
-  try {
-    let re;
-    if (searchRegexMode) {
-      re = new RegExp(query, flags);
-    } else {
-      const escQ = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      re = new RegExp(escQ, flags);
-    }
-    if (btn) btn.classList.remove('error');
-    return re;
-  } catch (e) {
-    if (btn && searchRegexMode) btn.classList.add('error');
-    return null;
-  }
+// The query every session follows (P6): setQuery compiles `text` (assets/js/query.js) and, when the compiled filter differs
+// from the active one, makes it active, bumps filterGen and refilters the session on screen; the others are refiltered
+// when they are shown again (restoreView compares their `query` with filterGen). An invalid query changes nothing: the
+// last valid filter stays applied, and the error ({ start, end, msg }) is returned. opts: { case, regex }.
+function setQuery(text, opts) {
+  const r = ALV.query.build(text, opts || {}, deviceInfo);
+  if (r.error) return r.error;
+  if (r.q.key !== activeQuery.key) { activeQuery = r.q; filterGen++; applyFilters(); }
+  return null;
 }
-
-function msgMatches(msg, query) {
-  if (!query) return true;
-  if (searchRegex) {
-    searchRegex.lastIndex = 0;
-    return searchRegex.test(msg);
-  }
-  // searchRegex compilation failed (invalid user regex) — match nothing.
-  return false;
+// The filter bar changed (until P6b's query bar): its controls become query text (ALV.query.fromLegacy). A regex-mode
+// search that is not a valid regex keeps the last valid filter and marks the .* button.
+function queryChanged() {
+  const val = id => document.getElementById(id).value;
+  const text = ALV.query.fromLegacy({ search: val('search'), case: searchCaseSensitive, regex: searchRegexMode,
+    tag: val('tagFilter'), pid: val('pidFilter'), levels: enabledLevels, plats: enabledPlatforms });
+  const bad = text === null || setQuery(text, { case: searchCaseSensitive }) !== null;
+  document.getElementById('searchRegexBtn').classList.toggle('error', bad && searchRegexMode);
 }
-
-// Factory so batch callers (flushBatch, applyFilters) read the DOM inputs once
-// per pass instead of once per message.
-function makeFilter() {
-  const s = currentSearch;
-  const t = document.getElementById('tagFilter').value;
-  const p = document.getElementById('pidFilter').value;
-  // Tag/PID filters stay simple case-insensitive substrings — matches typical log-tool UX.
-  const tLow = t.toLowerCase();
-  const pLow = p.toLowerCase();
-  return m => {
-    if (!enabledLevels.has(m.lvl) || !enabledPlatforms.has(m.platform)) return false;
-    if (s && !msgMatches(m.msg, s))                                          return false;
-    if (t && !m.tag.toLowerCase().includes(tLow))                            return false;
-    if (p && !String(m.pid).includes(p) && !m.app.toLowerCase().includes(pLow)) return false;
-    return true;
-  };
-}
-
-// The filter inputs changed: every session's `filtered` is out of date. The shown one is refiltered
-// now; the others when they are shown again (restoreView compares their `query` with filterGen).
-function queryChanged() { filterGen++; applyFilters(); }
 // The grid's empty-state fixes (spec "Log grid", no matches): 'levels' turns every level back on, 'devices' shows both
 // platforms, 'tag' clears the tag filter, 'all' (Reset filter) does all three and clears the search and PID / App.
 function resetFilter(what) {
@@ -1985,12 +1978,16 @@ function resetFilter(what) {
   shellSync();
 }
 
-// Recompiles the search and rebuilds `s.filtered` for the current filter generation; no DOM work.
+// Rebuilds `s.filtered` and the level counts for the active query, in one pass; no DOM work.
 function refilterSession(s) {
   s.query = filterGen;
-  currentSearch = document.getElementById('search').value;
-  searchRegex   = _compileSearchRegex(currentSearch);
-  s.filtered = s.all.filter(makeFilter());
+  const all = s.all, gate = activeQuery.gate, lvOk = activeQuery.lvOk, lv = s.counts.lvl, out = [];
+  lv.fill(0);
+  for (let i = 0; i < all.length; i++) {
+    const m = all[i], k = gate(m);
+    if (k >= 0) { lv[k]++; if (lvOk[k]) out.push(m); }
+  }
+  s.filtered = out;
 }
 
 // Refilters and re-renders the session on screen with the current filter inputs.
@@ -2044,32 +2041,24 @@ function statText(id, text) {
   if (el._statText !== text) { el._statText = text; el.textContent = text; }
 }
 
-let currentSearch = '';
-
-// Build a DocumentFragment of text + <mark> nodes for the message cell.
+// Build a DocumentFragment of text + one <mark> for the message cell: the first hit of the query's first text term (`re`,
+// activeQuery.mark: non-global, so no lastIndex state), at most three nodes more than plain text.
 // All log content reaches the DOM exclusively via textContent — no string
 // concatenation into innerHTML, so a hostile log line cannot inject markup.
-// Honors the same compiled regex as `makeFilter` (case + regex toggles).
-function buildMessageNodes(s, q) {
+function buildMessageNodes(s, re) {
   const frag = document.createDocumentFragment();
   const str = s == null ? '' : String(s);
-  if (!q || !searchRegex) {
+  const mm = re ? re.exec(str) : null;
+  if (!mm || !mm[0].length) {   // no hit, or an empty one (a regex such as /x*/)
     frag.appendChild(document.createTextNode(str));
     return frag;
   }
-  // Fresh stateful regex — preserves source + flags including the `g` flag.
-  const re = new RegExp(searchRegex.source, searchRegex.flags);
-  let last = 0, mm;
-  // Guard against zero-width matches that would loop forever.
-  while ((mm = re.exec(str)) !== null) {
-    if (mm.index > last) frag.appendChild(document.createTextNode(str.slice(last, mm.index)));
-    const mark = document.createElement('mark');
-    mark.textContent = mm[0];
-    frag.appendChild(mark);
-    last = mm.index + mm[0].length;
-    if (mm[0].length === 0) re.lastIndex++;
-  }
-  if (last < str.length) frag.appendChild(document.createTextNode(str.slice(last)));
+  if (mm.index) frag.appendChild(document.createTextNode(str.slice(0, mm.index)));
+  const mark = document.createElement('mark');
+  mark.textContent = mm[0];
+  frag.appendChild(mark);
+  const end = mm.index + mm[0].length;
+  if (end < str.length) frag.appendChild(document.createTextNode(str.slice(end)));
   return frag;
 }
 
@@ -2116,7 +2105,7 @@ function buildRow(m, isNew) {
 
   const msgTd = document.createElement('td');
   msgTd.className = 'c-msg';
-  msgTd.appendChild(buildMessageNodes(m.msg, currentSearch));
+  msgTd.appendChild(buildMessageNodes(m.msg, activeQuery.mark));
   tr.appendChild(msgTd);
 
   return tr;
