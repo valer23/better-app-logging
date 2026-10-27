@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { loadLegacy, stickyDocument, read, ASSETS } from './_load.mjs';
+import { loadLegacy, stickyDocument, read, ASSETS, rng } from './_load.mjs';
 
 const LV = ['VERBOSE', 'DEBUG', 'INFO', 'WARN', 'ERROR', 'ASSERT'];
 const TAGS = ['bt_stack', 'BluetoothGatt', 'chatty', 'kernel'];
@@ -101,20 +101,32 @@ test('with an invalid regex in the box every other legacy control still applies;
   assert.equal(v.run("liveSession.filtered.every(m => /line (2)/.test(m.msg))"), true, 'a valid regex takes over again');
 });
 
-test('counts equal a full recount after a seeded sequence of frames, flushes, trims, a resume after overflow, Clear, filter changes and a session switch', () => {
+test('counts equal a full recount after a seeded sequence of frames, flushes, trims, a resume after overflow, Clear, filter and level changes and a session switch', () => {
   const v = boot();
   v.run('MAX_RETAINED = 120');
-  let seed = 5;
-  const r = n => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
-  for (let step = 0; step < 400; step++) {
+  const r = rng(5);
+  const ran = new Array(12).fill(0);   // a generator that skips ops would pass vacuously, so every op is tallied and asserted below
+  const seen = { liveLines: 0, staleTrims: 0, staleFlushes: 0, clears: 0, resumes: 0, fileSteps: 0 };
+  for (let step = 0; step < 3000; step++) {
     const op = r(12);
-    if (op < 6) v.send(1 + r(60), r(2) ? 'ios' : 'android');
-    else if (op === 6) v.api.flushBatch();
-    else if (op === 7) { v.field('tagFilter', ['', 'bt', 'kernel', 'x'][r(4)]); v.field('search', ['', 'line 1', '2'][r(3)]); v.run('queryChanged()'); }
-    else if (op === 8) v.run(`togglePlatform('${r(2) ? 'ios' : 'android'}')`);
-    else if (op === 9 && r(4) === 0) v.api.clearLogs();
+    ran[op]++;
+    const staleBefore = v.run('liveSession.query !== filterGen'), discardedBefore = v.run('liveSession.discarded'), lenBefore = v.run('liveSession.all.length');
+    if (op < 5) v.send(1 + r(60), r(2) ? 'ios' : 'android');
+    else if (op === 5) v.api.flushBatch();
+    else if (op === 6) { v.field('tagFilter', ['', 'bt', 'kernel', 'x'][r(4)]); v.field('search', ['', 'line 1', '2'][r(3)]); v.run('queryChanged()'); }
+    else if (op === 7) v.run(`togglePlatform('${r(2) ? 'ios' : 'android'}')`);
+    else if (op === 8) v.run(`{ const l = ${JSON.stringify(LV)}[${r(6)}]; enabledLevels.has(l) ? enabledLevels.delete(l) : enabledLevels.add(l); queryChanged(); }`);
+    else if (op === 9) { if (r(3) === 0) { v.api.clearLogs(); seen.clears++; } }
     else if (op === 10) v.api.selectSession(v.run(r(2) ? 'fileSession' : 'liveSession'));
-    else if (op === 11) { v.api.togglePause(); v.send(150); v.run('trimPausedBacklog(liveSession)'); v.api.togglePause(); }
+    else if (op === 11) {
+      v.api.togglePause(); v.send(150); v.run('trimPausedBacklog(liveSession)');
+      if (v.run('liveSession.overflowed')) seen.resumes++;
+      v.api.togglePause();
+    }
+    if (v.run('liveSession.all.length') > 0) seen.liveLines++;
+    if (v.run('cur') !== v.run('liveSession')) seen.fileSteps++;
+    if (staleBefore && v.run('liveSession.all.length') > lenBefore) seen.staleFlushes++;
+    if (staleBefore && v.run('liveSession.discarded') > discardedBefore) seen.staleTrims++;
     const [got, want] = v.counts();
     assert.deepEqual(got, want, `step ${step}, op ${op}`);
   }
@@ -123,6 +135,13 @@ test('counts equal a full recount after a seeded sequence of frames, flushes, tr
   const [got, want] = v.counts();
   assert.deepEqual(got, want, 'back on Live, refiltered');
   assert.ok(v.run('liveSession.discarded') > 0, 'the sequence trimmed');
+  for (let op = 0; op < 12; op++) assert.ok(ran[op] >= 150, `op ${op} ran ${ran[op]} times`);
+  assert.ok(seen.liveLines >= 1000, `the live session held lines at ${seen.liveLines} steps`);
+  assert.ok(seen.staleFlushes >= 5, `lines ingested while the live session was stale: ${seen.staleFlushes}`);
+  assert.ok(seen.staleTrims >= 20, `a trim dropped lines while the live session was stale: ${seen.staleTrims}`);
+  assert.ok(seen.clears >= 20, `Clear ran ${seen.clears} times`);
+  assert.ok(seen.resumes >= 100, `Resume after a backlog overflow ran ${seen.resumes} times`);
+  assert.ok(seen.fileSteps >= 500, `a file session was on screen at ${seen.fileSteps} steps`);
 });
 
 test('a file load counts its tags and apps at once and its levels when rendered; Clear on it empties every count', () => {

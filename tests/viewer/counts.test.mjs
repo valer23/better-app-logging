@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { ASSETS, read, loadPureModules, pageScriptSrcs } from './_load.mjs';
+import { ASSETS, read, loadPureModules, pageScriptSrcs, rng } from './_load.mjs';
 
 const ALV = loadPureModules('session.js', 'query.js', 'counts.js');
 const { counts: C, session: S, query: Q } = ALV;
@@ -70,27 +70,37 @@ function model() {
 }
 
 test('incremental counts equal a full recount after 2 000 seeded sequences of append, trim, dropAll, clear, query change and stale appends', () => {
-  let seed = 61;
-  const r = n => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+  const r = rng(61);
   const LV = ['VERBOSE', 'DEBUG', 'INFO', 'WARN', 'ERROR', 'ASSERT', 'BOGUS'];
   const TAG = ['bt', 'BluetoothGatt', 'chatty', 'kernel', ''];
   const QUERIES = ['', 'level:W+', 'tag:bt', '-tag:chatty line', 'dev:ios', 'pid:7 level:none', 'app:com.x', '/line [0-4]/'];
   const line = () => ({ ts: '', tid: 0, lvl: LV[r(7)], platform: r(2) ? 'ios' : 'android', tag: TAG[r(5)], app: r(3) ? '' : `com.x${r(3)}`, pid: r(9), msg: `line ${r(10)}` });
+  const ran = new Array(10).fill(0);       // how often each op ran: a PRNG that skips ops would pass vacuously
+  const away = { true: 0, false: 0 };
+  let staleSteps = 0, trimmed = 0, platforms = new Set();
   for (let n = 0; n < 2000; n++) {
     const mdl = model();
     for (let step = 0; step < 12; step++) {
       const op = r(10);
-      if (op < 5) mdl.append(Array.from({ length: r(40) }, line));
-      else if (op === 5) mdl.trim(20 + r(30), false);
-      else if (op === 6) mdl.trim(0, true);
+      ran[op]++;
+      if (op < 5) { const lines = Array.from({ length: r(40) }, line); for (const m of lines) platforms.add(m.platform); mdl.append(lines); }
+      else if (op === 5) { const before = mdl.s.all.length; mdl.trim(20 + r(30), false); trimmed += before - mdl.s.all.length; }
+      else if (op === 6) { const before = mdl.s.all.length; mdl.trim(0, true); trimmed += before - mdl.s.all.length; }
       else if (op === 7) mdl.clear();
-      else if (op === 8) mdl.query(QUERIES[r(QUERIES.length)], r(2) === 0);
+      else if (op === 8) { const a = r(2) === 0; away[a]++; mdl.query(QUERIES[r(QUERIES.length)], a); }
       else if (mdl.stale) mdl.refilter();
+      if (mdl.stale) staleSteps++;
       const want = C.recount(C.create(), mdl.s.all, mdl.stale ? null : mdl.q.gate);
       const got = plain(mdl.s.counts);
       if (mdl.stale) got.lvl = [0, 0, 0, 0, 0, 0];   // a stale session's level counts wait for its refilter
       assert.deepEqual(got, plain(want), `sequence ${n}, step ${step}, op ${op}`);
-      if (!mdl.stale) assert.deepEqual(mdl.s.filtered, mdl.s.all.filter(m => { const k = mdl.q.gate(m); return k >= 0 && mdl.q.lvOk[k]; }));
+      if (!mdl.stale) assert.deepEqual(Array.from(mdl.s.filtered), Array.from(mdl.s.all).filter(m => { const k = mdl.q.gate(m); return k >= 0 && mdl.q.lvOk[k]; }), `sequence ${n}, step ${step}, op ${op}: filtered`);
     }
   }
+  // Every op, both values of `away`, both platforms, stale steps and a real discard each happened many times.
+  for (let op = 0; op < 10; op++) assert.ok(ran[op] >= 1000, `op ${op} ran ${ran[op]} times`);
+  assert.ok(away.true >= 500 && away.false >= 500, `away took both values: ${JSON.stringify(away)}`);
+  assert.ok(staleSteps >= 1000, `stale steps: ${staleSteps}`);
+  assert.ok(trimmed >= 10000, `lines trimmed: ${trimmed}`);
+  assert.equal(platforms.size, 2);
 });

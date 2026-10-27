@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { ASSETS, read, loadPureModule, pageScriptSrcs } from './_load.mjs';
+import { ASSETS, read, loadPureModule, pageScriptSrcs, rng } from './_load.mjs';
 
 const SRC = read(path.join(ASSETS, 'js', 'query.js'));
 const Q = loadPureModule('query.js').query;
@@ -127,10 +127,10 @@ test('serialize: canonical text, lower-case keys, quotes only where needed, esca
 
 // A seeded generator over the token domain parse() can produce: field values of any shape, phrases of any shape,
 // regex bodies without an unescaped '/' before a space or the end, words that are not fields, phrases or regexes.
-function rng(seed) { return n => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; }; }
 const CHARS = ['a', 'B', 'z', ' ', '"', '\\', '/', ':', '-', '.', 'é', 'İ', 'ß', '(', ')', '*', '+', ',', '1', '\t'];
+const drawn = new Set();   // which CHARS entries the round trip drew, asserted below: a skewed PRNG once left most of them out
 function genToken(r) {
-  const str = (n, set = CHARS) => Array.from({ length: n }, () => set[r(set.length)]).join('');
+  const str = (n, set = CHARS) => Array.from({ length: n }, () => { const c = set[r(set.length)]; if (set === CHARS) drawn.add(c); return c; }).join('');
   const kind = ['level', 'tag', 'app', 'pid', 'dev', 'plat', 'word', 'phrase', 'regex'][r(9)];
   const neg = r(3) === 0;
   if (kind === 'level') return T('level', ['E', 'W+', 'D,I', 'error', 'none', 'V,F', 'assert+'][r(7)], neg);
@@ -156,6 +156,7 @@ test('round trip: parse(serialize(tokens)) gives the tokens back, and serialize 
     assert.deepEqual(shape(back.tokens), tokens, text);
     assert.equal(Q.serialize(back.tokens), text, text);
   }
+  assert.deepEqual(CHARS.filter(c => !drawn.has(c)), [], 'every character in CHARS (quotes, backslash, slash, colon, dash, space, tab ...) reached a generated value');
 });
 
 test('fuzz: parse, serialize and build never throw, and valid text normalises to the same tokens (3 000 seeded strings)', () => {
