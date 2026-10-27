@@ -95,7 +95,7 @@
 
   // parse(text) → { tokens: [{ k, v, neg, start, end }], errors: [{ start, end, msg }] }. k is a key (level, tag, app,
   // pid, dev, plat) or word, phrase, regex; v is the value as typed (quotes and escapes removed); start/end are the
-  // token's source range, the leading '-' included. A key with nothing after the colon ('tag:') is still being typed:
+  // token's source range, the leading '-' included. A key with no value yet ('tag:' or 'tag:"') is still being typed:
   // it is neither applied nor an error. Keys are case-insensitive.
   function parse(text) {
     const src = String(text == null ? '' : text);
@@ -134,7 +134,7 @@
         if (src[at] === '"') [v, end] = quoted(src, at);
         else { end = wordEnd(src, at); v = src.slice(at, end); }
         i = end;
-        if (end === at) continue;   // 'tag:' with nothing after it: still being typed
+        if (v === '') continue;   // 'tag:' or 'tag:"' with no value yet: still being typed, so neither applied nor an error
         if (k === 'level') {
           const mask = levelMask(v);
           if (mask && mask.bad !== undefined) err(start, end, `Unknown level '${mask.bad}'. Use V, D, I, W, E or F, or W+ for W and above.`);
@@ -151,7 +151,10 @@
     return { tokens, errors };
   }
 
-  const escQ = v => v.replace(/[\\"]/g, '\\$&');
+  // Escape exactly what quoted() unescapes: a quote, and a backslash that precedes a quote, a backslash or the closing
+  // quote. Any other backslash is written as it is, so '\/ ' inside a value stays '\/ ' and the regexEnd scan, which skips
+  // the character after a backslash, sees the same pairs the parser did.
+  const escQ = v => v.replace(/"|\\(?=["\\]|$)/g, '\\$&');
   const quoteIf = v => (/[\s"]/.test(v) || v === '' ? `"${escQ(v)}"` : v);
   // serialize(tokens) → the canonical text: one space between tokens, keys in lower case, a value quoted only when it
   // holds whitespace or a quote. parse(serialize(tokens)) gives the same tokens (ranges aside).

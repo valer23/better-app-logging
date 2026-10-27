@@ -55,6 +55,9 @@ test('parse: edge rows (paths, colons, minus signs, pending keys, quotes, escape
     ['id:7 at:noon', [T('word', 'id:7'), T('word', 'at:noon')]],   // not one edit from a key with the same first letter
     ['-1 "-1" - x', [T('word', '1', true), T('phrase', '-1'), T('word', '-'), T('word', 'x')]],
     ['tag: level: -app:', []],                                     // a key still being typed is not applied
+    ['tag:"', []], ['-tag:"', []], ['app:"', []], ['pid:"', []], ['dev:"', []], ['plat:"', []], ['level:"', []],   // an opening quote is still being typed
+    ['tag:"" -app:"" pid:""', []],                                // so is an empty quoted value
+    ['-tag:"Blue', [T('tag', 'Blue', true)]],
     ['tag:"Blue Tooth" app:"a \\"b\\" \\\\c"', [T('tag', 'Blue Tooth'), T('app', 'a "b" \\c')]],
     ['"unterminated phrase', [T('phrase', 'unterminated phrase')]],
     ['tag:"unterminated', [T('tag', 'unterminated')]],
@@ -66,6 +69,15 @@ test('parse: edge rows (paths, colons, minus signs, pending keys, quotes, escape
   ];
   for (const [text, want] of rows) assert.deepEqual(toks(text), want, text);
   assert.deepEqual(Array.from(Q.parse('ab -tag:"x y" /r/').tokens, t => [t.start, t.end]), [[0, 2], [3, 13], [14, 17]], 'ranges include the minus and the quotes');
+});
+
+test('parse: a key still being typed is never an error, and it hides nothing once compiled', () => {
+  for (const text of ['tag:', 'tag:"', '-tag:"', 'app:"', 'pid:"', 'dev:"', 'plat:"', 'level:"', 'tag:""', '-tag:"" app:""']) {
+    assert.deepEqual(errs(text), [], text);
+    const { q, error } = Q.build(text, {}, {});
+    assert.equal(error, null, text);
+    assert.equal(q.key, Q.build('', {}, {}).q.key, `${text} is the empty filter`);
+  }
 });
 
 test('parse: the spec\'s error copy, and the new copy for pid, plat and negated phrases or regexes', () => {
@@ -106,6 +118,9 @@ test('serialize: canonical text, lower-case keys, quotes only where needed, esca
     ['-tag:"x y" -w', '-tag:"x y" -w'],
     ['/a b/ "q\\\\"', '/a b/ "q\\\\"'],
     ['"unterminated', '"unterminated"'],
+    ['/x "a\\/ "', '/x "a\\/ "'],                // a backslash before a slash is not doubled, or regexEnd would read the slash as a close
+    ['/x tag:"a\\/ "', '/x tag:"a\\/ "'],
+    ['tag:"a\\\\\\" b"', 'tag:"a\\\\\\" b"'],       // a backslash before a quote or a backslash is doubled
   ];
   for (const [text, want] of rows) assert.equal(Q.serialize(Q.parse(text).tokens), want, text);
 });
@@ -152,6 +167,22 @@ test('fuzz: parse, serialize and build never throw, and valid text normalises to
     for (const opts of [{}, { case: true, regex: true }]) Q.build(text, opts, {});
     if (p.errors.length) continue;
     assert.deepEqual(toks(Q.serialize(p.tokens)), shape(p.tokens), JSON.stringify(text));
+  }
+});
+
+test('round trip: parse output survives serialize and parse (explicit rows, then 20 000 seeded strings over / space \\ " a)', () => {
+  const same = text => {
+    const t1 = Q.parse(text);
+    const out = Q.serialize(t1.tokens);
+    assert.deepEqual(toks(out), shape(t1.tokens), `${JSON.stringify(text)} -> ${JSON.stringify(out)}`);
+    assert.equal(Q.serialize(Q.parse(out).tokens), out, `idempotent: ${JSON.stringify(out)}`);
+  };
+  for (const text of ['/x "a\\/ "', '/x tag:"a\\/ "', '/x -tag:"\\/ \\\\" /y', 'a "b\\\\" /c "\\/ d"', 'tag:"\\\\" /z']) same(text);
+  const r = rng(99);
+  const parts = ['/', ' ', '\\', '"', 'a', 'a', 'tag:', '-', '\\/ ', '\\"', '/ '];
+  for (let n = 0; n < 20000; n++) {
+    const text = Array.from({ length: 1 + r(14) }, () => parts[r(parts.length)]).join('');
+    if (Q.parse(text).errors.length === 0) same(text);
   }
 });
 
