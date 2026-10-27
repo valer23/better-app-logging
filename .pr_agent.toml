@@ -99,11 +99,18 @@ publish_description_as_comment = false
 add_original_user_description = true
 keep_original_user_title = true
 generate_ai_title = false
+# The diagram and the file walkthrough are part of the PR template (.github/pull_request_template.md)
+# and written by the PR author, so PR-Agent does not generate a second copy. PR Type and the AI
+# summary stay on.
+enable_pr_diagram = false
+enable_semantic_files_types = false
 extra_instructions = """
 PR descriptions in this repo use these ## headings, in this order. Skip a heading only when it
 does not apply (Fix is for bug fixes only). Keep them terse.
 - Summary: 1-2 lines, what changed and why.
 - What changed: bullets, by key file or module.
+- Diagram: a small mermaid flowchart of how the change fits together.
+- File walkthrough: a collapsible table, one row per changed file: what changed in it, +/- lines.
 - Problem / feature: the bug being fixed or the feature delivered.
 - Fix: bugs only; the root cause and how it was fixed.
 - Test plan: a [ ] checklist, manual and automated.
