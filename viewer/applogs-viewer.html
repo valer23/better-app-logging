@@ -447,6 +447,9 @@ const LEVEL_CHAR = {VERBOSE:'V',DEBUG:'D',INFO:'I',WARN:'W',ERROR:'E',ASSERT:'F'
 const { rowClass, timeOf } = ALV.gridPure;   // the row's class and its time cell (assets/js/grid.js)
 const enabledLevels   = new Set(LEVELS);
 const enabledPlatforms = new Set(['android','ios']);
+// The search the legacy filter bar applies (queryChanged): shellState reads it before the Filtering section runs.
+let lastSearch = { search: '', regex: false };
+let searchInvalid = false;
 
 // ── State ──
 // The table shows one session (`cur`). Each session (assets/js/session.js) holds its own buffer,
@@ -955,7 +958,7 @@ function shellState() {
     // stale: the shown session's filtered list lags the filter (a file just opened, before its render): no tile yet.
     stale: cur.query !== filterGen,
     cleared: liveClearedSeq === nextSeq, levels: enabledLevels.size, tag: document.getElementById('tagFilter').value,
-    query: !!document.getElementById('search').value || !!document.getElementById('pidFilter').value,
+    query: !!(searchInvalid ? lastSearch.search : document.getElementById('search').value) || !!document.getElementById('pidFilter').value,
   };
 }
 function shellSync() { if (shell) shell.sync(); if (liveUi) liveUi.sync(); if (grid) grid.sync(); }
@@ -1956,12 +1959,18 @@ function setQuery(text, opts) {
   return null;
 }
 // The filter bar changed (until P6b's query bar): its controls become query text (ALV.query.fromLegacy). A regex-mode
-// search that is not a valid regex keeps the last valid filter and marks the .* button.
+// search that is not a valid regex marks the .* button and keeps only the search term at its last valid value
+// (lastSearch); every other control (levels, devices, Tag, PID / App) still applies. This is the one place the
+// controls are read, so the empty-state causes (shellState) ask it for the search that is applied.
 function queryChanged() {
   const val = id => document.getElementById(id).value;
-  const text = ALV.query.fromLegacy({ search: val('search'), case: searchCaseSensitive, regex: searchRegexMode,
-    tag: val('tagFilter'), pid: val('pidFilter'), levels: enabledLevels, plats: enabledPlatforms });
-  const bad = text === null || setQuery(text, { case: searchCaseSensitive }) !== null;
+  const st = { search: val('search'), case: searchCaseSensitive, regex: searchRegexMode,
+    tag: val('tagFilter'), pid: val('pidFilter'), levels: enabledLevels, plats: enabledPlatforms };
+  let text = ALV.query.fromLegacy(st);
+  searchInvalid = text === null;
+  if (searchInvalid) { st.search = lastSearch.search; st.regex = lastSearch.regex; text = ALV.query.fromLegacy(st); }
+  else lastSearch = { search: st.search, regex: st.regex };
+  const bad = setQuery(text, { case: searchCaseSensitive }) !== null || searchInvalid;
   document.getElementById('searchRegexBtn').classList.toggle('error', bad && searchRegexMode);
 }
 // The grid's empty-state fixes (spec "Log grid", no matches): 'levels' turns every level back on, 'devices' shows both

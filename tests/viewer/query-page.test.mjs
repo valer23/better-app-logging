@@ -69,6 +69,37 @@ test('an invalid regex search keeps the last valid filter applied and marks the 
   assert.equal(v.run('liveSession.filtered.length'), 11);
 });
 
+test('with an invalid regex in the box every other legacy control still applies; only the search term stays at its last valid value', () => {
+  const v = boot();
+  v.send(30); v.api.flushBatch();
+  v.run('toggleSearchMod("regex")');
+  v.field('search', 'line .');
+  v.run('queryChanged()');
+  assert.equal(v.run('liveSession.filtered.length'), 30);
+  v.field('search', 'line (');
+  v.run('queryChanged()');
+  assert.equal(v.doc.getElementById('searchRegexBtn').classList.contains('error'), true);
+  v.run("enabledLevels.delete('VERBOSE'); queryChanged()");
+  assert.equal(v.run("liveSession.filtered.filter(m => m.lvl === 'VERBOSE').length"), 0, 'a level toggle applies');
+  assert.equal(v.run('liveSession.filtered.length'), 25);
+  v.run("togglePlatform('ios')");
+  assert.equal(v.run("liveSession.filtered.filter(m => m.platform === 'ios').length"), 0, 'a platform toggle applies');
+  v.field('tagFilter', 'bt');
+  v.run('queryChanged()');
+  assert.equal(v.run('liveSession.filtered.length'), 0, 'every line here is ios: nothing left');
+  v.run("togglePlatform('ios')");
+  assert.equal(v.run("liveSession.filtered.every(m => m.tag === 'bt_stack' && m.lvl !== 'VERBOSE')"), true, 'the Tag field applies');
+  assert.equal(v.run('liveSession.filtered.length'), 5, 'tag bt_stack (8 lines) minus its 3 VERBOSE ones, still /line ./ (the last valid search)');
+  assert.equal(v.doc.getElementById('searchRegexBtn').classList.contains('error'), true, 'the .* error mark stays');
+  assert.deepEqual([v.run('shellState().levels'), v.run('shellState().tag')], [5, 'bt'], 'the empty-state causes read the applied filter');
+  v.run("resetFilter('levels')");
+  assert.equal(v.run("liveSession.filtered.some(m => m.lvl === 'VERBOSE')"), true, 'the empty-state fix applies');
+  v.field('search', 'line (2)');
+  v.run('queryChanged()');
+  assert.equal(v.doc.getElementById('searchRegexBtn').classList.contains('error'), false);
+  assert.equal(v.run("liveSession.filtered.every(m => /line (2)/.test(m.msg))"), true, 'a valid regex takes over again');
+});
+
 test('counts equal a full recount after a seeded sequence of frames, flushes, trims, a resume after overflow, Clear, filter changes and a session switch', () => {
   const v = boot();
   v.run('MAX_RETAINED = 120');
