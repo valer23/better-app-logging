@@ -16,6 +16,7 @@ test('live.js loads after shell.js in an empty context and exposes its pure help
 
 test('status-bar copy: line count, Retained with the #45 note, drops (singular / plural) and the drop detail', () => {
   assert.equal(L.lineCount(47106, 48310), `47${T}106 of 48${T}310 lines`);
+  assert.deepEqual([L.lineCount(0, 1), L.lineCount(1, 1), L.lineCount(0, 0)], ['0 of 1 line', '1 of 1 line', '0 of 0 lines'], 'singular by the total');
   assert.equal(L.retainedText(48310, 500000, 0, false), `Retained 48${T}310 of 500${T}000`);
   assert.equal(L.retainedText(90, 100, 60, false), 'Retained 90 of 100 · 60 older discarded');
   assert.equal(L.retainedText(5, 100, 11, true), 'Retained 5 of 100 · 11 discarded, resume skips to newest');

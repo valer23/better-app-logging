@@ -444,6 +444,8 @@ const LEVELS     = ['VERBOSE','DEBUG','INFO','WARN','ERROR','ASSERT'];
 // The letter a row and a level toggle show. ASSERT reads F (spec D8, "Fatal / Assert"); the exports keep their
 // own 'A' (doExport's LVL, TXT_LEVEL_MAP), so files round-trip unchanged.
 const LEVEL_CHAR = {VERBOSE:'V',DEBUG:'D',INFO:'I',WARN:'W',ERROR:'E',ASSERT:'F'};
+// "12 345 lines", "1 line": thin-space grouping (shellPure.num), as every number in the UI.
+const countOf = n => `${ALV.shellPure.num(n)} ${n === 1 ? 'line' : 'lines'}`;
 const { rowClass, timeOf } = ALV.gridPure;   // the row's class and its time cell (assets/js/grid.js)
 const enabledLevels   = new Set(LEVELS);
 const enabledPlatforms = new Set(['android','ios']);
@@ -1042,7 +1044,7 @@ function handleFile(file) {
         return;
       }
 
-      document.getElementById('loadingText').textContent = `Rendering ${msgs.length.toLocaleString()} lines…`;
+      document.getElementById('loadingText').textContent = `Rendering ${countOf(msgs.length)}…`;
       discardBacklog(fileSession);
       resetLines(fileSession, msgs);
       fileSession.query = -1;   // not filtered yet: rendered below, or by selectSession if the user switched away meanwhile
@@ -1089,8 +1091,9 @@ function parseIosText(text) {
 // below. TXT line shape (widths: pid/tid padStart 6, tag padEnd 32, app
 // padEnd 28; fields joined by "  "):
 //   "YYYY MMM DD HH:MM:SS.uuuuuu  EMOJI  PID-TID  L  TAG  APP  MSG"
-const EXPORTED_TXT_RE = /^(\d{4}\s+\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\.\d+)\s+(🍎|🤖)\s+(\s*\d+)-(\s*\d+)\s+([VDIWEA?])\s+(.+)$/;
-const TXT_LEVEL_MAP = { V:'VERBOSE', D:'DEBUG', I:'INFO', W:'WARN', E:'ERROR', A:'ASSERT' };
+// The exports write A for ASSERT; F (the letter the grid shows) reads as ASSERT too.
+const EXPORTED_TXT_RE = /^(\d{4}\s+\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\.\d+)\s+(🍎|🤖)\s+(\s*\d+)-(\s*\d+)\s+([VDIWEAF?])\s+(.+)$/;
+const TXT_LEVEL_MAP = { V:'VERBOSE', D:'DEBUG', I:'INFO', W:'WARN', E:'ERROR', A:'ASSERT', F:'ASSERT' };
 const EXPORTED_CSV_HEADER = 'timestamp,platform,pid,tid,level,tag,app,message';
 
 function parseExportedTxt(text) {
@@ -1802,16 +1805,17 @@ function trimPausedBacklog(s) {
 // menu (and the shell's menus: shell.closeMenus, liveUi.closeMenus) when they open (an iOS stall can arrive while it is open); the ⌘E guard alone only blocks opening it.
 function refreshExportMenu() {
   const s = cur;
-  document.getElementById('exportFilteredCount').textContent = s.filtered.length.toLocaleString() + ' lines';
-  document.getElementById('exportAllCount').textContent = s.all.length.toLocaleString() + ' lines';
+  document.getElementById('exportFilteredCount').textContent = countOf(s.filtered.length);
+  document.getElementById('exportAllCount').textContent = countOf(s.all.length);
   const note = document.getElementById('exportNote');
   const lost = s.dropped.android + s.dropped.ios;
   document.getElementById('exportNoteBox').hidden = !(s.discarded || lost);
   const parts = [];
+  const num = ALV.shellPure.num;
   if (s.discarded) parts.push(s.overflowed
-    ? `Exports the lines held before the pause (${s.all.length.toLocaleString()}). ${s.discarded.toLocaleString()} lines were discarded because the paused backlog exceeded ${MAX_RETAINED.toLocaleString()}; on resume the live lines here are discarded and the view continues from the newest.`
-    : `Exports retained lines only: ${s.discarded.toLocaleString()} older lines were discarded (live view keeps the newest ${MAX_RETAINED.toLocaleString()}).`);
-  if (lost) parts.push(`${lost.toLocaleString()} ${lost === 1 ? 'line' : 'lines'} never reached the viewer (server buffer overflow); the export may have gaps where ${lost === 1 ? 'it' : 'they'} occurred${s.discarded ? ' (unless later discarded by the retention cap)' : ''}.`);
+    ? `Exports the lines held before the pause (${num(s.all.length)}). ${num(s.discarded)} lines were discarded because the paused backlog exceeded ${num(MAX_RETAINED)}; on resume the live lines here are discarded and the view continues from the newest.`
+    : `Exports retained lines only: ${num(s.discarded)} older lines were discarded (live view keeps the newest ${num(MAX_RETAINED)}).`);
+  if (lost) parts.push(`${num(lost)} ${lost === 1 ? 'line' : 'lines'} never reached the viewer (server buffer overflow); the export may have gaps where ${lost === 1 ? 'it' : 'they'} occurred${s.discarded ? ' (unless later discarded by the retention cap)' : ''}.`);
   note.textContent = parts.join(' ');
 }
 const exportMenuCtl = ALV.ui.menu(document.getElementById('exportBtn'), document.getElementById('exportSurface'), { onOpen: refreshExportMenu });
