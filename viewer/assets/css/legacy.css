@@ -201,24 +201,6 @@
   .status-pill.connecting   { color: var(--lg-yellow); border-color: var(--lg-yellow); background: #e3b34110; }
   .status-pill.connected    { color: var(--lg-green);  border-color: var(--lg-green);  background: #56d36415; }
   .status-pill.error        { color: var(--lg-red);    border-color: var(--lg-red);    background: #ff7b7215; }
-  /* "N lines below" pill over the bottom of the log table (live mode, auto-scroll off). A sibling of the
-     scroller, so repainting it never relayouts the rows or changes #logTable.scrollHeight. bottom: 18px
-     also clears the horizontal scrollbar shown below 960px. No transition: nothing animates per flush. */
-  .newer-pill { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 6; display: none; align-items: center; gap: 8px; padding: 5px 12px; line-height: 16px; border-radius: 999px; border: 1px solid var(--lg-accent); background: var(--lg-surface); color: var(--lg-text); font-family: var(--font-ui); font-size: 12px; font-weight: 600; white-space: nowrap; cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,.35); }
-  .newer-pill.visible { display: inline-flex; }
-  .newer-pill .newer-count { font-family: var(--font-log); font-variant-numeric: tabular-nums; }
-  .newer-pill .newer-sep { color: var(--lg-muted); }
-  .newer-pill .newer-action { color: var(--lg-accent); }
-  .newer-pill:hover { background: var(--lg-surface2); }
-  .newer-pill:focus-visible { outline: 2px solid var(--lg-accent); outline-offset: 2px; }
-  :root[data-theme="light"] .newer-pill { box-shadow: 0 4px 16px rgba(0,0,0,.15); }
-  [data-glass="on"] .newer-pill { backdrop-filter: blur(40px) saturate(200%); -webkit-backdrop-filter: blur(40px) saturate(200%); box-shadow: var(--lg-glass-edge), 0 4px 16px rgba(0,0,0,.35); text-shadow: 0 1px 1px rgba(0,0,0,.25); }
-  [data-glass="on"][data-theme="light"] .newer-pill { text-shadow: 0 1px 1px rgba(255,255,255,.55); box-shadow: var(--lg-glass-edge), 0 4px 16px rgba(0,0,0,.15); }
-  /* Room below the last row so it can scroll above the pill: 56px = bottom 18 + pill ~28 (16px line-height
-     + 10 padding + 2 border) + an 8px margin. Toggled with the armed state (live, auto-scroll off, live
-     last line), not the count, so the content end does not jump as the count crosses 0. While armed the
-     200px end-detection in extendReadingWindow and the scroll handler is effectively ~144px from the last row. */
-  #logTable.newer-room::after { content: ''; display: block; height: 56px; }
   .status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
   .status-pill.connecting .status-dot { animation: blink 1s ease-in-out infinite; }
   @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }

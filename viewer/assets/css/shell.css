@@ -111,10 +111,12 @@
   #streamDot.pulse::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: currentColor; pointer-events: none; animation: stream-ping var(--t-pulse) var(--ease) infinite; }
   @keyframes stream-ping { 0% { transform: scale(1); opacity: .5; } 100% { transform: scale(2); opacity: 0; } }
   .tb-zoom { display: flex; align-items: center; gap: 2px; }
+  .tb-kbd:empty { display: none; }
   #zoomResetBtn { min-width: 52px; font-variant-numeric: tabular-nums; }
   #exportWrap { display: flex; }
-  /* Collapse tiers (spec): border-box widths minus the toolbar's 28 px of padding. Kbd hints (1291px) arrive
-     with P5's Space / End; until then the toolbar shows none. */
+  /* Collapse tiers (spec): border-box widths minus the toolbar's 28 px of padding. Pause and Follow show their
+     keys (Space, End) only from a 1 320 px toolbar (spec B1); the tooltips always carry them. */
+  @container toolbar (max-width: 1291px) { .tb-kbd { display: none; } }
   @container toolbar (max-width: 1151px) { #exportBtn .tb-label, #exportBtn .tb-chev { display: none; } }
   @container toolbar (max-width: 1011px) { #zoomGroup, .tb-zoom-div { display: none; } }
 

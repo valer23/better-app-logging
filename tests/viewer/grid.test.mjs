@@ -1,7 +1,7 @@
 // The log grid (roadmap P5): ALV.gridPure in an empty vm context, and the DOM side (createGrid) on the fake page.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadPureModules, pageScriptSrcs, loadLegacy, stickyDocument, read, HTML_PATH } from './_load.mjs';
+import { loadPureModules, pageScriptSrcs, loadLegacy, stickyDocument, read, HTML_PATH, memoryStorage, fakeMatchMedia, fakeRoot } from './_load.mjs';
 import { fakePage, mount } from './_fake.mjs';
 
 const G = loadPureModules('shell.js', 'grid.js').gridPure;
@@ -24,6 +24,99 @@ test('timeOf: the time of every timestamp shape the viewer reads, to the millise
     ['garbage', 'garbage'], ['2026-10-14', '2026-10-14'], ['a b:c', 'a b:c'],
   ];
   for (const [ts, want] of cases) assert.equal(G.timeOf(ts), want, String(ts));
+});
+
+test('pillView: Paused wins over new lines, singular and plural, thin-space grouping, Buffer full; nothing to show is null', () => {
+  const v = o => G.pillView({ paused: false, buffered: 0, overflowed: false, below: 0, ...o });
+  const text = x => (x ? `${x.pre}${x.num}${x.unit} | ${x.action} ${x.key}` : null);
+  assert.equal(text(v({ below: 1284 })), '1\u2009284 lines below | Jump to latest stream.latest', 'a thin space (spec conventions)');
+  assert.equal(text(v({ below: 1 })), '1 line below | Jump to latest stream.latest');
+  assert.equal(text(v({ paused: true, buffered: 3402, below: 50 })), 'Resume to see 3\u2009402 buffered lines | Resume stream.pause');
+  assert.equal(text(v({ paused: true, buffered: 1 })), 'Resume to see 1 buffered line | Resume stream.pause');
+  assert.equal(text(v({ paused: true, buffered: 9, overflowed: true })), 'Buffer full · resuming skips to the newest lines | Resume stream.pause');
+  assert.deepEqual([v({ below: 3 }).mode, v({ below: 3 }).icon, v({ paused: true }).mode, v({ paused: true }).icon], ['newer', 'arrow-down-to-line', 'paused', 'pause']);
+  assert.equal(v({}), null);
+  assert.equal(v({ below: -2 }), null);
+});
+
+test('emptyView: no matches with each spec cause in order and its fix; after Clear; streaming but silent; the phone gone; otherwise none', () => {
+  const v = o => G.emptyView({ kind: 'live', all: 0, shown: 0, cleared: false, paused: false, levelsOff: false, devicesOff: false, tag: '', query: false, waiting: [], gone: [], ...o });
+  const m = v({ all: 48310 });
+  assert.deepEqual([m.title, m.desc, m.fix, m.reset, m.icon, m.spin], ['No lines match this filter', '0 of 48\u2009310 lines in view. No retained line matches the level and device chips.', null, true, 'search-x', false]);
+  assert.deepEqual([v({ all: 5, levelsOff: true, devicesOff: true, tag: 'x' }).fix, v({ all: 5, levelsOff: true }).fixLabel], ['levels', 'Turn levels back on'], 'levels first');
+  assert.deepEqual([v({ all: 5, devicesOff: true, tag: 'x' }).fix, v({ all: 5, devicesOff: true }).desc], ['devices', '0 of 5 lines in view. Both devices are hidden.']);
+  assert.deepEqual([v({ all: 5, tag: 'bt_stack' }).desc, v({ all: 5, tag: 'bt_stack' }).fixLabel], ['0 of 5 lines in view. No retained line matches tag:bt_stack.', 'Remove tag:bt_stack']);
+  assert.deepEqual([v({ all: 5, query: true }).desc, v({ all: 5, query: true }).fix, v({ all: 5, query: true }).reset, v({ all: 5, query: true }).say, v({ all: 5, tag: 'x', query: true }).fix],
+    ['0 of 5 lines in view.', null, true, 'No lines match this filter.', 'tag'], 'the search or PID / App field filters: the count and Reset filter, no invented cause; a tag still names itself');
+  assert.equal(v({ all: 5, shown: 1 }), null, 'rows show: no tile');
+  assert.equal(v({ kind: 'file' }), null, 'an empty file session shows the dropzone');
+  assert.equal(v({ kind: 'file', all: 3 }).title, 'No lines match this filter', 'a filtered-out file still says why');
+  const c = v({ cleared: true, waiting: ['Pixel 8 Pro'] });
+  assert.deepEqual([c.title, c.desc, c.icon, c.spin, c.skeleton], ['Waiting for new lines…', 'The view was cleared. New lines appear here as they arrive.', 'loader', true, false], 'Clear wins over waiting');
+  const w = v({ waiting: ['Pixel 8 Pro', 'iPhone 15'] });
+  assert.deepEqual([w.title, w.desc, w.skeleton, w.reset], ['Waiting for the first lines from Pixel 8 Pro and iPhone 15…', '', true, false]);
+  assert.equal(v({ waiting: ['iPhone 15'], paused: true }), null, 'paused: the lines are buffered, the paused pill says so');
+  assert.equal(v({ cleared: true }), null, 'Clear with nothing streaming: the device panel shows instead (#70)');
+  const g = v({ gone: ['iPhone 15'] });
+  assert.deepEqual([g.title, g.desc, g.icon, g.spin, g.skeleton, g.reset, g.say], ['iPhone 15 was unplugged', 'Plug it back in to continue.', 'unplug', false, false, false, 'iPhone 15 was unplugged.'],
+    'the open stream\'s phone is gone (noDevice, #70): the spec\'s Disconnected copy');
+  const g2 = v({ gone: ['Pixel 8 Pro', 'iPhone 15'] });
+  assert.deepEqual([g2.title, g2.desc], ['Pixel 8 Pro and iPhone 15 were unplugged', 'Plug them back in to continue.']);
+  assert.equal(v({ gone: ['iPhone 15'], cleared: true }).title, 'iPhone 15 was unplugged', 'gone wins over Clear: nothing arrives until it is back');
+  assert.equal(v({ gone: ['iPhone 15'], waiting: ['Pixel 8 Pro'] }).title, 'Waiting for the first lines from Pixel 8 Pro…', 'one device still streams');
+  assert.equal(v({}), null, 'no device and no lines: the device cards (P8: "No logs yet")');
+  assert.equal(v({ all: 9 }).key === v({ all: 10 }).key, false, 'the count is shown, so it is in the key');
+  assert.equal(v({ all: 9 }).say, v({ all: 10 }).say, 'but not in the announcement');
+});
+
+test('screenRows: rows in one screenful from the height, the log size and the density (spec "Sizes"); none while hidden', () => {
+  assert.deepEqual([G.rowPx(13, 'comfortable'), G.rowPx(13, 'compact'), G.rowPx(10, 'compact'), G.rowPx(20, 'comfortable')], [20.8, 18.2, 18, 32]);
+  assert.deepEqual([G.screenRows(500, 13, 'comfortable'), G.screenRows(500, 20, 'comfortable'), G.screenRows(500, 10, 'compact'), G.screenRows(0, 13, 'comfortable')], [25, 16, 28, 0]);
+});
+
+test('arrive: a flush up to a screenful lights (spec: per flush); the rows lit within one --t-arrival window stay within two screenfuls (invariant, table and property)', () => {
+  const fresh = () => ({ level: 0, at: 0 });
+  // Table: screenful 34 -> a budget of 34 rows that refills over 600 ms.
+  const st = fresh();
+  assert.deepEqual([G.arrive(st, 20, 0, 34), G.arrive(st, 20, 0, 34), G.arrive(st, 14, 0, 34), G.arrive(st, 1, 0, 34)], [true, false, true, false], 'a burst spends the budget: 20 + 14 = 34, then none');
+  assert.equal(G.arrive(st, 20, 600, 34), true, 'a full window later the budget is back');
+  assert.equal(G.arrive(fresh(), 34, 0, 34), true, 'exactly a screenful: lit (the spec skips only a flush above one)');
+  assert.equal(G.arrive(fresh(), 35, 0, 34), false, 'a flush above a screenful is skipped and spends nothing');
+  const big = fresh(); G.arrive(big, 35, 0, 34);
+  assert.equal(G.arrive(big, 34, 0, 34), true, 'a skipped flush left the budget whole');
+  assert.equal(G.arrive(fresh(), 1, 0, 0), false, 'a hidden grid (no height) highlights nothing');
+  assert.equal(G.arrive(fresh(), 1, 0, 1), true, 'a one-row screen lights a one-row flush');
+  assert.equal(G.arrive(fresh(), 0, 0, 34), false, 'nothing appended, nothing lit');
+  const back = fresh(); G.arrive(back, 34, 100, 34);
+  assert.equal(G.arrive(back, 1, 50, 34), false, 'a clock that steps back refills nothing');
+  // 400 lines/s in 150 ms flushes of 60 rows: past a screenful, never lit.
+  const hi = fresh(); let litHi = 0;
+  for (let t = 0; t < 3000; t += 150) litHi += G.arrive(hi, 60, t, 34) ? 1 : 0;
+  assert.equal(litHi, 0, '400 lines/s: every flush is past a screenful');
+  // Steady streams (review F1): on the 37-row bench screen (1400 x 900) every 150 ms flush of an ordinary rate glows.
+  // The budget refills one screenful per 600 ms (61 rows/s here), so a sustained rate above that is thinned, not cut.
+  for (const rate of [10, 40, 60]) {
+    const s = fresh(); let lit = 0; const flushes = 400;
+    for (let i = 0; i < flushes; i++) lit += G.arrive(s, Math.round(rate * 0.15), i * 150, 37) ? 1 : 0;
+    assert.equal(lit, flushes, `${rate} lines/s: every flush lit`);
+  }
+  const hot = fresh(); let litHot = 0;
+  for (let i = 0; i < 400; i++) litHot += G.arrive(hot, 15, i * 150, 37) ? 1 : 0;   // 100 lines/s
+  assert.ok(litHot > 400 * 0.55 && litHot < 400, `100 lines/s is thinned to the refill rate, not cut (${litHot} of 400 lit)`);
+  // Property: whatever the flush sizes and gaps, a flush above a screenful never lights, and the rows lit in any 600 ms
+  // window stay within the budget plus its refill: two screenfuls.
+  let seed = 12345; const rnd = n => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+  for (let run = 0; run < 200; run++) {
+    const screen = 2 + rnd(80); const s = fresh(); let t = rnd(1000); const lit = [];
+    for (let i = 0; i < 300; i++) {
+      t += rnd(400); const n = 1 + rnd(screen * 2);
+      const ok = G.arrive(s, n, t, screen);
+      if (n > screen) assert.equal(ok, false, `run ${run}: ${n} rows on a ${screen}-row screen`);
+      if (ok) lit.push([t, n]);
+      const inWindow = lit.filter(([at]) => at > t - 600).reduce((a, [, k]) => a + k, 0);
+      assert.ok(inWindow <= 2 * screen, `run ${run}: ${inWindow} rows lit within 600 ms on a ${screen}-row screen`);
+    }
+  }
 });
 
 test('rowClass: level and platform in one class string; ASSERT is the F class; unknown levels read as Verbose', () => {
@@ -111,9 +204,11 @@ test('buildRow: log text stays text (XSS), and no row of any shape exceeds 14 no
 
 // ---- createGrid on the fake page, with the page's #logWrapper mounted ----
 // The fake mount drops text between tags; `headerText` puts back the header texts the page's markup carries.
-// `st` is what shellState() returns (only `cur` is read); `ticks` holds the shell.onTick callbacks.
+// `st` is what shellState() returns (`cur` and `gridShown` are read); `ticks` holds the shell.onTick callbacks; every
+// action the grid calls is recorded in `calls`.
 function gridPage({ headerText = false } = {}) {
   const p = fakePage({ files: ['prefs.js', 'dom.js', 'keys.js', 'ui.js', 'shell.js', 'grid.js'] });
+  mount(p, 'toolbar');
   mount(p, 'logWrapper');
   if (headerText) {
     const texts = [...read(HTML_PATH).match(/<tr id="headerRow">[\s\S]*?<\/tr>/)[0].matchAll(/<span class="h">([^<]*)<\/span>/g)].map(m => m[1]);
@@ -121,10 +216,19 @@ function gridPage({ headerText = false } = {}) {
     assert.equal(hs.length, texts.length);
     hs.forEach((h, i) => { h.textContent = texts[i]; });
   }
-  const st = { cur: { filtered: [] } };
+  const st = { cur: { kind: 'live', all: [], filtered: [] }, live: { android: false, ios: false }, noDevice: { android: false, ios: false },
+    enabled: new Set(['android', 'ios']), levels: 6, tag: '', query: false, cleared: false, paused: false, gridShown: true };
   const ticks = [];
-  const shell = { onTick: fn => ticks.push(fn) };
-  const grid = p.ALV.createGrid({ doc: p.doc, dom: p.dom, keys: p.keys, shell, state: () => st });
+  const calls = [];
+  const shell = { onTick: fn => ticks.push(fn), devices: () => ({ android: { name: 'Pixel 8 Pro' }, ios: { name: 'iPhone 15' } }) };
+  const actions = new Proxy({}, { get: (o, k) => (...a) => calls.push([k, ...a]) });
+  const prefs = p.ALV.createPrefs({ storage: memoryStorage(), matchMedia: fakeMatchMedia(), userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)' });
+  prefs.boot(fakeRoot());
+  // A ResizeObserver whose callback the test fires: resize(h) reports a scroller content height of h px.
+  let observed = null;
+  p.win.ResizeObserver = class { constructor(fn) { this.fn = fn; } observe(el) { observed = { fn: this.fn, el }; } };
+  const resize = h => observed.fn([{ contentRect: { height: h } }]);
+  const grid = p.ALV.createGrid({ doc: p.doc, win: p.win, dom: p.dom, ui: p.ui, keys: p.keys, prefs, shell, state: () => st, actions });
   const ths = p.byId.headerRow.children;
   const cols = p.byId.colgroup.children;
   const seps = ths.flatMap(th => th.children.filter(c => c.attrs.role === 'separator'));
@@ -133,7 +237,7 @@ function gridPage({ headerText = false } = {}) {
     for (const fn of sep.listeners.keydown || []) fn(ev);
     return ev;
   };
-  return { p, grid, ths, cols, seps, key, st, ticks };
+  return { p, grid, ths, cols, seps, key, st, ticks, calls, prefs, resize, observed: () => observed };
 }
 
 test('resize handles: one separator per boundary after Time, Lvl, Tag, App / Device and PID–TID, inside the next header cell', () => {
@@ -184,14 +288,13 @@ test('resize handles: focus reports the width; ←/→ 8 px, ⇧ 32 px, clamped 
   assert.equal(key(tag, 'End').defaultPrevented, false, 'End is not a resize key');
 });
 
-test('resize handles: Home on a handle never reaches the shortcut registry (P5b binds Home to the oldest line)', () => {
-  const { p, seps, key } = gridPage();
-  let ran = 0;
-  p.keys.register({ id: 'test.home', keys: 'Home', run: () => { ran++; } });
+test('resize handles: Home on a handle resets the column and never reaches the stream\'s Home (the oldest line)', () => {
+  const { p, seps, key, calls } = gridPage();
   const ev = key(seps[0], 'Home');
   assert.equal(p.keys.dispatch(ev, seps[0]), null, 'the handle handled it (defaultPrevented)');
   assert.equal(p.keys.dispatch({ key: 'Home', preventDefault() {} }, seps[0]), null, 'and a separator owns its keys anyway');
-  assert.equal(ran, 0);
+  assert.deepEqual(calls, []);
+  assert.equal(p.keys.dispatch({ key: 'Home', preventDefault() {} }, p.byId.logTableEl), 'stream.oldest', 'control: from the table it is the stream\'s Home');
 });
 
 test('resize handles: a drag sets the width from the press, clamped, and ends cleanly on release', () => {
@@ -233,13 +336,13 @@ test('aria-rowcount: filtered lines plus the header row, written on sync and on 
   let writes = 0;
   const real = t.setAttribute.bind(t);
   t.setAttribute = (k, v) => { if (k === 'aria-rowcount') writes++; real(k, v); };
-  st.cur = { filtered: new Array(48310) };
+  st.cur = { kind: 'live', all: new Array(48310), filtered: new Array(48310) };
   grid.sync();
   assert.equal(t.attrs['aria-rowcount'], '48311');
   assert.equal(ticks.length, 1, 'the grid follows the shell tick (twice a second), not the drain');
   for (let i = 0; i < 10; i++) ticks[0]();
   assert.equal(writes, 1, 'unchanged: no write');
-  st.cur = { filtered: [] };
+  st.cur = { kind: 'live', all: [], filtered: [] };
   ticks[0]();
   assert.deepEqual([t.attrs['aria-rowcount'], writes], ['1', 2]);
 });
@@ -270,6 +373,13 @@ test('the focus ring: #logWrapper carries grid-focus while the table is focus-vi
   assert.equal(wrap.className, '', 'the class is the only thing written');
 });
 
+test('the grid tick also refreshes the pill (a paused stream runs no flush, so nothing else moves its count)', () => {
+  const { grid, ticks, calls } = gridPage();
+  ticks[0]();
+  grid.sync();
+  assert.deepEqual(calls.map(c => c[0]), ['updateNewerPill', 'updateNewerPill']);
+});
+
 test('the time cell gets the full timestamp (with its date) as a title on its first hover, never before', () => {
   const { p } = gridPage();
   const tr = p.doc.createElement('tr');
@@ -286,4 +396,194 @@ test('the time cell gets the full timestamp (with its date) as a title on its fi
   assert.equal(msg.title, undefined, 'only the time cell');
   ts.fire('pointerover');
   assert.equal(ts.title, '2026 Oct 14 15:53:43.000123');
+});
+
+// ---- Stream keys (P5b) ----
+const press = (p, active, key, o = {}) => p.keys.dispatch({ key, code: o.code || '', preventDefault() {}, ...o }, active);
+
+test('stream keys: End and ⌘↓ go to the newest line, Home and ⌘↑ to the oldest, from the grid or a toolbar button; never from a text field', () => {
+  const { p, calls } = gridPage();
+  const t = p.byId.logTableEl;
+  assert.equal(press(p, t, 'End'), 'stream.latest');
+  assert.equal(press(p, p.byId.clearBtn, 'End'), 'stream.latest', 'global: a button does not own End');
+  assert.equal(press(p, null, 'ArrowDown', { metaKey: true }), 'stream.latest', '⌘↓ (Mod is Meta on macOS)');
+  assert.equal(press(p, t, 'Home'), 'stream.oldest');
+  assert.equal(press(p, null, 'ArrowUp', { metaKey: true }), 'stream.oldest');
+  const field = p.doc.createElement('input');
+  field.setAttribute('type', 'text');
+  for (const [k, o] of [['End', {}], ['Home', {}], ['ArrowDown', { metaKey: true }]]) assert.equal(press(p, field, k, o), null, `${k} in a text field moves the caret`);
+  assert.deepEqual(calls.map(c => c[0]), ['jumpToEnd', 'jumpToEnd', 'jumpToEnd', 'jumpToOldest', 'jumpToOldest']);
+});
+
+test('stream keys: End and Home wait while the grid is hidden or a legacy modal is over it (the setup guide scrolls with them)', () => {
+  const { p, st, calls } = gridPage();
+  const end = () => ({ key: 'End', code: 'End', preventDefault() {} });
+  st.gridShown = false;   // the device cards, the dropzone or the loading view; or #setupModal / #stallModal open
+  assert.equal(p.keys.dispatch(end(), p.doc.body), null, 'the key stays the page\'s: no preventDefault, no jump');
+  assert.equal(press(p, p.doc.body, 'Home'), null);
+  assert.equal(press(p, null, 'ArrowDown', { metaKey: true }), null);
+  assert.deepEqual(calls, []);
+  st.gridShown = true;
+  assert.equal(p.keys.dispatch(end(), p.doc.body), 'stream.latest');
+  assert.deepEqual(calls.map(c => c[0]), ['jumpToEnd']);
+});
+
+test('stream keys: Space pauses and F toggles Follow only with the grid focused, on the live session, and not with single keys off', () => {
+  const { p, st, calls } = gridPage();
+  const t = p.byId.logTableEl;
+  assert.equal(press(p, t, ' ', { code: 'Space' }), 'stream.pause');
+  assert.equal(press(p, t, 'f', { code: 'KeyF' }), 'stream.follow');
+  assert.equal(press(p, p.byId.clearBtn, ' ', { code: 'Space' }), null, 'outside the grid Space is the focused control\'s');
+  assert.equal(press(p, p.byId.filterbar, 'f', { code: 'KeyF' }), null, 'a single key never fires outside the grid (WCAG 2.1.4)');
+  st.cur = { kind: 'file', all: [], filtered: [] };
+  assert.equal(press(p, t, ' ', { code: 'Space' }), null, 'a file session has nothing to pause: Space scrolls');
+  assert.equal(press(p, t, 'f', { code: 'KeyF' }), null);
+  st.cur = { kind: 'live', all: [], filtered: [] };
+  p.keys.setSingleKeys(false);
+  assert.equal(press(p, t, ' ', { code: 'Space' }), null, 'single keys can be switched off (Settings → Shortcuts, P14)');
+  assert.deepEqual(calls.map(c => c[0]), ['togglePause', 'toggleAutoScroll']);
+});
+
+test('stream keys: Space and F wait while a legacy modal covers the grid (the stall or setup sheet leaves focus on the table), review F4', () => {
+  const { p, st, calls } = gridPage();
+  const t = p.byId.logTableEl;
+  st.gridShown = false;   // #stallModal / #setupModal open over the grid, or the grid hidden
+  assert.equal(press(p, t, ' ', { code: 'Space' }), null, 'Space does not pause the stream behind the sheet');
+  assert.equal(press(p, t, 'f', { code: 'KeyF' }), null, 'F does not flip Follow unseen');
+  assert.deepEqual(calls, []);
+  st.gridShown = true;
+  assert.equal(press(p, t, ' ', { code: 'Space' }), 'stream.pause');
+  assert.equal(press(p, t, 'f', { code: 'KeyF' }), 'stream.follow');
+  assert.deepEqual(calls.map(c => c[0]), ['togglePause', 'toggleAutoScroll']);
+});
+
+test('stream keys: Pause and Follow carry aria-keyshortcuts and show their key in the toolbar kbd', () => {
+  const { p } = gridPage();
+  assert.deepEqual([p.byId.pauseBtn.getAttribute('aria-keyshortcuts'), p.byId.pauseKbd.textContent], ['Space', 'Space']);
+  assert.deepEqual([p.byId.autoScrollBtn.getAttribute('aria-keyshortcuts'), p.byId.followKbd.textContent], ['End Meta+ArrowDown', 'End']);
+  assert.equal(p.keys.label('stream.follow'), 'F');
+});
+
+// ---- Empty states (P5b) ----
+test('empty tile: written only when it changes, announced only when its cause does; the fix and Reset filter call resetFilter', () => {
+  const { p, grid, st, calls } = gridPage();
+  const $ = id => p.byId[id];
+  grid.syncEmpty();
+  assert.equal($('gridEmpty').hidden, true, 'nothing to say: hidden');
+  st.cur = { kind: 'live', all: new Array(500), filtered: [] };
+  st.levels = 0;
+  grid.syncEmpty();
+  assert.deepEqual([$('gridEmpty').hidden, $('gridEmptyTitle').textContent, $('gridEmptyDesc').textContent, $('gridEmptyFix').textContent, $('gridEmptyFix').hidden, $('gridEmptyReset').hidden],
+    [false, 'No lines match this filter', '0 of 500 lines in view. All levels are turned off.', 'Turn levels back on', false, false]);
+  assert.deepEqual([$('gridEmptyUse').getAttribute('href'), $('gridEmptyIcon').getAttribute('class'), $('gridEmptySkel').hidden], ['#i-search-x', 'icon', true]);
+  p.advance(6000);
+  assert.equal($('announcer').textContent, 'No lines match this filter. All levels are turned off.');
+  $('gridEmptyFix').click();
+  $('gridEmptyReset').click();
+  assert.deepEqual(calls.filter(c => c[0] === 'resetFilter'), [['resetFilter', 'levels'], ['resetFilter', 'all']]);
+  let writes = 0;
+  const title = $('gridEmptyTitle');
+  const desc = Object.getOwnPropertyDescriptor(title, 'textContent');
+  Object.defineProperty(title, 'textContent', { get: () => desc.value, set: x => { writes++; desc.value = x; } });
+  for (let i = 0; i < 5; i++) grid.syncEmpty();
+  assert.equal(writes, 0, 'unchanged: no write (it runs once per flush)');
+  st.cur = { kind: 'live', all: [], filtered: [] };
+  st.levels = 6;
+  st.live = { android: false, ios: true };
+  grid.syncEmpty();
+  assert.deepEqual([$('gridEmptyTitle').textContent, $('gridEmptyDesc').hidden, $('gridEmptySkel').hidden, $('gridEmptyIcon').getAttribute('class'), $('gridEmptyFix').hidden, $('gridEmptyReset').hidden],
+    ['Waiting for the first lines from iPhone 15…', true, false, 'icon spin', true, true]);
+  st.noDevice = { android: false, ios: true };   // #70: the bridge reported the phone gone, the socket stays open
+  grid.syncEmpty();
+  assert.deepEqual([$('gridEmptyTitle').textContent, $('gridEmptyDesc').textContent, $('gridEmptyDesc').hidden, $('gridEmptySkel').hidden, $('gridEmptyUse').getAttribute('href'), $('gridEmptyIcon').getAttribute('class')],
+    ['iPhone 15 was unplugged', 'Plug it back in to continue.', false, true, '#i-unplug', 'icon'], 'not "Waiting for the first lines": the sidebar row reads Disconnected');
+  st.noDevice = { android: false, ios: false };
+  st.cur = { kind: 'live', all: [1], filtered: [1] };
+  grid.syncEmpty();
+  assert.equal($('gridEmpty').hidden, true, 'the first line hides it');
+});
+
+test('empty tile: a stale session (its filtered list lags the filter) shows no tile and says nothing', () => {
+  const { p, grid, st } = gridPage();
+  st.cur = { kind: 'file', all: new Array(4), filtered: [] };
+  st.stale = true;
+  grid.syncEmpty();
+  p.advance(6000);
+  assert.deepEqual([p.byId.gridEmpty.hidden, p.byId.announcer.textContent || ''], [true, ''], 'stale: not a no-match state');
+  st.stale = false;                       // the render refiltered it and nothing matches: now it is true
+  grid.syncEmpty();
+  assert.equal(p.byId.gridEmpty.hidden, false);
+  assert.equal(p.byId.gridEmptyTitle.textContent, 'No lines match this filter');
+  assert.match(p.byId.announcer.textContent, /^No lines match this filter/);
+});
+
+test('empty tile: focus moves off a button the tile hides (Reset filter, or the fix) onto the control that takes over', () => {
+  const { p, grid, st } = gridPage();
+  const $ = id => p.byId[id];
+  st.cur = { kind: 'live', all: new Array(500), filtered: [] };
+  st.levels = 0;
+  grid.syncEmpty();                       // fix: Turn levels back on, plus Reset filter
+  p.focus($('gridEmptyReset'));
+  st.cur = { kind: 'live', all: new Array(500), filtered: [1] };
+  grid.syncEmpty();                       // lines match: the whole tile goes
+  assert.deepEqual([$('gridEmpty').hidden, p.doc.activeElement], [true, $('logTableEl')], 'Reset filter pressed: focus on the grid');
+  st.cur = { kind: 'live', all: new Array(500), filtered: [] };
+  st.levels = 0;
+  grid.syncEmpty();
+  p.focus($('gridEmptyFix'));
+  st.levels = 6; st.query = true;         // the fix is no longer offered, Reset filter stays
+  grid.syncEmpty();
+  assert.deepEqual([$('gridEmpty').hidden, $('gridEmptyFix').hidden, p.doc.activeElement], [false, true, $('gridEmptyReset')], 'the fix goes: focus on Reset filter');
+  st.query = false; st.levels = 0;
+  grid.syncEmpty();
+  p.focus($('gridEmptyFix'));
+  st.cur = { kind: 'live', all: new Array(500), filtered: [1] };
+  grid.syncEmpty();
+  assert.equal(p.doc.activeElement, $('logTableEl'), 'the fix pressed and lines now match: focus on the grid');
+  st.cur = { kind: 'live', all: new Array(500), filtered: [] };
+  st.levels = 0;
+  grid.syncEmpty();
+  p.focus($('logTableEl'));
+  st.cur = { kind: 'live', all: new Array(500), filtered: [1] };
+  grid.syncEmpty();
+  assert.equal(p.doc.activeElement, $('logTableEl'), 'focus elsewhere is not moved');
+  p.focus($('search'));
+  st.cur = { kind: 'live', all: new Array(500), filtered: [] };
+  grid.syncEmpty();
+  st.cur = { kind: 'live', all: new Array(500), filtered: [1] };
+  grid.syncEmpty();
+  assert.equal(p.doc.activeElement, $('search'), 'a focused control outside the tile keeps focus');
+});
+
+// ---- Arrival highlight (P5b) ----
+test('arrival: screenRows follows the scroller\'s height, the log size and the density; animationend and clearArrival drop is-new', () => {
+  const { p, grid, prefs, resize, observed } = gridPage();
+  assert.equal(observed().el, p.byId.logTable, 'the scroller is observed');
+  assert.equal(grid.screenRows, 0, 'no height yet: nothing is highlighted');
+  resize(500);
+  assert.equal(grid.screenRows, 25);
+  prefs.set('logFontSize', 20);
+  assert.equal(grid.screenRows, 16);
+  prefs.patchSettings({ density: 'compact' });
+  assert.equal(grid.screenRows, 18);
+  const tr = p.doc.createElement('tr');
+  tr.className = 'l-i p-a is-new';
+  p.byId.tbody.appendChild(tr);
+  tr.fire('animationend', { animationName: 'other' });
+  assert.equal(tr.className, 'l-i p-a is-new', 'another animation leaves it');
+  tr.fire('animationend', { animationName: 'row-in' });
+  assert.equal(tr.className, 'l-i p-a', 'the highlight ran: the class goes, so a re-attached tbody does not replay it');
+  const lit = { classList: { remove: c => { lit.gone = c; } } };
+  grid.clearArrival({ querySelectorAll: sel => (assert.equal(sel, 'tr.is-new'), [lit]) });
+  assert.equal(lit.gone, 'is-new');
+});
+
+test('arrival: grid.arrive reads the screenful kept from the scroller and a clock, not the page', () => {
+  const { p, grid, resize } = gridPage();
+  let t = 0; p.win.performance = { now: () => t };
+  assert.equal(grid.arrive(1), false, 'no height yet');
+  resize(700);   // 34 rows of 20.8 px: a budget of 34
+  assert.deepEqual([grid.arrive(20), grid.arrive(20), grid.arrive(14)], [true, false, true]);
+  t = 600;
+  assert.equal(grid.arrive(34), true, 'refilled after one --t-arrival');
 });

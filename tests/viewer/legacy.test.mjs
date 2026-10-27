@@ -278,7 +278,7 @@ const settle = () => new Promise(r => setImmediate(r));
 test('shellState has the shape the shell reads: live, status, devices, driverMissing, lines, dropped and enabled', () => {
   const { run } = loadLegacy([], { document: stickyDocument() });
   const st = run('shellState()');
-  assert.deepEqual(Object.keys(st).sort(), ['buffered', 'cur', 'devices', 'driverMissing', 'dropped', 'enabled', 'lines', 'live', 'maxRetained', 'noDevice', 'paused', 'sessions', 'status']);
+  assert.deepEqual(Object.keys(st).sort(), ['buffered', 'cleared', 'cur', 'devices', 'driverMissing', 'dropped', 'enabled', 'gridShown', 'levels', 'lines', 'live', 'maxRetained', 'noDevice', 'paused', 'query', 'sessions', 'stale', 'status', 'tag']);
   assert.deepEqual([st.cur === run('liveSession'), st.sessions[0] === run('liveSession'), st.sessions[1] === run('fileSession')], [true, true, true]);
   assert.equal(st.dropped, run('liveSession.dropped'), 'the same object, so a drop shows without a copy');
   assert.equal(st.lines, run('wsLines'));
@@ -459,4 +459,14 @@ test('Quiet system noise: a saved "on" is re-sent at startup (the bridge starts 
   assert.deepEqual(calls, [['/ios/quiet', 'POST', 'application/json', '{"on":false}']]);
   const bad = loadLegacy(['postIosQuiet'], { document: stickyDocument(), fetchImpl: () => Promise.resolve({ ok: false, status: 403 }) });
   await assert.rejects(bad.api.postIosQuiet(true), /403/);
+});
+
+test('shellState().gridShown: true only while #logWrapper shows and no legacy modal is open (the stream keys wait otherwise)', () => {
+  const { run } = loadLegacy([], { document: stickyDocument() });
+  run("showOnly('livePanel')");
+  assert.equal(run('shellState().gridShown'), false, 'the device cards');
+  run("showOnly('logWrapper')");
+  assert.equal(run('shellState().gridShown'), true);
+  run("document.getElementById('setupModal').classList.add('modal-overlay', 'visible')");
+  assert.equal(run('shellState().gridShown'), false, 'the setup guide scrolls with Home and End');
 });
