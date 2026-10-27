@@ -2,8 +2,9 @@
 PR description format for this repo. Keep the ## headings in this order, and keep each section terse.
 Delete a section only when it does not apply (Fix is for bug fixes only).
 Title: a conventional commit, `type(scope): subject`.
-PR-Agent appends PR Type, Description, a diagram and a file walkthrough below this description on
-every PR (auto_describe in .github/workflows/pr-agent.yml). Don't write those by hand.
+The Diagram and File walkthrough sections are written by the PR author: PR-Agent's own copies are
+turned off (enable_pr_diagram, enable_semantic_files_types in .pr_agent.toml). PR-Agent still appends
+PR Type and its AI summary below this description (auto_describe in .github/workflows/pr-agent.yml).
 .pr_agent.toml ([pr_description] extra_instructions) lists the same headings; keep the two in sync.
 -->
 
@@ -16,6 +17,28 @@ every PR (auto_describe in .github/workflows/pr-agent.yml). Don't write those by
 <!-- Bullets, by key file or module. -->
 
 -
+
+## Diagram
+
+<!-- A small mermaid flowchart of how the change fits together: the pieces it adds or changes and how
+they connect. Keep it under about 10 nodes. -->
+
+```mermaid
+flowchart LR
+  A["change"] --> B["affected part"]
+```
+
+## File walkthrough
+
+<!-- One row per changed file: what changed in it, and its +/- lines (git diff --stat main...HEAD). -->
+
+<details><summary>File walkthrough</summary>
+
+| File | Change | +/- |
+|---|---|---|
+| `path/to/file` | What changed in it | +0 / -0 |
+
+</details>
 
 ## Problem / feature
 
