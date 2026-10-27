@@ -27,7 +27,8 @@
       domStale: false,            // the tbody lags `filtered`; the next on-screen render rebuilds it
       follow: kind === 'live',    // auto-scroll; a file session never follows
       sel: null,                  // the selected line, kept across filter changes and switches
-      query: 0,                   // filter generation `filtered` was built with (P6: the compiled query)
+      query: 0,                   // filter generation `filtered` was built with
+      counts: null,               // incremental level, tag and app counts (counts.js); the page creates them
       scroll: { top: 0, left: 0, anchor: null, anchorTop: 0 },   // saved while another session is shown
       discarded: 0,               // lines dropped by the retention cap or the paused-backlog cap (#45)
       overflowed: false,          // the paused backlog dropped frames newer than every retained line
@@ -53,7 +54,8 @@
   // (1 - frac) * max, or every live line with dropAll (resume after a backlog overflow), and moves
   // the window indexes, the selection and the counters with them. Returns the seq of the first kept
   // line (table rows below it must go), or -1 when nothing was dropped. NaN or Infinity: no cap.
-  function trim(s, max, frac, dropAll, nextSeq) {
+  // onDrop(all, from, to), when given, sees the dropped run all[from, to) before it goes (the counts, P6).
+  function trim(s, max, frac, dropAll, nextSeq, onDrop) {
     const all = s.all;
     if (!dropAll && !(all.length > max)) return -1;
     const base = firstIndexWhere(all, 0, m => m.seq !== undefined);
@@ -65,6 +67,7 @@
     const cut = base + drop;
     const cutoff = cut < all.length ? all[cut].seq : nextSeq;   // seq of the first kept line
     s.seqFloor = cutoff;
+    if (onDrop) onDrop(all, base, cut);
     all.splice(base, drop);
     const filtered = s.filtered;
     const fa = firstIndexWhere(filtered, 0, m => m.seq !== undefined);

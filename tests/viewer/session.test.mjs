@@ -27,7 +27,7 @@ test('session.js loads in an empty context and names no page, storage or timer A
 
 test('the page loads session.js synchronously, after prefs.js and before the legacy script', () => {
   const html = read(HTML_PATH);
-  assert.deepEqual(pageScriptSrcs(html), ['assets/js/prefs.js', 'assets/js/session.js', 'assets/js/query.js', 'assets/js/dom.js', 'assets/js/keys.js', 'assets/js/ui.js', 'assets/js/shell.js', 'assets/js/live.js', 'assets/js/grid.js']);
+  assert.deepEqual(pageScriptSrcs(html), ['assets/js/prefs.js', 'assets/js/session.js', 'assets/js/query.js', 'assets/js/counts.js', 'assets/js/dom.js', 'assets/js/keys.js', 'assets/js/ui.js', 'assets/js/shell.js', 'assets/js/live.js', 'assets/js/grid.js']);
   const tag = html.indexOf('<script src="assets/js/session.js"></script>');
   assert.ok(tag > 0 && tag < html.lastIndexOf('<script>'), 'session.js comes before the legacy inline script');
 });
@@ -36,8 +36,9 @@ test('create: live and file sessions share one shape (same keys, same order) wit
   const live = S.create('live', 'Live session'), file = S.create('file', 'trace.log');
   assert.deepEqual(Object.keys(live), Object.keys(file));
   assert.deepEqual(Object.keys(live), ['id', 'kind', 'name', 'all', 'filtered', 'renderedEnd', 'renderFrom',
-    'domStale', 'follow', 'sel', 'query', 'scroll', 'discarded', 'overflowed', 'seqFloor', 'dropped',
+    'domStale', 'follow', 'sel', 'query', 'counts', 'scroll', 'discarded', 'overflowed', 'seqFloor', 'dropped',
     'markers', 'gaps', 'tbody']);
+  assert.equal(live.counts, null, 'the page gives each session its counts (ALV.counts.create)');
   assert.equal(live.follow, true);
   assert.equal(file.follow, false);
   assert.equal(live.renderFrom, -1);
@@ -132,6 +133,17 @@ test('trim: lines without a seq stay pinned in front and are never counted', () 
   file.all = lines(150).map(({ lvl, msg }) => ({ lvl, msg }));
   assert.equal(S.trim(file, 100, 0.1, false, 999), -1);
   assert.equal(file.all.length, 150);
+});
+
+test('trim: onDrop sees each dropped run before the splice, with its bounds; nothing dropped, no call', () => {
+  const s = liveWith(150);
+  const seen = [];
+  S.trim(s, 100, 0.1, false, 150, (all, a, b) => seen.push([all === s.all, a, b, all.length, all[a].seq, all[b - 1].seq]));
+  assert.deepEqual(seen, [[true, 0, 60, 150, 0, 59]]);
+  S.trim(s, 100, 0.1, false, 150, () => seen.push('again'));
+  assert.equal(seen.length, 1, 'under the cap: no call');
+  S.trim(s, 100, 0.1, true, 150, (all, a, b) => seen.push([a, b, all.length]));
+  assert.deepEqual(seen[1], [0, 90, 90], 'dropAll: every live line');
 });
 
 test('trimPending caps a backlog at 90 % of the cap, oldest first, and marks its session overflowed', () => {
