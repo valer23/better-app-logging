@@ -19,14 +19,23 @@
   .chip-area { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 8px; overflow: clip; padding: 4px; margin: -4px; }
   .chip-group { display: flex; align-items: center; gap: 4px; flex: none; }
   /* overflow: clip, not hidden: a hidden box is still a scroll container, so Tab-focusing a clipped control scrolls it (and the level
-     chips with it) and the scroll stays after focus leaves. The token group is the only shrinkable part of the area: a token chip
-     gives up its value (ellipsis) before its × is clipped, and the full token is the body's title. */
-  #tokenChips, #tokenOne { flex: 0 1 auto; min-width: 0; }
-  .chip.token { min-width: 0; }
+     chips with it) and the scroll stays after focus leaves. Invariant: whatever the area cannot fit is taken from the device chips
+     first (their names ellipsize, down to the badge) and then from the token value (ellipsis); a token chip never shrinks below
+     --tok-floor (its 8 px padding, 2 px border, its 24 px x and 2ch of value), so its x, or the chevron of "N filters", always
+     lies inside the clip. The full token is the body's title. */
+  .chip-area { --tok-floor: calc(24px + 8px + 2px + 2ch); }
+  #deviceChips { flex: 0 1 auto; min-width: 0; }
+  .chip.dev { min-width: 0; }
+  .chip.dev .plat { flex: none; }
+  #tokenChips, #tokenOne { flex: 0 1 auto; min-width: var(--tok-floor); }
+  #tokenOne:empty { display: none; }
+  .chip.token { min-width: var(--tok-floor); }
   .chip.token .v { min-width: 0; max-width: 24ch; overflow: hidden; text-overflow: ellipsis; }
   .chip.token .chip-x { flex: none; }
+  #tokenMoreText { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  #tokenMore .icon { flex: none; }
   .chip-group[hidden], .chip-row .divider-v[hidden] { display: none; }
-  .dev-name { max-width: 16ch; overflow: hidden; text-overflow: ellipsis; }
+  .dev-name { min-width: 0; max-width: 16ch; overflow: hidden; text-overflow: ellipsis; }
   .chip[hidden] { display: none; }
   /* A token chip: its body (puts the caret on the token) and its 24 px × (foundation .chip-x) are two buttons. */
   .chip-body { display: inline-flex; align-items: center; gap: 4px; height: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: text; min-width: 0; overflow: hidden; }

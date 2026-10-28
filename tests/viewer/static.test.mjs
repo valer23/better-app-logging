@@ -1007,7 +1007,7 @@ test('the chip area clips instead of scrolling, so focusing a hidden control can
 });
 
 test('a token chip shrinks to its × (ellipsis on the value), in the chip row and in the "N filters" popover', () => {
-  for (const sel of ['#tokenChips', '#tokenOne', '.chip.token', '.chip-body', '.token-list']) assert.equal(queryDecl(sel, 'min-width'), '0', `${sel} may shrink`);
+  for (const sel of ['.chip-body', '.token-list', '.chip.token .v', '#tokenMoreText']) assert.equal(queryDecl(sel, 'min-width'), '0', `${sel} may shrink`);
   assert.equal(queryDecl('#tokenChips', 'flex'), '0 1 auto');
   assert.equal(queryDecl('#tokenOne', 'flex'), '0 1 auto');
   assert.equal(queryDecl('.chip-body', 'overflow'), 'hidden');
@@ -1016,4 +1016,17 @@ test('a token chip shrinks to its × (ellipsis on the value), in the chip row an
   assert.ok(queryDecl('.chip.token .v', 'max-width'), 'a capped value');
   assert.equal(queryDecl('.chip.token .chip-x', 'flex'), 'none', 'the × never shrinks away');
   assert.equal(queryDecl('.token-list .chip.token', 'max-width'), '100%', 'in the popover a chip never outgrows the panel');
+});
+
+test('the device chips give way before the token chips, and a token chip keeps a floor that holds its × (or the chevron)', () => {
+  assert.equal(queryDecl('.chip-area', '--tok-floor'), 'calc(24px + 8px + 2px + 2ch)', '24 px × + 8 px padding + 2 px border + 2ch of value');
+  assert.equal(queryDecl('#deviceChips', 'flex'), '0 1 auto', 'overrides .chip-group flex: none');
+  assert.equal(queryDecl('#deviceChips', 'min-width'), '0');
+  assert.equal(queryDecl('.chip.dev', 'min-width'), '0');
+  assert.equal(queryDecl('.dev-name', 'min-width'), '0', 'its ellipsis takes effect early');
+  // The token group, its single-token box and every token chip (incl. "N filters") share the floor: nothing narrower can hide the ×.
+  for (const sel of ['#tokenChips', '#tokenOne', '.chip.token']) assert.equal(queryDecl(sel, 'min-width'), 'var(--tok-floor)', `${sel} keeps the floor`);
+  assert.equal(queryDecl('#tokenOne:empty', 'display'), 'none', 'with 2+ tokens the empty box must not reserve the floor');
+  assert.equal(queryDecl('#tokenMore .icon', 'flex'), 'none', 'the chevron never shrinks away');
+  assert.equal(queryDecl('#tokenMoreText', 'text-overflow'), 'ellipsis');
 });
