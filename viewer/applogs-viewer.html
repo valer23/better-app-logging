@@ -130,6 +130,11 @@
       <div class="chip-group" id="levelChips" role="group" aria-label="Levels"></div>
       <span class="divider-v" aria-hidden="true"></span>
       <div class="chip-group" id="deviceChips" role="group" aria-label="Devices"></div>
+      <span class="divider-v" id="tokenDiv" aria-hidden="true" hidden></span>
+      <div class="chip-group" id="tokenChips" role="group" aria-label="Active filters" hidden>
+        <span class="chip-group" id="tokenOne"></span>
+        <button type="button" class="chip token" id="tokenMore" aria-haspopup="dialog" aria-expanded="false" aria-controls="tokenPop" hidden><span id="tokenMoreText"></span><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-chevron-down"/></svg></button>
+      </div>
     </div>
     <span id="filterCount"></span>
     <button type="button" class="btn btn-ghost btn-sm" id="queryResetBtn" hidden>Reset</button>
@@ -388,6 +393,8 @@ pkill -f idevicesyslog</pre>
         <button type="button" class="menu-item" role="menuitemcheckbox" aria-checked="false" tabindex="-1" id="moreGlass" data-act="glass"><svg class="icon menu-check" aria-hidden="true" focusable="false"><use href="#i-check"/></svg><span>Glass</span></button>
       </div>
     </div>
+    <!-- The "N filters" chip's popover (assets/js/querybar.js): each active filter with its own remove button. -->
+    <div class="token-pop ov" id="tokenPop" aria-label="Active filters" hidden><div class="token-list" id="tokenList"></div></div>
     <!-- The status bar's drops popover (assets/js/live.js), one block per platform. -->
     <div class="drops-pop ov" id="dropsPopover" aria-label="Dropped lines" hidden>
       <div id="dropsAndroid" hidden><div class="drops-title" id="dropsAndroidTitle"></div><p class="drops-desc" id="dropsAndroidDesc"></p></div>
@@ -1458,6 +1465,7 @@ function showStallModal(text) {
   exportMenuCtl.close({ restoreFocus: false });
   if (shell) shell.closeMenus();   // the sidebar's device menus live in the same overlay root
   if (liveUi) liveUi.closeMenus();   // so do the toolbar's More menu and the status bar's drops popover
+  if (queryBar) queryBar.closeMenus();   // and the query region's "N filters" popover
   const el = document.getElementById('stallModalText');
   if (el && text) el.textContent = text;
   const res = document.getElementById('stallRepairResult');
@@ -2140,6 +2148,7 @@ function showSetup(platform) {
   exportMenuCtl.close({ restoreFocus: false });   // as showStallModal: the menu would paint above this modal
   if (shell) shell.closeMenus();
   if (liveUi) liveUi.closeMenus();
+  if (queryBar) queryBar.closeMenus();
   document.getElementById('setupModal').classList.add('visible'); switchSetupTab(platform);
 }
 function hideSetup()         { document.getElementById('setupModal').classList.remove('visible'); }

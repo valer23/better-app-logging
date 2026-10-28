@@ -20,6 +20,13 @@
   .chip-group { display: flex; align-items: center; gap: 4px; flex: none; }
   .chip-group[hidden], .chip-row .divider-v[hidden] { display: none; }
   .dev-name { max-width: 16ch; overflow: hidden; text-overflow: ellipsis; }
+  .chip[hidden] { display: none; }
+  /* A token chip: its body (puts the caret on the token) and its 24 px × (foundation .chip-x) are two buttons. */
+  .chip-body { display: inline-flex; align-items: center; gap: 4px; height: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: text; }
+  #tokenMore { padding-right: 6px; }
+  .token-pop { max-width: min(480px, calc(100vw - 16px)); padding: 8px; background: var(--raised); border: 1px solid var(--hairline); border-radius: 8px; box-shadow: var(--shadow-md); }
+  .token-pop[hidden] { display: none; }
+  .token-list { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
   #filterCount { flex: none; color: var(--text-2); font-size: var(--ui-fs-sm); font-variant-numeric: tabular-nums; white-space: nowrap; }
   #queryResetBtn { flex: none; }
   @container queryregion (max-width: 1247px) { .chip .lv-name { display: none; } }

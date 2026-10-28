@@ -11,6 +11,7 @@ const T = ' ';
 function barPage() {
   const p = fakePage({ files: ['dom.js', 'keys.js', 'ui.js', 'shell.js', 'live.js', 'query.js', 'querybar.js'] });
   mount(p, 'filterbar');
+  p.byId.ovPopovers.appendChild(mount(p, 'tokenPop'));   // the "N filters" popover, in the popover layer as on the page
   const $ = id => p.byId[id];
   $('queryInput').value = '';
   const Q = p.ALV.query;
@@ -222,4 +223,58 @@ test('a filter change announces the result count (at most once per 5 s); an unch
   type('tg:x');
   p.advance(6000);
   assert.equal($('announcer').textContent, '', 'the same filter, then an invalid one');
+});
+
+test('one token is a chip (NOT, key, value, a 24 px × "Remove filter NOT tag:chatty"); two or more collapse into "N filters" and its popover', () => {
+  const { p, $, type } = barPage();
+  type('level:W+ -tag:chatty');
+  p.advance(100);
+  const one = $('tokenOne').children;
+  assert.deepEqual([$('tokenChips').hidden, $('tokenDiv').hidden, $('tokenMore').hidden, one.length], [false, false, true, 1]);
+  assert.equal(one[0].className, 'chip token neg', 'a negation: NOT and a dashed border');
+  const [body, x] = one[0].children;
+  assert.deepEqual(body.children.map(c => [c.className, texts(c)]), [['not', 'NOT'], ['k', 'tag:'], ['v', 'chatty']]);
+  assert.deepEqual([x.className, x.getAttribute('aria-label')], ['chip-x', 'Remove filter NOT tag:chatty']);
+  type('level:W+ -tag:chatty "time out" /a b/ pid:7');
+  p.advance(100);
+  assert.deepEqual([$('tokenOne').children.length, $('tokenMore').hidden, texts($('tokenMoreText'))], [0, false, '4 filters']);
+  assert.deepEqual($('tokenList').children.map(c => c.children[1].getAttribute('aria-label')),
+    ['Remove filter NOT tag:chatty', 'Remove filter "time out"', 'Remove filter /a b/', 'Remove filter pid:7']);
+  $('tokenMore').click();
+  assert.equal($('tokenMore').getAttribute('aria-expanded'), 'true', 'the popover opens');
+  type('');
+  p.advance(100);
+  assert.deepEqual([$('tokenChips').hidden, $('tokenDiv').hidden, $('tokenMore').getAttribute('aria-expanded')], [true, true, 'false'], 'no token: no chip, the popover closed');
+});
+
+test('a chip\'s × removes its token from the field and applies; its body puts the caret at the end of its token (Open item 6)', () => {
+  const { p, $, st, type } = barPage();
+  let sel = null;
+  $('queryInput').setSelectionRange = (a, b) => { sel = [a, b]; };
+  type('tag:a  -tag:"b c"  word');
+  p.advance(100);
+  $('tokenList').children[1].children[0].click();
+  assert.deepEqual([p.doc.activeElement, sel], [$('queryInput'), [17, 17]], 'after -tag:"b c"');
+  $('tokenList').children[1].children[1].click();
+  assert.equal($('queryInput').value, 'tag:a  word');
+  assert.equal(st.filter.tags.length, 1, 'applied at once');
+  assert.equal(p.doc.activeElement, $('queryInput'), 'the chip is gone: focus in the field');
+  type('tag:a  word x');            // typed, not applied yet: a chip's × finds its token in the text as it is now
+  $('tokenList').children[0].children[1].click();
+  assert.equal($('queryInput').value, 'word x');
+  type('tag:a tag:b');              // an invalid edit never blocks a chip (must-keep 3): its × works on base(), the last applied text
+  p.advance(100);
+  type('tag:a tag:b tg:x');
+  p.advance(100);
+  $('tokenList').children[0].children[1].click();
+  assert.deepEqual([$('queryInput').value, st.filter.tags.length, $('queryError').hidden], ['tag:b', 1, true], 'the invalid edit is dropped, the chip goes');
+});
+
+test('token chips are text only (XSS): markup in a value stays a Text node', () => {
+  const { p, $, type } = barPage();
+  type('tag:<img/src=x/onerror=alert(1)>');
+  p.advance(100);
+  const v = $('tokenOne').children[0].children[0].children.find(c => c.className === 'v');
+  assert.equal(texts(v), '<img/src=x/onerror=alert(1)>');
+  assert.equal(v.children.length, 0, 'no element was parsed out of it');
 });

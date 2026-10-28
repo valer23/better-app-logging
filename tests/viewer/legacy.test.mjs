@@ -297,11 +297,12 @@ test('handleWsMsg still shows the stall sheet for the stall frame unless the str
 
 test('showStallModal and showSetup close the sidebar row menus and the toolbar / status-bar menus: #overlayRoot (z 200) would paint them above the modal (P4)', () => {
   const { run } = loadLegacy([], { document: stickyDocument() });
-  run(`globalThis.__closed = []; shell = { closeMenus: () => { __closed.push('shell'); }, sync() {} }; liveUi = { closeMenus: () => { __closed.push('live'); }, sync() {} };`);
+  run(`globalThis.__closed = []; shell = { closeMenus: () => { __closed.push('shell'); }, sync() {} }; liveUi = { closeMenus: () => { __closed.push('live'); }, sync() {} };
+    queryBar = { closeMenus: () => { __closed.push('query'); }, sync() {} };`);
   run(`showStallModal('x')`);
-  assert.equal(run('__closed.join()'), 'shell,live', 'the stall modal is opened by a frame, so no pointerdown light dismiss runs');
+  assert.equal(run('__closed.join()'), 'shell,live,query', 'the stall modal is opened by a frame, so no pointerdown light dismiss runs');
   run(`showSetup('ios')`);
-  assert.equal(run('__closed.join()'), 'shell,live,shell,live');
+  assert.equal(run('__closed.join()'), 'shell,live,query,shell,live,query');
 });
 
 // The legacy side of the shell adapter, against the real legacy code: the fields shellState() returns are what

@@ -21,11 +21,18 @@
   const plural = n => (n === 1 ? 'line' : 'lines');
   // A level chip's accessible name (spec): "Verbose, 12 950 lines".
   function levelLabel(k, n) { return `${LEVEL_NAMES[k]}, ${g.ALV.shellPure.num(n)} ${plural(n)}`; }
+  // A token chip's parts (spec "Active filters"): the key in --text-2 ('tag:', none for text), the value, and the name its
+  // remove button reads: "NOT tag:chatty", "\"time out\"", "/a b/".
+  function chipName(t) {
+    const k = t.k === 'word' || t.k === 'phrase' || t.k === 'regex' ? '' : `${t.k}:`;
+    const v = t.k === 'phrase' ? `"${t.v}"` : t.k === 'regex' ? `/${t.v}/` : t.v;
+    return { k, v, full: `${t.neg ? 'NOT ' : ''}${k}${v}` };
+  }
 
   // ---- DOM ----
 
   // createQueryBar({ doc, win, dom, ui, keys, shell, state, actions }) → { sync(), numbers(), apply(), text(), focus(),
-  // toggleLevel(k), toggleDevice(platform), reset(), fix(what) }. state() is the legacy shellState() (cur, filter: the
+  // toggleLevel(k), toggleDevice(platform), reset(), fix(what), closeMenus() }. state() is the legacy shellState() (cur, filter: the
   // applied compiled query, devices, tag); actions are legacy functions: setQuery(text, opts) → error | null, and sync()
   // (shellSync: the sidebar rows and the status bar read the applied query too).
   function createQueryBar({ doc, win, dom, ui, keys, shell, state, actions }) {
@@ -59,6 +66,7 @@
       setAttr(input, 'aria-invalid', err ? 'true' : null);
       setText($('queryErrorText'), err ? err.msg : '');
       setHidden($('queryError'), !err);
+      if (!err) drawTokens(input.value);
       actions.sync();
       const st = state();
       if (st.filter !== before) ui.announce(lineCount(st.cur.filtered.length, st.cur.all.length));
@@ -109,6 +117,53 @@
       $('deviceChips').appendChild(b);
       return { b, name };
     });
+
+    // ---- Token chips (spec "Active filters"): one token is a chip with its own 24 px ×; two or more collapse into one
+    // "N filters" chip whose popover lists each with its own remove button. A chip's body puts the caret at the end of its
+    // token in the field (Open item 6). Drawn from the applied text, again only when its tokens change; a click finds its
+    // token in the field's text as it is now (the user may have typed since). Text only: chipName's parts go into Text nodes. ----
+    const CHIP_KEYS = new Set(['level', 'dev', 'plat']);
+    const more = $('tokenMore');
+    const pop = ui.popover(more, $('tokenPop'), { align: 'start' });
+    let drawn = null;
+    function tokenChip(t, tag) {
+      const name = chipName(t);
+      const body = dom.el('button', { type: 'button', class: 'chip-body' },
+        t.neg ? dom.el('span', { class: 'not', text: 'NOT' }) : null, name.k ? dom.el('span', { class: 'k', text: name.k }) : null, dom.el('span', { class: 'v', text: name.v }));
+      body.addEventListener('click', () => caretOn(t));
+      const x = dom.el('button', { type: 'button', class: 'chip-x', 'aria-label': `Remove filter ${name.full}` }, dom.icon('x'));
+      x.addEventListener('click', () => removeChip(t));
+      return dom.el(tag, { class: t.neg ? 'chip token neg' : 'chip token' }, body, x);
+    }
+    function caretOn(t) {
+      pop.close({ restoreFocus: false });
+      const tok = Q.parse(input.value).tokens[Q.indexOf(input.value, t)];
+      input.focus();
+      if (tok && input.setSelectionRange) input.setSelectionRange(tok.end, tok.end);
+    }
+    function removeChip(t) {
+      pop.close({ restoreFocus: false });
+      const b = base();   // the field's text when it compiles, else the last applied text: an invalid edit never blocks a chip (must-keep 3)
+      const i = Q.indexOf(b, t);
+      if (i >= 0) rewrite(Q.removeToken(b, i));
+      input.focus();   // the chip is gone
+    }
+    function drawTokens(text) {
+      const toks = Q.parse(text).tokens.filter(t => !CHIP_KEYS.has(t.k));
+      const key = Q.serialize(toks);
+      if (key === drawn) return;
+      drawn = key;
+      for (const box of [$('tokenOne'), $('tokenList')]) for (const c of Array.from(box.children)) c.remove();
+      setHidden($('tokenDiv'), !toks.length);
+      setHidden($('tokenChips'), !toks.length);
+      setHidden(more, toks.length < 2);
+      if (toks.length < 2) pop.close({ restoreFocus: false });
+      if (toks.length === 1) $('tokenOne').appendChild(tokenChip(toks[0], 'span'));
+      if (toks.length > 1) {
+        setText($('tokenMoreText'), `${toks.length} filters`);
+        for (const t of toks) $('tokenList').appendChild(tokenChip(t, 'div'));
+      }
+    }
 
     function syncBar() {
       const has = input.value !== '';
@@ -164,15 +219,18 @@
       return undefined;
     }
 
+    drawTokens('');
     sync();
     return {
       sync, numbers, apply, toggleLevel, toggleDevice, reset, fix,
       text: () => input.value,
+      // A legacy modal is about to open over the page: the popover lives in #overlayRoot (z 200), above it.
+      closeMenus() { pop.close({ restoreFocus: false }); },
       focus() { input.focus(); if (input.select) input.select(); },
     };
   }
 
   const ALV = g.ALV || (g.ALV = {});
-  ALV.queryBarPure = Object.freeze({ levelLabel, LEVEL_NAMES, DEBOUNCE_MS, NUMBERS_MS });
+  ALV.queryBarPure = Object.freeze({ levelLabel, chipName, LEVEL_NAMES, DEBOUNCE_MS, NUMBERS_MS });
   ALV.createQueryBar = createQueryBar;
 })(typeof window !== 'undefined' ? window : globalThis);
