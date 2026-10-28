@@ -438,3 +438,21 @@ test('a filter change that leaves the no-match tile up announces no count of its
   p.advance(100);
   assert.equal($('announcer').textContent, '0 of 0 lines', 'nothing retained at all: no tile, so the count says it');
 });
+
+test('a sync (the shell\'s, a dropped frame\'s) writes no number: the 250 ms interval and a filter change do (F11)', () => {
+  const { p, $, st, bar, type } = barPage();
+  const count = $('filterCount');
+  let writes = 0;
+  let text = count.textContent;
+  Object.defineProperty(count, 'textContent', { get: () => text, set(v) { writes++; text = v; } });
+  st.cur = { counts: { lvl: [3, 0, 0, 0, 0, 0] }, filtered: new Array(3), all: new Array(9) };
+  bar.sync();
+  bar.sync();
+  assert.equal(writes, 0, 'shellSync runs at WS-frame rate: it leaves the numbers to the interval');
+  p.advance(250);
+  assert.deepEqual([writes, text], [1, '3 of 9 lines']);
+  st.cur = { counts: { lvl: [2, 0, 0, 0, 0, 0] }, filtered: new Array(2), all: new Array(9) };
+  type('a');
+  p.advance(100);
+  assert.deepEqual([writes, text], [2, '2 of 9 lines'], 'a filter change shows its result at once, not on the next tick');
+});

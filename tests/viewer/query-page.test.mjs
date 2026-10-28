@@ -198,3 +198,27 @@ test('dev-bench read scenario: readPhaseP50Ms and readPhaseP95Ms count only the 
   assert.ok(r.readPhaseFlushes >= 19 && r.readPhaseFlushes < r.flushes, `read-phase flushes: ${r.readPhaseFlushes} of ${r.flushes}`);
   assert.deepEqual([r.query, r.queryError, r.cap], [null, null, 500000], 'the result reports the query and the cap');
 });
+
+test('a {type:"dropped"} frame runs shellSync but writes no visible number: the 250 ms interval owns them (F11)', () => {
+  const v = boot();
+  v.send(10); v.api.flushBatch();
+  v.run('queryBar.numbers()');
+  const count = v.doc.getElementById('filterCount');
+  assert.equal(count.textContent, '10 of 10 lines');
+  v.send(5); v.api.flushBatch();
+  for (let i = 0; i < 20; i++) v.api.handleWsMsg({ data: JSON.stringify({ type: 'dropped', count: 3 }) }, 'ios');
+  assert.equal(count.textContent, '10 of 10 lines', 'twenty dropped frames, no write');
+  v.run('queryBar.numbers()');
+  assert.equal(count.textContent, '15 of 15 lines', 'the interval\'s write shows them');
+});
+
+test('a session switch shows the shown session\'s numbers at once (selectSession asks for them: shellSync no longer writes any)', () => {
+  const v = boot();
+  v.send(10); v.api.flushBatch();
+  v.run('queryBar.numbers()');
+  const count = v.doc.getElementById('filterCount');
+  v.api.selectSession(v.run('fileSession'));
+  assert.equal(count.textContent, '0 of 0 lines');
+  v.api.selectSession(v.run('liveSession'));
+  assert.equal(count.textContent, '10 of 10 lines');
+});

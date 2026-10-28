@@ -68,6 +68,7 @@
       setHidden($('queryError'), !err);
       if (!err) drawTokens(input.value);
       actions.sync();
+      numbers();   // the filter's result shows at once; sync() leaves the numbers to the interval
       const st = state();
       // The no-match tile (grid.js) announces itself with its cause, which the count would displace in the 5 s throttle: it says only what the tile does not.
       const tile = st.cur.all.length > 0 && st.cur.filtered.length === 0 && !st.stale;
@@ -186,7 +187,7 @@
       setText(kbd, k);
       setHidden(kbd, !k || has || doc.activeElement === input);   // spec: only while the bar is unfocused and empty
     }
-    // "47 106 of 48 310 lines" and the level chips' counts: on the 250 ms interval and on sync. A stale session (a file
+    // "47 106 of 48 310 lines" and the level chips' counts: on the 250 ms interval and on a filter or session change. A stale session (a file
     // just opened, before its first refilter) has no level counts yet: unknown, not 0, so nothing is written until then.
     function numbers() {
       const st = state();
@@ -216,8 +217,9 @@
       setAttr(regexBtn, 'aria-pressed', String(rx));
       syncBar();
     }
-    // A filter change or shellSync: everything, the numbers at once.
-    function sync() { syncChips(); numbers(); }
+    // shellSync (the shell's tick, a dropped frame, a device pick, a session switch): the chips and the bar only. The numbers are the 250 ms
+    // interval's, and apply() and selectSession ask for them at once on a filter or session change (spec "Performance": at most 4 writes a second).
+    const sync = syncChips;
     win.setInterval(() => { if (!doc.hidden) numbers(); }, NUMBERS_MS);
     shell.onTick(syncChips);
 
@@ -258,7 +260,8 @@
     levels.forEach(({ b }, k) => setAttr(b, 'aria-keyshortcuts', keys.aria(`filter.level.${LETTERS[k]}`)));
 
     drawTokens('');
-    sync();
+    syncChips();
+    numbers();
     return {
       sync, numbers, apply, toggleLevel, toggleDevice, reset, fix,
       text: () => input.value,
