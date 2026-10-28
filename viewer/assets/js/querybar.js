@@ -71,15 +71,27 @@
       const st = state();
       if (st.filter !== before) ui.announce(lineCount(st.cur.filtered.length, st.cur.all.length));
     }
-    // Writes `text` into the bar and applies it at once.
-    function rewrite(text) { input.value = text; apply(); }
+    // Writes `text` into the bar and applies it at once, under the modes `o` (the ones the text was read under, else the ones now on).
+    function rewrite(text, o = opts()) { mc = o.case; rx = o.regex; input.value = text; apply(); }
     // What a chip, row or tile fix rewrites: the bar's text when it compiles, else the last applied text (the invalid edit is dropped, so the fix always applies).
-    // The text and the modes it compiles under travel together: the bar's text with the modes now on, or the applied text with the modes it was applied under.
-    function basis() { return Q.build(input.value, opts(), state().devices).q ? { text: input.value, o: opts() } : { text: applied, o: appliedOpts }; }
-    function base() { return basis().text; }
-    function current() { const b = basis(); return Q.build(b.text, b.o, state().devices).q || state().filter; }
-    function toggleLevel(k) { rewrite(Q.setLevels(base(), current().levels ^ (1 << k))); }
-    function toggleDevice(p) { rewrite(Q.setDevices(base(), current().plats ^ (p === 'ios' ? 2 : 1))); }
+    // The text and the modes it compiles under travel together, and the rewrite is applied under those modes: the bar's text with the modes now on, else the
+    // applied text with the modes now on when it compiles under them, else the applied text with the modes it was applied under (.* turned on over `a(`
+    // fails, the literal filter stays, and a chip on that literal must not be compiled as a regex).
+    function basis() {
+      const d = state().devices;
+      const o = opts();
+      if (Q.build(input.value, o, d).q) return { text: input.value, o };
+      if (Q.build(applied, o, d).q) return { text: applied, o };
+      return { text: applied, o: appliedOpts };
+    }
+    // Rewrites the basis text with edit(text, query-it-compiles-to) → the new text, or null for no change.
+    function change(edit) {
+      const b = basis();
+      const t = edit(b.text, Q.build(b.text, b.o, state().devices).q || state().filter);
+      if (t !== null) rewrite(t, b.o);
+    }
+    function toggleLevel(k) { change((t, q) => Q.setLevels(t, q.levels ^ (1 << k))); }
+    function toggleDevice(p) { change((t, q) => Q.setDevices(t, q.plats ^ (p === 'ios' ? 2 : 1))); }
     function reset() { rewrite(''); }
 
     input.addEventListener('input', () => {
@@ -143,9 +155,8 @@
     }
     function removeChip(t) {
       pop.close({ restoreFocus: false });
-      const b = base();   // the field's text when it compiles, else the last applied text: an invalid edit never blocks a chip (must-keep 3)
-      const i = Q.indexOf(b, t);
-      if (i >= 0) rewrite(Q.removeToken(b, i));
+      // the field's text when it compiles, else the last applied text: an invalid edit never blocks a chip (must-keep 3)
+      change(b => { const i = Q.indexOf(b, t); return i >= 0 ? Q.removeToken(b, i) : null; });
       input.focus();   // the chip is gone
     }
     function drawTokens(text) {
@@ -212,12 +223,10 @@
     // remove the token the tile names (state().notTag, state().tag), 'all' (Reset filter) empties the query.
     function fix(what) {
       if (what === 'all') return reset();
-      if (what === 'levels') return rewrite(Q.setLevels(base(), 63));
-      if (what === 'devices') return rewrite(Q.setDevices(base(), 3));
+      if (what === 'levels') return change(t => Q.setLevels(t, 63));
+      if (what === 'devices') return change(t => Q.setDevices(t, 3));
       const neg = what === 'notTag';
-      const i = Q.indexOf(base(), { k: 'tag', v: neg ? state().notTag : state().tag, neg });
-      if (i >= 0) rewrite(Q.removeToken(base(), i));
-      return undefined;
+      return change(t => { const i = Q.indexOf(t, { k: 'tag', v: neg ? state().notTag : state().tag, neg }); return i >= 0 ? Q.removeToken(t, i) : null; });
     }
 
     // ---- Keys (spec "Keyboard map", Filter): ⌘F (in a text field too) and /† focus the bar and select its text; ⌥C and

@@ -377,3 +377,47 @@ test('the empty tile\'s fixes rewrite the query: levels, devices, the named tag,
   bar.fix('tag');
   assert.deepEqual([$('queryInput').value, $('queryError').hidden], ['', true]);
 });
+
+test('a chip, a device chip, a token × and a tile fix apply the text they rewrite under the modes it was applied under, even when .* was turned on over it (F1)', () => {
+  const { p, $, st, bar, type, pressed } = barPage();
+  // `a(` is a fine literal; .* makes it an unterminated group, so the toggle fails and the literal filter stays.
+  const turnOnRegex = text => {
+    type(text);
+    p.advance(100);
+    $('queryRegexBtn').click();
+    assert.equal($('queryError').hidden, false, `${text}: the regex toggle is refused`);
+    assert.equal(st.filter.levels, 63);
+  };
+  turnOnRegex('a(');
+  $('levelChips').children[0].click();
+  assert.deepEqual([$('queryInput').value, st.filter.levels, $('queryError').hidden, $('queryRegexBtn').getAttribute('aria-pressed')], ['level:D+ a(', 62, true, 'false'],
+    'the level chip works; the refused toggle is dropped with the invalid edit');
+  $('queryRegexBtn').click();
+  assert.equal($('queryError').hidden, false);
+  $('deviceChips').children[1].click();
+  assert.deepEqual([$('queryInput').value, st.filter.plats, $('queryError').hidden], ['dev:android level:D+ a(', 1, true]);
+  $('queryRegexBtn').click();
+  bar.fix('levels');
+  assert.deepEqual([$('queryInput').value, st.filter.levels, $('queryError').hidden], ['dev:android a(', 63, true], 'the tile\'s fix');
+  bar.fix('devices');
+  assert.deepEqual([$('queryInput').value, st.filter.plats], ['a(', 3]);
+  // The nested-quantifier refusal is the same case: `(a+)+` is a valid literal, then .* is turned on.
+  type('tag:x (a+)+');
+  p.advance(100);
+  $('queryRegexBtn').click();
+  assert.equal($('queryError').hidden, false);
+  $('tokenList').children[0].children[1].click();
+  assert.deepEqual([$('queryInput').value, $('queryError').hidden, st.filter.tags.length], ['(a+)+', true, 0], 'the × works');
+  assert.deepEqual(pressed('levelChips'), Array(6).fill(true));
+});
+
+test('a toggle turned on over text that is still valid under it is kept by a chip (the modes now on win when the applied text compiles under them)', () => {
+  const { p, $, type } = barPage();
+  type('a.b');
+  p.advance(100);
+  type('a.b tg:x');
+  p.advance(100);
+  $('queryRegexBtn').click();
+  $('levelChips').children[0].click();
+  assert.deepEqual([$('queryInput').value, $('queryError').hidden, $('queryRegexBtn').getAttribute('aria-pressed')], ['level:D+ a.b', true, 'true']);
+});
