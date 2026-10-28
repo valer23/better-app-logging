@@ -87,6 +87,19 @@ export function fakeRoot() {
   };
 }
 
+// A seeded PRNG with good low bits (mulberry32): rng(seed)(n) is an integer in [0, n). The property tests share it; an LCG
+// reduced with `% n` locks the low bit and leaves even moduli almost always on multiples of 4, which silently skipped
+// most of the operations and characters those tests claim to cover.
+export function rng(seed) {
+  let s = seed | 0;
+  return n => {
+    s = (s + 0x6D2B79F5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) % n;
+  };
+}
+
 // Runs viewer/assets/js/prefs.js in an EMPTY context (no document, no window, no storage), so it
 // must not touch the DOM at load and does not auto-boot. Returns that context's ALV namespace.
 export function loadPrefsModule() {

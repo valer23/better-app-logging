@@ -20,8 +20,8 @@
   }
 
   const lines = n => (n === 1 ? 'line' : 'lines');
-  // The filter count (the filter bar until P6's chip row): "47 106 of 48 310 lines".
-  function lineCount(shown, all) { return `${sp().num(shown)} of ${sp().num(all)} lines`; }
+  // The filter count (the filter bar until P6's chip row): "47 106 of 48 310 lines", "0 of 1 line".
+  function lineCount(shown, all) { return `${sp().num(shown)} of ${sp().num(all)} ${lines(all)}`; }
   // The #45 discard note (the legacy stats wording): what the status bar keeps at its narrow tier, where the
   // plain Retained count gives way. '' when nothing was discarded.
   function retainedNote(discarded, overflowed) {

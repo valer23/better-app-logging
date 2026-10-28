@@ -202,6 +202,20 @@ test('buildRow: log text stays text (XSS), and no row of any shape exceeds 14 no
   }
 });
 
+test('buildRow: a search hit marks the first match only (P6), so a row stays within 14 + 3 nodes; an empty match marks nothing', () => {
+  const k = rowKit();
+  const msgOf = tr => tr.childNodes[6].childNodes.map(c => (c.nodeType === 3 ? c.data : `[${c.textContent}]`));
+  k.run(`activeQuery = ALV.query.build('"ab"', {}, {}).q`);
+  const tr = k.api.buildRow(line({ msg: 'xx AB ab ab' }), false);
+  assert.deepEqual(msgOf(tr), ['xx ', '[AB]', ' ab ab'], 'one <mark>, case-insensitive like the filter');
+  assert.equal(k.count(tr), 17, 'the text before, the mark and its text, the text after: 3 more than plain text, however many hits');
+  assert.deepEqual(msgOf(k.api.buildRow(line({ msg: 'ab' }), false)), ['[ab]'], 'no empty text node around a whole-message hit');
+  k.run(`activeQuery = ALV.query.build('/x*/', {}, {}).q`);
+  assert.deepEqual(msgOf(k.api.buildRow(line({ msg: 'abc' }), false)), ['abc']);
+  k.run(`activeQuery = ALV.query.build('tag:a', {}, {}).q`);
+  assert.equal(k.count(k.api.buildRow(line(), false)), 14, 'no text term, no mark');
+});
+
 // ---- createGrid on the fake page, with the page's #logWrapper mounted ----
 // The fake mount drops text between tags; `headerText` puts back the header texts the page's markup carries.
 // `st` is what shellState() returns (`cur` and `gridShown` are read); `ticks` holds the shell.onTick callbacks; every

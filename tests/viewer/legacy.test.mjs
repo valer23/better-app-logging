@@ -11,7 +11,7 @@ process.env.TZ = 'UTC';   // formatTs formats in local time
 const BENCH_BINDINGS = [
   'flushBatch', 'handleWsMsg', 'pendingBatch', 'MAX_RETAINED', 'iosLive', 'liveSession', 'cur',
   'toggleAutoScroll', 'togglePause', 'refreshLiveView', 'FOLLOW_DOM_CAP', 'LIVE_DOM_CAP',
-  'fileSession', 'selectSession', 'discardBacklog',
+  'fileSession', 'selectSession', 'discardBacklog', 'resetLines', 'setQuery',
 ];
 // dev-bench.js assigns these top-level bindings, so none of them may be `const`.
 const BENCH_REASSIGNED = ['flushBatch', 'iosLive', 'MAX_RETAINED'];
@@ -170,6 +170,30 @@ test('JSON export re-imports unchanged, both platforms', async () => {
   assert.equal(doc.source, 'device-log-viewer');
   assert.equal(doc.totalLines, 3);
   assert.deepEqual(parsed, [...IOS, ...ANDROID]);
+});
+
+test('a TXT line whose level reads F (the letter the grid shows for ASSERT) imports as ASSERT, like A', async () => {
+  const fatal = [{ ...IOS[1], lvl: 'ASSERT' }];
+  const { content } = await roundTrip('txt', fatal);
+  const asF = content.replace('  A  ', '  F  ');   // the level column: two spaces either side
+  assert.notEqual(asF, content, 'the export wrote A, now F');
+  run('ALV.session.reset(fileSession, []);');
+  api.handleFile({ text: asF });
+  assert.deepEqual(JSON.parse(JSON.stringify(run('fileSession.all'))), fatal);
+});
+
+test('the Export menu, its loss note and the loading text group numbers with thin spaces, like the rest of the UI', () => {
+  const doc = stickyDocument();
+  const v = loadLegacy([], { document: doc });
+  v.run('liveSession.all = new Array(12345).fill(null); liveSession.discarded = 2000; liveSession.dropped.ios = 1; refreshExportMenu()');
+  const T = '\u2009';
+  assert.deepEqual(['exportFilteredCount', 'exportAllCount'].map(id => doc.getElementById(id).textContent), ['0 lines', `12${T}345 lines`]);
+  assert.match(doc.getElementById('exportNote').textContent, new RegExp(`^Exports retained lines only: 2${T}000 older lines were discarded \\(live view keeps the newest 500${T}000\\)\\. 1 line never reached`));
+  v.run('liveSession.all = [null]; refreshExportMenu()');
+  assert.equal(doc.getElementById('exportAllCount').textContent, '1 line');
+  doc.getElementById('loadingText').textContent = '';
+  v.run("handleFile({ name: 'a.log', text: 'Oct 14 15:53:43.000001 X[1] <Notice>: a' })");
+  assert.equal(doc.getElementById('loadingText').textContent, 'Rendering 1 line…');
 });
 
 test('known gap, fixed in P11: a TXT export of Android lines does not re-import', async () => {
