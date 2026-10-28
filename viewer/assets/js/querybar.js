@@ -44,6 +44,7 @@
     let rx = false;   // .*
     let pending = 0;  // the debounce's generation: a timer that is not the newest does nothing
     let applied = ''; // the text of the filter applied last
+    let appliedOpts = { case: false, regex: false }; // and the Aa / .* modes it compiled under: the text means nothing without them
     const opts = () => ({ case: mc, regex: rx });
 
     // Applies the text now (a chip, a toggle, Clear, Reset, the end of the debounce). An invalid query keeps the last
@@ -53,7 +54,7 @@
       pending++;
       const before = state().filter;
       const err = actions.setQuery(input.value, opts());
-      if (!err) applied = input.value;
+      if (!err) { applied = input.value; appliedOpts = opts(); }
       box.classList.toggle('invalid', !!err);
       setAttr(input, 'aria-invalid', err ? 'true' : null);
       setText($('queryErrorText'), err ? err.msg : '');
@@ -65,8 +66,10 @@
     // Writes `text` into the bar and applies it at once.
     function rewrite(text) { input.value = text; apply(); }
     // What a chip, row or tile fix rewrites: the bar's text when it compiles, else the last applied text (the invalid edit is dropped, so the fix always applies).
-    function base() { return Q.build(input.value, opts(), state().devices).q ? input.value : applied; }
-    function current() { return Q.build(base(), opts(), state().devices).q || state().filter; }
+    // The text and the modes it compiles under travel together: the bar's text with the modes now on, or the applied text with the modes it was applied under.
+    function basis() { return Q.build(input.value, opts(), state().devices).q ? { text: input.value, o: opts() } : { text: applied, o: appliedOpts }; }
+    function base() { return basis().text; }
+    function current() { const b = basis(); return Q.build(b.text, b.o, state().devices).q || state().filter; }
     function toggleLevel(k) { rewrite(Q.setLevels(base(), current().levels ^ (1 << k))); }
     function toggleDevice(p) { rewrite(Q.setDevices(base(), current().plats ^ (p === 'ios' ? 2 : 1))); }
     function reset() { rewrite(''); }
@@ -133,7 +136,7 @@
     function syncChips() {
       // A dev: name (dev:pixel) is resolved against the devices known when it compiled: when they change, the applied text
       // compiles to another filter, which setQuery applies (an equal one costs a parse; only while such a token is in use).
-      if (state().filter.usesDevNames) actions.setQuery(applied, opts());
+      if (state().filter.usesDevNames) actions.setQuery(applied, appliedOpts);
       const q = state().filter;
       levels.forEach(({ b }, k) => setAttr(b, 'aria-pressed', String((q.levels & (1 << k)) !== 0)));
       const dev = shell.devices();

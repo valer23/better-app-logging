@@ -125,6 +125,28 @@ test('a dev: name resolves against the devices known now: when they change, the 
   assert.equal(st.filter.key, key, 'devices unchanged: the same filter');
 });
 
+test('the last valid filter keeps the modes it compiled under: toggling Aa or .* while the text is invalid, then a sync, leaves it alone', () => {
+  const { p, $, st, bar, type, ticks } = barPage();
+  type('dev:pixel a.b');
+  p.advance(100);
+  const valid = st.filter;
+  assert.equal(valid.usesDevNames, true);
+  type('dev:pixel a.b tg:x');
+  p.advance(100);
+  $('queryRegexBtn').click();
+  $('queryCaseBtn').click();
+  assert.equal($('queryError').hidden, false, 'still invalid');
+  st.devices.android = { id: 'R5CT', name: 'Pixel 9' };   // the devices change: dev:pixel still names the Android device
+  bar.sync();
+  for (const t of ticks) t();
+  assert.equal(st.filter.key, valid.key, 'the filter keeps its literal, case-insensitive semantics');
+  assert.equal($('queryErrorText').textContent.length > 0 && $('queryError').hidden, false, 'the alert still says the last valid filter is applied');
+  // A chip click applies explicitly, under the modes now on.
+  $('levelChips').children[0].click();
+  assert.equal($('queryInput').value, 'level:D+ dev:pixel a.b');
+  assert.equal($('queryError').hidden, true);
+});
+
 test('Clear filter and Reset show only with text; each empties the query, applies it, and leaves focus in the field', () => {
   const { p, $, st, type } = barPage();
   for (const id of ['queryClearBtn', 'queryResetBtn']) {
