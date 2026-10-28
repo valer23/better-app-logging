@@ -174,3 +174,27 @@ test('the no-match tile\'s tag causes come from the tag counts: NOT tag:x on eve
   v.run("setQuery('')");
   assert.deepEqual([v.run('shellState().notTag'), v.run('shellState().tag')], ['', ''], 'lines show: nothing to explain');
 });
+
+test('dev-bench read scenario: readPhaseP50Ms and readPhaseP95Ms count only the flushes after Follow goes off; flushP95Ms counts every one', () => {
+  const v = boot();
+  const g = v.run('globalThis');
+  g.URLSearchParams = URLSearchParams;
+  const clock = { t: 0 };
+  let tick = null;
+  g.__clock = clock;
+  g.__cost = 0;
+  g.performance = { now: () => clock.t };
+  g.setInterval = fn => { tick = fn; return 1; };
+  v.run('location.search = "?bench=1&scenario=read&secs=5"');
+  v.run('flushBatch = function () { __clock.t += __cost; }');   // a flush that takes __cost ms; the bench wraps it
+  v.run(read(path.join(ASSETS, 'js', 'dev-bench.js')));          // starts at t = 0; the first second is warm-up
+  const flushAt = (t, cost) => { clock.t = t; g.__cost = cost; v.run('flushBatch()'); };
+  for (let t = 1100; t < 2000; t += 150) flushAt(t, 30);   // Follow on: flushes that build rows
+  clock.t = 2100; tick();                                  // Follow goes off (a flush the switch causes costs 30 ms too)
+  for (let t = 2200; t < 5000; t += 150) flushAt(t, 1);    // the reading phase
+  clock.t = 5000; tick();                                  // secs reached: the result
+  const r = v.run('window.__benchResult');
+  assert.deepEqual([r.flushP95Ms, r.readPhaseP50Ms, r.readPhaseP95Ms], [30, 1, 1], 'the follow-mode second is in p95, not in the read phase');
+  assert.ok(r.readPhaseFlushes >= 19 && r.readPhaseFlushes < r.flushes, `read-phase flushes: ${r.readPhaseFlushes} of ${r.flushes}`);
+  assert.deepEqual([r.query, r.queryError, r.cap], [null, null, 500000], 'the result reports the query and the cap');
+});
