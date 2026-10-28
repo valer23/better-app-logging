@@ -43,7 +43,8 @@
   /* A token chip: its body (puts the caret on the token) and its 24 px × (foundation .chip-x) are two buttons. */
   .chip-body { display: inline-flex; align-items: center; gap: 4px; height: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: text; min-width: 0; overflow: hidden; }
   #tokenMore { padding-right: 6px; }
-  .token-pop { max-width: min(480px, calc(100vw - 16px)); padding: 8px; background: var(--raised); border: 1px solid var(--hairline); border-radius: 8px; box-shadow: var(--shadow-md); }
+  /* A long list scrolls inside the panel (it is position: fixed, so nothing else would reach the last chips); the 8 px padding keeps the chips' focus rings inside the scrollport. */
+  .token-pop { max-width: min(480px, calc(100vw - 16px)); max-height: min(60vh, 480px); overflow: auto; padding: 8px; background: var(--raised); border: 1px solid var(--hairline); border-radius: 8px; box-shadow: var(--shadow-md); }
   .token-pop[hidden] { display: none; }
   .token-list { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
   .token-list .chip.token { max-width: 100%; }

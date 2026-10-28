@@ -1033,3 +1033,9 @@ test('the device chips give way before the token chips, and a token chip keeps a
   assert.equal(queryDecl('#tokenMore .icon', 'flex'), 'none', 'the chevron never shrinks away');
   assert.equal(queryDecl('#tokenMoreText', 'text-overflow'), 'ellipsis');
 });
+
+test('the "N filters" popover is bounded by the viewport and scrolls, so the last token chips and their x stay reachable (F10)', () => {
+  assert.match(queryDecl('.token-pop', 'max-height'), /vh/, 'bounded by the viewport height');
+  assert.equal(queryDecl('.token-pop', 'overflow'), 'auto');
+  assert.equal(queryDecl('.token-pop', 'padding'), '8px', 'the padding holds the chips\' 2 px rings (offset 2 px) inside the scrollport');
+});
