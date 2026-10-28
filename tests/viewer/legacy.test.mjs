@@ -194,6 +194,11 @@ test('the Export menu, its loss note and the loading text group numbers with thi
   assert.match(doc.getElementById('exportNote').textContent, new RegExp(`^Exports retained lines only: 2${T}000 older lines were discarded \\(live view keeps the newest 500${T}000\\)\\. 1 line never reached`));
   v.run('liveSession.all = [null]; refreshExportMenu()');
   assert.equal(doc.getElementById('exportAllCount').textContent, '1 line');
+  v.run('liveSession.discarded = 1; refreshExportMenu()');
+  assert.match(doc.getElementById('exportNote').textContent, /^Exports retained lines only: 1 older line was discarded \(/);
+  v.run('liveSession.overflowed = true; refreshExportMenu()');
+  assert.match(doc.getElementById('exportNote').textContent, /^Exports the lines held before the pause \(1\)\. 1 line was discarded because /);
+  v.run('liveSession.overflowed = false');
   doc.getElementById('loadingText').textContent = '';
   v.run("handleFile({ name: 'a.log', text: 'Oct 14 15:53:43.000001 X[1] <Notice>: a' })");
   assert.equal(doc.getElementById('loadingText').textContent, 'Rendering 1 line…');

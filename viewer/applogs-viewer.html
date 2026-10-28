@@ -1821,9 +1821,10 @@ function refreshExportMenu() {
   document.getElementById('exportNoteBox').hidden = !(s.discarded || lost);
   const parts = [];
   const num = ALV.shellPure.num;
+  const were = s.discarded === 1 ? 'line was' : 'lines were';
   if (s.discarded) parts.push(s.overflowed
-    ? `Exports the lines held before the pause (${num(s.all.length)}). ${num(s.discarded)} lines were discarded because the paused backlog exceeded ${num(MAX_RETAINED)}; on resume the live lines here are discarded and the view continues from the newest.`
-    : `Exports retained lines only: ${num(s.discarded)} older lines were discarded (live view keeps the newest ${num(MAX_RETAINED)}).`);
+    ? `Exports the lines held before the pause (${num(s.all.length)}). ${num(s.discarded)} ${were} discarded because the paused backlog exceeded ${num(MAX_RETAINED)}; on resume the live lines here are discarded and the view continues from the newest.`
+    : `Exports retained lines only: ${num(s.discarded)} older ${were} discarded (live view keeps the newest ${num(MAX_RETAINED)}).`);
   if (lost) parts.push(`${num(lost)} ${lost === 1 ? 'line' : 'lines'} never reached the viewer (server buffer overflow); the export may have gaps where ${lost === 1 ? 'it' : 'they'} occurred${s.discarded ? ' (unless later discarded by the retention cap)' : ''}.`);
   note.textContent = parts.join(' ');
 }

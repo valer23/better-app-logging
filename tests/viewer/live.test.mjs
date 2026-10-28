@@ -40,6 +40,7 @@ test('streamBadge: the spec states, File and Paused winning over Streaming', () 
   assert.deepEqual(b({ paused: true, streaming: true, buffered: 3402 }), { tone: 'warn', pulse: false, text: `Paused · 3${T}402 buffered` });
   assert.deepEqual(b({ lines: 48310 }), { tone: 'idle', pulse: false, text: `Stopped · 48${T}310 lines` });
   assert.deepEqual(b({ kind: 'file', paused: true, streaming: true, lines: 12044 }), { tone: 'idle', pulse: false, text: `File · 12${T}044 lines` });
+  assert.deepEqual([b({ lines: 1 }).text, b({ kind: 'file', lines: 1 }).text], ['Stopped · 1 line', 'File · 1 line'], 'singular');
 });
 
 // The shell and the live chrome on one fake page, with the toolbar and the More menu's surface mounted.

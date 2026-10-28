@@ -104,7 +104,7 @@
               : e.query ? ['', null, '']
                 : ['No retained line matches the level and device chips.', null, ''];
       const tail = cause ? ` ${cause}` : '';
-      const desc = `0 of ${num(e.all)} lines in view.${tail}`;
+      const desc = `0 of ${num(e.all)} ${e.all === 1 ? 'line' : 'lines'} in view.${tail}`;
       return { ...none, key: `match|${desc}`, say: `No lines match this filter.${tail}`, icon: 'search-x', spin: false,
         title: 'No lines match this filter', desc, fix, fixLabel, reset: true };
     }

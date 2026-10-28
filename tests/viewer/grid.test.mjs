@@ -49,6 +49,7 @@ test('emptyView: no matches with each spec cause in order and its fix; after Cle
   const n = v({ all: 5, notTag: 'chatty', tag: 'x', query: true });
   assert.deepEqual([n.desc, n.fix, n.fixLabel, n.say], ['0 of 5 lines in view. NOT tag:chatty hides every line here.', 'notTag', 'Remove NOT tag:chatty', 'No lines match this filter. NOT tag:chatty hides every line here.'], 'NOT tag before tag (P6)');
   assert.equal(v({ all: 5, devicesOff: true, notTag: 'chatty' }).fix, 'devices', 'devices before NOT tag');
+  assert.equal(v({ all: 1, levelsOff: true }).desc, '0 of 1 line in view. All levels are turned off.', 'singular');
   assert.deepEqual([v({ all: 5, query: true }).desc, v({ all: 5, query: true }).fix, v({ all: 5, query: true }).reset, v({ all: 5, query: true }).say, v({ all: 5, tag: 'x', query: true }).fix],
     ['0 of 5 lines in view.', null, true, 'No lines match this filter.', 'tag'], 'the search or PID / App field filters: the count and Reset filter, no invented cause; a tag still names itself');
   assert.equal(v({ all: 5, shown: 1 }), null, 'rows show: no tile');
