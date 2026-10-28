@@ -16,17 +16,26 @@
      Reset never leave the row: the chip area clips first, so it pads 4 px on every side (and gives it back with -4 px
      margins) to keep its chips' 2 px rings, offset 2 px, inside its clip. */
   .chip-row { display: flex; align-items: center; gap: 8px; height: 36px; margin-block: -4px; padding-block: 4px; }
-  .chip-area { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 8px; overflow: hidden; padding: 4px; margin: -4px; }
+  .chip-area { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 8px; overflow: clip; padding: 4px; margin: -4px; }
   .chip-group { display: flex; align-items: center; gap: 4px; flex: none; }
+  /* overflow: clip, not hidden: a hidden box is still a scroll container, so Tab-focusing a clipped control scrolls it (and the level
+     chips with it) and the scroll stays after focus leaves. The token group is the only shrinkable part of the area: a token chip
+     gives up its value (ellipsis) before its × is clipped, and the full token is the body's title. */
+  #tokenChips, #tokenOne { flex: 0 1 auto; min-width: 0; }
+  .chip.token { min-width: 0; }
+  .chip.token .v { min-width: 0; max-width: 24ch; overflow: hidden; text-overflow: ellipsis; }
+  .chip.token .chip-x { flex: none; }
   .chip-group[hidden], .chip-row .divider-v[hidden] { display: none; }
   .dev-name { max-width: 16ch; overflow: hidden; text-overflow: ellipsis; }
   .chip[hidden] { display: none; }
   /* A token chip: its body (puts the caret on the token) and its 24 px × (foundation .chip-x) are two buttons. */
-  .chip-body { display: inline-flex; align-items: center; gap: 4px; height: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: text; }
+  .chip-body { display: inline-flex; align-items: center; gap: 4px; height: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: text; min-width: 0; overflow: hidden; }
   #tokenMore { padding-right: 6px; }
   .token-pop { max-width: min(480px, calc(100vw - 16px)); padding: 8px; background: var(--raised); border: 1px solid var(--hairline); border-radius: 8px; box-shadow: var(--shadow-md); }
   .token-pop[hidden] { display: none; }
-  .token-list { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+  .token-list { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
+  .token-list .chip.token { max-width: 100%; }
+  .token-list .chip.token .v { max-width: none; }
   #filterCount { flex: none; color: var(--text-2); font-size: var(--ui-fs-sm); font-variant-numeric: tabular-nums; white-space: nowrap; }
   #queryResetBtn { flex: none; }
   @container queryregion (max-width: 1247px) { .chip .lv-name { display: none; } }

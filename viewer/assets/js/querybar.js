@@ -128,7 +128,7 @@
     let drawn = null;
     function tokenChip(t, tag) {
       const name = chipName(t);
-      const body = dom.el('button', { type: 'button', class: 'chip-body' },
+      const body = dom.el('button', { type: 'button', class: 'chip-body', title: name.full },
         t.neg ? dom.el('span', { class: 'not', text: 'NOT' }) : null, name.k ? dom.el('span', { class: 'k', text: name.k }) : null, dom.el('span', { class: 'v', text: name.v }));
       body.addEventListener('click', () => caretOn(t));
       const x = dom.el('button', { type: 'button', class: 'chip-x', 'aria-label': `Remove filter ${name.full}` }, dom.icon('x'));

@@ -235,6 +235,7 @@ test('one token is a chip (NOT, key, value, a 24 px × "Remove filter NOT tag:ch
   const [body, x] = one[0].children;
   assert.deepEqual(body.children.map(c => [c.className, texts(c)]), [['not', 'NOT'], ['k', 'tag:'], ['v', 'chatty']]);
   assert.deepEqual([x.className, x.getAttribute('aria-label')], ['chip-x', 'Remove filter NOT tag:chatty']);
+  assert.equal(body.getAttribute('title'), 'NOT tag:chatty', 'the full token stays available when its value is cut short');
   type('level:W+ -tag:chatty "time out" /a b/ pid:7');
   p.advance(100);
   assert.deepEqual([$('tokenOne').children.length, $('tokenMore').hidden, texts($('tokenMoreText'))], [0, false, '4 filters']);

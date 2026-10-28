@@ -995,3 +995,25 @@ test('column resize lives in grid.js: the legacy initResizeHandles and its .col-
   assert.match(code, /\ngrid = ALV\.createGrid\(\{/, 'the page creates the grid once, after the toolbar and status bar');
   assert.ok(gridCss().some(r => r.selectors.includes('.lgrid > thead > tr > th > .col-sep') && C.declarations(r.body).some(d => d.prop === 'width' && d.value === '24px')), 'a 24 px hit area (spec)');
 });
+
+// ---- query.css: the chip area clips, it never scrolls, and a token chip shrinks before its remove control is hidden (P6b Task 14 review) ----
+const queryCss = () => C.cssRules(read(path.join(ASSETS, 'css', 'query.css')));
+const queryDecl = (sel, prop) => queryCss().filter(r => r.selectors.includes(sel)).flatMap(r => C.declarations(r.body)).find(d => d.prop === prop)?.value;
+
+test('the chip area clips instead of scrolling, so focusing a hidden control cannot shift the level chips', () => {
+  assert.equal(queryDecl('.chip-area', 'overflow'), 'clip', 'overflow: clip is not scrollable by focus (hidden is, by scrollLeft)');
+  assert.equal(queryDecl('.chip-area', 'padding'), '4px', 'the focus-ring padding stays');
+  assert.equal(queryDecl('.chip-area', 'margin'), '-4px');
+});
+
+test('a token chip shrinks to its × (ellipsis on the value), in the chip row and in the "N filters" popover', () => {
+  for (const sel of ['#tokenChips', '#tokenOne', '.chip.token', '.chip-body', '.token-list']) assert.equal(queryDecl(sel, 'min-width'), '0', `${sel} may shrink`);
+  assert.equal(queryDecl('#tokenChips', 'flex'), '0 1 auto');
+  assert.equal(queryDecl('#tokenOne', 'flex'), '0 1 auto');
+  assert.equal(queryDecl('.chip-body', 'overflow'), 'hidden');
+  assert.equal(queryDecl('.chip.token .v', 'overflow'), 'hidden');
+  assert.equal(queryDecl('.chip.token .v', 'text-overflow'), 'ellipsis');
+  assert.ok(queryDecl('.chip.token .v', 'max-width'), 'a capped value');
+  assert.equal(queryDecl('.chip.token .chip-x', 'flex'), 'none', 'the × never shrinks away');
+  assert.equal(queryDecl('.token-list .chip.token', 'max-width'), '100%', 'in the popover a chip never outgrows the panel');
+});
