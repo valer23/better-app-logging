@@ -47,7 +47,7 @@ test('querybar.js loads after grid.js; it builds six level chips (badge, name, c
   assert.deepEqual(lv.map(b => b.getAttribute('aria-label')), ['Verbose, 0 lines', 'Debug, 0 lines', 'Info, 0 lines', 'Warning, 0 lines', 'Error, 0 lines', 'Fatal, 0 lines']);
   assert.deepEqual([...pressed('levelChips'), ...pressed('deviceChips')], Array(8).fill(true));
   assert.deepEqual($('deviceChips').children.map(texts), ['APixel 8 Pro', 'iiPhone'], 'the badge and the name; "iPhone" while no iPhone is known');
-  assert.deepEqual([$('queryClearBtn').hidden, $('queryResetBtn').hidden, $('queryError').hidden, $('queryKbd').hidden], [true, true, true, true]);
+  assert.deepEqual([$('queryClearBtn').hidden, $('queryResetBtn').hidden, $('queryError').hidden, $('queryKbd').hidden], [true, true, true, false], 'the ⌘F hint: unfocused and empty');
 });
 
 test('typing applies after 100 ms of quiet, once; Aa and .* apply at once and read back pressed', () => {
@@ -278,4 +278,37 @@ test('token chips are text only (XSS): markup in a value stays a Text node', () 
   const v = $('tokenOne').children[0].children[0].children.find(c => c.className === 'v');
   assert.equal(texts(v), '<img/src=x/onerror=alert(1)>');
   assert.equal(v.children.length, 0, 'no element was parsed out of it');
+});
+
+test('keys: ⌘F (a text field too) and / (the grid) focus the bar and select it; ⇧⌘F resets; ⌥C, ⌥R, ⌥V…⌥F toggle; the ⌘F hint', () => {
+  const { p, $, st, type, pressed } = barPage();
+  const grid = p.doc.createElement('div');
+  p.keys.setGridRoot(grid);
+  let selected = 0;
+  $('queryInput').select = () => { selected++; };
+  const ev = o => ({ preventDefault() {}, ...o });
+  const other = p.doc.createElement('input');
+  other.setAttribute('type', 'text');
+  assert.equal(p.keys.dispatch(ev({ key: 'f', code: 'KeyF', metaKey: true }), other), 'filter.focus', '⌘F from another field');
+  assert.deepEqual([p.doc.activeElement, selected], [$('queryInput'), 1]);
+  assert.equal(p.keys.dispatch(ev({ key: '/', code: 'Slash' }), grid), 'filter.slash');
+  assert.equal(p.keys.dispatch(ev({ key: '/', code: 'Slash' }), other), null, '/ types in a field');
+  assert.equal(p.keys.dispatch(ev({ key: 'ç', code: 'KeyC', altKey: true }), grid), 'filter.case', 'macOS Option+C types ç: matched on the physical key');
+  assert.equal(p.keys.dispatch(ev({ key: '®', code: 'KeyR', altKey: true }), grid), 'filter.regex');
+  assert.deepEqual([$('queryCaseBtn').getAttribute('aria-pressed'), $('queryRegexBtn').getAttribute('aria-pressed')], ['true', 'true']);
+  assert.equal(p.keys.dispatch(ev({ key: '√', code: 'KeyV', altKey: true }), grid), 'filter.level.V');
+  assert.equal(p.keys.dispatch(ev({ key: 'ƒ', code: 'KeyF', altKey: true }), grid), 'filter.level.F');
+  assert.deepEqual(pressed('levelChips'), [false, true, true, true, true, false]);
+  assert.equal(p.keys.dispatch(ev({ key: 'ç', code: 'KeyC', altKey: true }), $('queryInput')), null, 'in the field Option types: the Aa button and its tooltip remain');
+  type('tag:x');
+  assert.equal(p.keys.dispatch(ev({ key: 'f', code: 'KeyF', metaKey: true, shiftKey: true }), $('queryInput')), 'filter.reset');
+  assert.deepEqual([$('queryInput').value, st.filter.levels], ['', 63]);
+  assert.deepEqual([$('queryInput').getAttribute('aria-keyshortcuts'), $('queryCaseBtn').getAttribute('aria-keyshortcuts'), $('levelChips').children[3].getAttribute('aria-keyshortcuts')],
+    ['Meta+F /', 'Alt+C', 'Alt+W']);
+  p.focus(other);
+  $('queryInput').fire('blur');
+  assert.deepEqual([$('queryKbd').hidden, texts($('queryKbd'))], [false, '⌘F'], 'unfocused and empty: the hint shows');
+  p.focus($('queryInput'));
+  $('queryInput').fire('focus');
+  assert.equal($('queryKbd').hidden, true);
 });

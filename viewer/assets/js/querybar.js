@@ -219,14 +219,30 @@
       return undefined;
     }
 
+    // ---- Keys (spec "Keyboard map", Filter): ⌘F (in a text field too) and /† focus the bar and select its text; ⌥C and
+    // ⌥R toggle Aa and .*; ⌥V … ⌥F toggle a level chip; ⇧⌘F resets. In a text field macOS Option types a character, so
+    // there the ⌥ keys do nothing (keys.js) and the buttons remain; Windows Alt works in the field too. ----
+    function focus() { input.focus(); if (input.select) input.select(); }
+    keys.register({ id: 'filter.focus', keys: 'Mod+F', inText: true, run: focus });
+    keys.register({ id: 'filter.slash', keys: '/', scope: 'grid', run: focus });
+    keys.register({ id: 'filter.case', keys: 'Alt+C', inText: true, run: () => caseBtn.click() });
+    keys.register({ id: 'filter.regex', keys: 'Alt+R', inText: true, run: () => regexBtn.click() });
+    [...LETTERS].forEach((L, k) => keys.register({ id: `filter.level.${L}`, keys: `Alt+${L}`, inText: true, run: () => toggleLevel(k) }));
+    keys.register({ id: 'filter.reset', keys: 'Shift+Mod+F', inText: true, run: reset });
+    setAttr(input, 'aria-keyshortcuts', `${keys.aria('filter.focus')} ${keys.aria('filter.slash')}`);
+    setAttr(caseBtn, 'aria-keyshortcuts', keys.aria('filter.case'));
+    setAttr(regexBtn, 'aria-keyshortcuts', keys.aria('filter.regex'));
+    setAttr(resetBtn, 'aria-keyshortcuts', keys.aria('filter.reset'));
+    levels.forEach(({ b }, k) => setAttr(b, 'aria-keyshortcuts', keys.aria(`filter.level.${LETTERS[k]}`)));
+
     drawTokens('');
     sync();
     return {
       sync, numbers, apply, toggleLevel, toggleDevice, reset, fix,
       text: () => input.value,
+      focus,
       // A legacy modal is about to open over the page: the popover lives in #overlayRoot (z 200), above it.
       closeMenus() { pop.close({ restoreFocus: false }); },
-      focus() { input.focus(); if (input.select) input.select(); },
     };
   }
 
