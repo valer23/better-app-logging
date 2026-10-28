@@ -280,6 +280,48 @@ test('token chips are text only (XSS): markup in a value stays a Text node', () 
   assert.equal(v.children.length, 0, 'no element was parsed out of it');
 });
 
+test('⇧⌘F keeps focus out of <body>: from a control the reset hides or removes it lands in the field; from outside the region it is left alone', () => {
+  const ev = o => ({ preventDefault() {}, ...o });
+  const reset = { key: 'f', code: 'KeyF', metaKey: true, shiftKey: true };
+  const from = (pick) => {
+    const { p, $, st, type } = barPage();
+    type('tag:a "b c"');
+    p.advance(100);
+    const el = pick($);
+    p.focus(el);
+    assert.equal(p.keys.dispatch(ev(reset), el), 'filter.reset');
+    assert.equal($('queryInput').value, '');
+    assert.equal(st.filter.levels, 63);
+    return [p, $];
+  };
+  for (const [name, pick] of [
+    ['Reset', $ => $('queryResetBtn')],
+    ['Clear filter', $ => $('queryClearBtn')],
+    ['"N filters"', $ => $('tokenMore')],
+    ['a chip in the popover', $ => $('tokenList').children[0].children[1]],
+  ]) { const [p, $] = from(pick); assert.equal(p.doc.activeElement, $('queryInput'), name); }
+  { // a single token chip's body and ×
+    for (const i of [0, 1]) {
+      const { p, $, type } = barPage();
+      type('tag:a');
+      p.advance(100);
+      const el = $('tokenOne').children[0].children[i];
+      p.focus(el);
+      p.keys.dispatch(ev(reset), el);
+      assert.equal(p.doc.activeElement, $('queryInput'), `single chip ${i ? '×' : 'body'}`);
+    }
+  }
+  const { p, $, type } = barPage();
+  type('tag:a');
+  p.advance(100);
+  const other = p.doc.createElement('input');
+  other.setAttribute('type', 'text');
+  p.focus(other);
+  p.keys.dispatch(ev(reset), other);
+  assert.equal(p.doc.activeElement, other, 'focus outside the region stays where it was');
+  assert.equal($('queryInput').value, '');
+});
+
 test('keys: ⌘F (a text field too) and / (the grid) focus the bar and select it; ⇧⌘F resets; ⌥C, ⌥R, ⌥V…⌥F toggle; the ⌘F hint', () => {
   const { p, $, st, type, pressed } = barPage();
   const grid = p.doc.createElement('div');

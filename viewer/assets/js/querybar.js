@@ -228,7 +228,17 @@
     keys.register({ id: 'filter.case', keys: 'Alt+C', inText: true, run: () => caseBtn.click() });
     keys.register({ id: 'filter.regex', keys: 'Alt+R', inText: true, run: () => regexBtn.click() });
     [...LETTERS].forEach((L, k) => keys.register({ id: `filter.level.${L}`, keys: `Alt+${L}`, inText: true, run: () => toggleLevel(k) }));
-    keys.register({ id: 'filter.reset', keys: 'Shift+Mod+F', inText: true, run: reset });
+    // Reset hides the controls it was pressed from (Reset, Clear, the token chips, "N filters" and its popover): when focus is
+    // inside the region it moves to the field, as the click path does; focus elsewhere (the grid, another field) stays put.
+    keys.register({
+      id: 'filter.reset', keys: 'Shift+Mod+F', inText: true,
+      run: () => {
+        const a = doc.activeElement;
+        const inside = !!a && a !== input && ($('filterbar').contains(a) || $('tokenPop').contains(a));
+        reset();
+        if (inside) input.focus();
+      },
+    });
     setAttr(input, 'aria-keyshortcuts', `${keys.aria('filter.focus')} ${keys.aria('filter.slash')}`);
     setAttr(caseBtn, 'aria-keyshortcuts', keys.aria('filter.case'));
     setAttr(regexBtn, 'aria-keyshortcuts', keys.aria('filter.regex'));
