@@ -66,9 +66,23 @@
   }
   const nearKey = k => KEYS.find(K => typoOf(k, K)) || null;
   // '/foo/i': a regex with flags, which the grammar does not have (case follows Aa). It is reported, not searched as the
-  // word '/foo/i'. The flags are 1 to 4 distinct letters of gimsuy after a body with no unescaped '/', so paths such as
-  // '/usr/lib', '/tmp/x', '/proc/sys' or '/a/b/c' stay words. [, body, repeated letter, flags]
-  const REGEX_FLAGS = /^\/((?:\\[\s\S]|[^\\/])+)\/(?![a-z]*([a-z])[a-z]*\2)([gimsuy]{1,4})$/;
+  // word '/foo/i'. The flags are the ones people type after a regex: 1 to 3 distinct letters of g, i, m with a g or an i among
+  // them (g, i, gi, im, gim). The others (s, u, y, or m alone) are letters of ordinary words, and the tail of a path or a URL
+  // is one: '/api/msg', '/img/gui', '/home/my', '/v1/sum', '/data/u' stay words. The body has no unescaped '/' (so '/usr/lib',
+  // '/a/b/c' stay words) but may hold spaces ('/time out/i'). flaggedRegex(text, j) for text[j] === '/': { body, end } when the
+  // first unescaped '/' after it is followed by such flags and then whitespace or the end of the text, else null.
+  function flaggedRegex(text, j) {
+    for (let p = j + 1; p < text.length; p++) {
+      if (text[p] === '\\') { p++; continue; }
+      if (text[p] !== '/') continue;
+      let e = p + 1;
+      while (e < text.length && !isWs(text[e])) e++;
+      const flags = text.slice(p + 1, e);
+      const ok = p > j + 1 && /^[gim]{1,3}$/.test(flags) && /[gi]/.test(flags) && new Set(flags).size === flags.length;
+      return ok ? { body: text.slice(j + 1, p), end: e } : null;
+    }
+    return null;
+  }
 
   // level: values → a 6-bit mask (bit k = level k), -1 when the value lists nothing yet ('level:,'), or { bad } for
   // the first item that is no level. Items: a letter or name, optionally followed by '+' (that level and above), or none.
@@ -129,6 +143,13 @@
           i = end;
           continue;
         }
+        const flagged = flaggedRegex(src, j);
+        if (flagged) {
+          err(start, flagged.end, `Regex flags are not supported. Use /${flagged.body}/, and Aa for match case.`);
+          tokens.push({ k: 'word', v: src.slice(j, flagged.end), neg, start, end: flagged.end });
+          i = flagged.end;
+          continue;
+        }
       }
       const key = /^([A-Za-z]+):/.exec(src.slice(j, j + 12));
       const k = key ? key[1].toLowerCase() : '';
@@ -150,8 +171,6 @@
       }
       const end = wordEnd(src, j);
       if (key && nearKey(k)) err(start, end, `Unknown field '${key[1]}'. Did you mean ${nearKey(k)}:?`);
-      const flags = src[j] === '/' ? REGEX_FLAGS.exec(src.slice(j, end)) : null;
-      if (flags) err(start, end, `Regex flags are not supported. Use /${flags[1]}/, and Aa for match case.`);
       tokens.push({ k: 'word', v: src.slice(j, end), neg, start, end });
       i = end;
     }

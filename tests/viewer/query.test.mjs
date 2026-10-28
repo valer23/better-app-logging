@@ -378,6 +378,28 @@ test('regex flags: "/foo/i" is reported with a hint, never searched as a word; p
   assert.equal(Q.build('/foo/i', {}, {}).q, null, 'never applied');
 });
 
+test('regex flags (F2): only the flags people type after a regex (g, i, m, never m alone) are reported; URL and path tails made of other gimsuy letters stay words', () => {
+  for (const p of ['/api/msg', '/img/gui', '/v1/sum', '/home/my', '/tmp/my', '/home/guy', '/sys/msg', '/dev/sg', '/var/is', '/data/mu', '/data/u', '/data/us', '/x/s', '/x/y', '/x/m']) {
+    assert.deepEqual(errs(p), [], p);
+    assert.deepEqual(toks(p).map(t => t.k), ['word'], p);
+    assert.notEqual(Q.build(p, {}, {}).q, null, `${p} applies`);
+  }
+  assert.deepEqual(errs('/a/g /b/gi /c/im /d/gim /e/mig'), Array(5).fill(0).map((_, i) => `Regex flags are not supported. Use /${'abcde'[i]}/, and Aa for match case.`));
+  assert.deepEqual(errs('/a/gg /a/ii'), [], 'a repeated letter is no flag set');
+});
+
+test('regex flags (F3): a flagged regex whose body holds spaces is reported too, never split into two words', () => {
+  assert.deepEqual(errs('/time out/i'), ['Regex flags are not supported. Use /time out/, and Aa for match case.']);
+  assert.deepEqual(errs('/connection (lost|reset)/i'), ['Regex flags are not supported. Use /connection (lost|reset)/, and Aa for match case.']);
+  assert.deepEqual(errs('tag:x -/a \\/ b/gi y'), ['Regex flags are not supported. Use /a \\/ b/, and Aa for match case.']);
+  assert.equal(Q.build('/connection (lost|reset)/i', {}, {}).q, null, 'never applied');
+  // The report covers the whole flagged regex, so the next token parses on its own.
+  const t = toks('/time out/i word');
+  assert.deepEqual([t.length, t.at(-1).v], [2, 'word']);
+  // No closing slash with flags, or a flag set that is no flag set: the words they always were.
+  for (const p of ['/time out/ i', '/foo bar', '/var/log message', '/var/log msg/is', '/ab c/xy']) assert.deepEqual(errs(p), [], p);
+});
+
 test('nested quantifiers: a regex that can backtrack exponentially is refused before it applies; flat and bounded repeats pass', () => {
   const msg = 'Invalid regex: Nested quantifiers such as (a+)+ can freeze the viewer. The last valid filter is still applied.';
   for (const [text, opts] of [['/(a+)+$/', {}], ['/(x*)*y/', {}], ['/(?:a\\d+){2,}/', {}], ['/((a+)b)+/', {}], ['(\\w+\\s?)+$', { regex: true }], ['-(a+)*', { regex: true }], ['/(a*){25}/', {}], ['/((a+){4}){4}$/', {}], ['/(a+){4}$/', {}], ['/(a+){3}$/', {}], ['/((a+){2}){2}/', {}], ['/(((a+){2}){1}){2}/', {}], ['/((a+){2}b){2}/', {}], ['/((a+){2}b)+/', {}]]) {
