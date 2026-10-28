@@ -159,3 +159,18 @@ test('dev-bench applies &q (with &case and &re) and &cap before the run and repo
   assert.equal(bad.run('MAX_RETAINED'), 50000, 'the paused scenario sets its own cap after &cap');
   assert.match(read(path.join(ASSETS, 'js', 'dev-bench.js')), /\bquery, queryError, cap: MAX_RETAINED,/, 'the result reports them');
 });
+
+test('the no-match tile\'s tag causes come from the tag counts: NOT tag:x on every retained line, tag:x on none; never while lines match', () => {
+  const v = boot();
+  v.send(8); v.api.flushBatch();             // tags bt_stack, BluetoothGatt, chatty, kernel, twice each
+  const causes = text => { v.run(`setQuery(${JSON.stringify(text)})`); return [v.run('shellState().notTag'), v.run('shellState().tag')]; };
+  assert.deepEqual(causes('tag:zzz'), ['', 'zzz'], 'no retained line matches tag:zzz');
+  assert.deepEqual(causes('tag:zzz tag:kernel'), ['', ''], 'kernel lines exist: the tag is not why nothing shows');
+  assert.deepEqual(causes('tag:kernel level:none'), ['', ''], 'the levels are the cause');
+  v.run("liveSession.all.forEach(m => { m.tag = 'chatty'; }); ALV.counts.recount(liveSession.counts, liveSession.all, activeQuery.gate)");
+  assert.deepEqual(causes('-tag:chatty'), ['chatty', ''], 'every retained line carries it');
+  assert.deepEqual(causes('-tag:kernel x'), ['', ''], 'lines without kernel exist');
+  assert.deepEqual(causes('-tag:chat'), ['chat', '']);
+  v.run("setQuery('')");
+  assert.deepEqual([v.run('shellState().notTag'), v.run('shellState().tag')], ['', ''], 'lines show: nothing to explain');
+});

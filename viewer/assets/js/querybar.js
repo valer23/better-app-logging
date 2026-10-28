@@ -208,13 +208,14 @@
     win.setInterval(() => { if (!doc.hidden) numbers(); }, NUMBERS_MS);
     shell.onTick(syncChips);
 
-    // The empty tile's fixes (grid.js): 'levels' turns every level back on, 'devices' shows both, 'tag' removes the tag
-    // the tile names (state().tag), 'all' (Reset filter) empties the query.
+    // The empty tile's fixes (grid.js): 'levels' turns every level back on, 'devices' shows both, 'notTag' and 'tag'
+    // remove the token the tile names (state().notTag, state().tag), 'all' (Reset filter) empties the query.
     function fix(what) {
       if (what === 'all') return reset();
       if (what === 'levels') return rewrite(Q.setLevels(base(), 63));
       if (what === 'devices') return rewrite(Q.setDevices(base(), 3));
-      const i = Q.indexOf(base(), { k: 'tag', v: state().tag, neg: false });
+      const neg = what === 'notTag';
+      const i = Q.indexOf(base(), { k: 'tag', v: neg ? state().notTag : state().tag, neg });
       if (i >= 0) rewrite(Q.removeToken(base(), i));
       return undefined;
     }

@@ -951,16 +951,27 @@ function shellState() {
     get gridShown() { return document.getElementById('logWrapper').classList.contains('visible'); },
     // The applied query (the query bar's chips read it back).
     filter: activeQuery,
-    // The grid's empty states (grid.js): no line since a Clear on Live, the query's levels shown and its first tag, and
-    // whether anything but the level and device chips filters (the no-match tile then names no chip cause).
+    // The grid's empty states (grid.js): no line since a Clear on Live, the query's levels shown, its tag causes (getters:
+    // read by the tile on each flush, they answer at once while lines match), and whether anything but the level and
+    // device chips filters (the no-match tile then names no chip cause).
     // stale: the shown session's filtered list lags the filter (a file just opened, before its render): no tile yet.
     stale: cur.query !== filterGen,
     cleared: liveClearedSeq === nextSeq, levels: LEVEL_BITS[activeQuery.levels],
-    tag: (activeQuery.tags.find(([, neg]) => !neg) || [''])[0],
+    get notTag() { return tagCauses().notTag; },
+    get tag() { return tagCauses().tag; },
     query: !activeQuery.chipsOnly,
   };
 }
 function shellSync() { if (shell) shell.sync(); if (liveUi) liveUi.sync(); if (grid) grid.sync(); if (queryBar) queryBar.sync(); }
+// The no-match tile's tag causes (spec "Log grid"; ALV.query.tagCause): a negated tag every retained line of the shown
+// session carries, or a tag none carries, from its tag counts (O(distinct tags), no scan of the lines). Only while it has
+// lines, none passes and its filtered list is current; otherwise none.
+const NO_TAG_CAUSE = Object.freeze({ notTag: '', tag: '' });
+function tagCauses() {
+  const s = cur;
+  if (s.filtered.length || !s.all.length || s.query !== filterGen) return NO_TAG_CAUSE;
+  return ALV.query.tagCause(activeQuery, v => ALV.counts.tagHits(s.counts, v), s.all.length);
+}
 // "Open log file…" (the SESSIONS row and ⌘O): the file session, then the picker. The picker is the
 // dropzone's file input, so a picked file loads exactly like a dropped one (handleFile).
 function openLogFile() {
@@ -1952,8 +1963,8 @@ function setQuery(text, opts) {
   return null;
 }
 // The grid's empty-state fixes (spec "Log grid", no matches), as query rewrites (assets/js/querybar.js): 'levels' turns
-// every level back on, 'devices' shows both platforms, 'tag' removes the tag the tile names, 'all' (Reset filter) empties
-// the query.
+// every level back on, 'devices' shows both platforms, 'notTag' and 'tag' remove the token the tile names, 'all' (Reset
+// filter) empties the query.
 function resetFilter(what) { queryBar.fix(what); }
 
 // Rebuilds `s.filtered` and the level counts for the active query, in one pass; no DOM work.

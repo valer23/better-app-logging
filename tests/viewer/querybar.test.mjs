@@ -354,3 +354,26 @@ test('keys: ⌘F (a text field too) and / (the grid) focus the bar and select it
   $('queryInput').fire('focus');
   assert.equal($('queryKbd').hidden, true);
 });
+
+test('the empty tile\'s fixes rewrite the query: levels, devices, the named tag, the named NOT tag, and Reset filter', () => {
+  const { p, $, st, bar, type } = barPage();
+  type('level:none dev:ios tag:bt -tag:chatty x');
+  st.tag = 'bt';
+  st.notTag = 'chatty';
+  const steps = ['levels', 'devices', 'notTag', 'tag'].map(what => { bar.fix(what); return $('queryInput').value; });
+  assert.deepEqual(steps, ['dev:ios tag:bt -tag:chatty x', 'tag:bt -tag:chatty x', 'tag:bt x', 'x']);
+  bar.fix('all');
+  assert.deepEqual([$('queryInput').value, st.filter.levels, st.filter.plats], ['', 63, 3]);
+  // An invalid edit in the bar is dropped: a fix rewrites the last applied text, so "Turn levels back on" and
+  // "Remove tag:bt" always apply.
+  type('level:none tag:bt');
+  p.advance(100);
+  type('level:none tag:bt tg:x');
+  p.advance(100);
+  bar.fix('levels');
+  assert.deepEqual([$('queryInput').value, $('queryError').hidden, st.filter.levels], ['tag:bt', true, 63]);
+  type('tag:bt tg:x');
+  p.advance(100);
+  bar.fix('tag');
+  assert.deepEqual([$('queryInput').value, $('queryError').hidden], ['', true]);
+});
