@@ -1020,9 +1020,12 @@ test('a token chip shrinks to its × (ellipsis on the value), in the chip row an
 
 test('the device chips give way before the token chips, and a token chip keeps a floor that holds its × (or the chevron)', () => {
   assert.equal(queryDecl('.chip-area', '--tok-floor'), 'calc(24px + 8px + 2px + 2ch)', '24 px × + 8 px padding + 2 px border + 2ch of value');
-  assert.equal(queryDecl('#deviceChips', 'flex'), '0 1 auto', 'overrides .chip-group flex: none');
-  assert.equal(queryDecl('#deviceChips', 'min-width'), '0');
-  assert.equal(queryDecl('.chip.dev', 'min-width'), '0');
+  // The order is made by the shrink weights (F8): the devices' 1000 against the tokens' 1, and each device chip and the group keep a floor that
+  // holds the badge, so a squeezed group never overflows onto the divider or the token chip. The Chromium layout probe checks the widths.
+  assert.equal(queryDecl('#deviceChips', 'flex'), '0 1000 auto', 'overrides .chip-group flex: none; takes the shrink before the tokens (1)');
+  assert.equal(queryDecl('#tokenChips', 'flex'), '0 1 auto');
+  assert.equal(queryDecl('.chip.dev', 'min-width'), 'calc(var(--badge) + 24px)', '8 + 8 px padding, 2 px border, 6 px gap, the badge');
+  assert.equal(queryDecl('#deviceChips', 'min-width'), 'calc(2 * (var(--badge) + 24px) + 4px)', 'two device chips and the group gap');
   assert.equal(queryDecl('.dev-name', 'min-width'), '0', 'its ellipsis takes effect early');
   // The token group, its single-token box and every token chip (incl. "N filters") share the floor: nothing narrower can hide the ×.
   for (const sel of ['#tokenChips', '#tokenOne', '.chip.token']) assert.equal(queryDecl(sel, 'min-width'), 'var(--tok-floor)', `${sel} keeps the floor`);
