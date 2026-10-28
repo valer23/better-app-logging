@@ -296,3 +296,67 @@ test('compile: mark is the first positive text term, case-insensitive unless Aa'
   assert.equal(mark('a.c', {}).exec('abc a.c').index, 4, 'a literal word is escaped');
   assert.equal(mark('a', {}).global, false, 'no g flag: no lastIndex state between lines');
 });
+
+// ---- Rewrites (P6b): chips and text are one model ----
+
+test('setLevels writes one canonical level token where the first stood, keeps every other byte, and drops it when all six are on', () => {
+  const rows = [
+    ['', 56, 'level:W+'],
+    ['tag:x', 56, 'level:W+ tag:x'],
+    ['tag:x  level:E   "a  b"', 6, 'tag:x  level:D,I   "a  b"'],
+    ['level:E tag:x -level:F', 0, 'level:none tag:x'],
+    ['tag:x level:E', 63, 'tag:x'],
+    ['level:E tag:x', 63, 'tag:x'],
+    ['  level:E', 63, ''],
+    ['tag: level:W+', 62, 'tag: level:D+'],
+  ];
+  for (const [text, mask, want] of rows) assert.equal(Q.setLevels(text, mask), want, `${JSON.stringify(text)} → ${mask}`);
+});
+
+test('setDevices writes dev:android, dev:ios or dev:none in place of every dev: and plat: token, and nothing for both', () => {
+  const rows = [
+    ['tag:x', 1, 'dev:android tag:x'],
+    ['dev:pixel tag:x plat:ios', 2, 'dev:ios tag:x'],
+    ['tag:x dev:ios', 3, 'tag:x'],
+    ['-dev:ios', 0, 'dev:none'],
+  ];
+  for (const [text, plats, want] of rows) assert.equal(Q.setDevices(text, plats), want, `${text} → ${plats}`);
+});
+
+test('removeToken, indexOf and tokenAt: by token index, the other tokens byte-identical; the caret on a token\'s range', () => {
+  const text = 'level:W+  -tag:"chatty x"  /a b/ word';
+  assert.equal(Q.removeToken(text, 1), 'level:W+  /a b/ word');
+  assert.equal(Q.removeToken(text, 3), 'level:W+  -tag:"chatty x"  /a b/');
+  assert.equal(Q.removeToken(text, 9), text, 'no such token: unchanged');
+  assert.equal(Q.indexOf(text, { k: 'tag', v: 'chatty x', neg: true }), 1);
+  assert.equal(Q.indexOf(text, { k: 'tag', v: 'chatty x', neg: false }), -1);
+  assert.deepEqual([0, 8, 9, 10, 25, 26, 30, 33, 99].map(c => Q.tokenAt(text, c)), [0, 0, -1, 1, 1, -1, 2, 3, -1], 'a range includes its end');
+  const r = rng(11);
+  for (let n = 0; n < 500; n++) {
+    const tokens = Array.from({ length: 2 + r(4) }, () => genToken(r));
+    const text2 = Q.serialize(tokens);
+    const i = r(tokens.length);
+    assert.deepEqual(toks(Q.removeToken(text2, i)), tokens.filter((_, j) => j !== i), text2);
+  }
+});
+
+test('chip rewrites round-trip: every level mask and platform set reads back from the text it writes', () => {
+  for (let mask = 0; mask < 64; mask++) {
+    const text = Q.setLevels('tag:x "y"', mask);
+    assert.equal(Q.build(text, {}, {}).q.levels, mask, text);
+    assert.equal(Q.setLevels(text, mask), text, 'idempotent');
+  }
+  for (const plats of [0, 1, 2, 3]) assert.equal(Q.build(Q.setDevices('a', plats), {}, {}).q.plats, plats);
+});
+
+test('tagCause: NOT tag:x that every retained line carries; tag:x when no retained line carries any positive tag', () => {
+  const hits = { chatty: 10, bt: 0, kernel: 3 };
+  const cause = text => ({ ...Q.tagCause(Q.build(text, {}, {}).q, v => hits[v.toLowerCase()] || 0, 10) });
+  assert.deepEqual(cause('-tag:Chatty'), { notTag: 'Chatty', tag: '' });
+  assert.deepEqual(cause('-tag:kernel'), { notTag: '', tag: '' });
+  assert.deepEqual(cause('tag:bt'), { notTag: '', tag: 'bt' });
+  assert.deepEqual(cause('tag:bt tag:kernel'), { notTag: '', tag: '' }, 'kernel lines match: tag:bt is not the cause');
+  assert.deepEqual(cause('tag:bt tag:nope'), { notTag: '', tag: 'bt' });
+  assert.deepEqual(cause('level:E'), { notTag: '', tag: '' });
+  assert.deepEqual([Q.build('level:E dev:ios plat:ios', {}, {}).q.chipsOnly, Q.build('level:E x', {}, {}).q.chipsOnly], [true, false]);
+});

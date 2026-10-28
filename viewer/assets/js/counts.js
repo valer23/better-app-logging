@@ -49,6 +49,14 @@
     return c;
   }
 
+  // The retained lines whose tag contains v (case-insensitive), from the tag map: O(distinct tags), no scan of the lines.
+  function tagHits(c, v) {
+    const low = String(v).toLowerCase();
+    let n = 0;
+    for (const [tag, k] of c.tags) if (String(tag).toLowerCase().includes(low)) n += k;
+    return n;
+  }
+
   const ALV = g.ALV || (g.ALV = {});
-  ALV.counts = Object.freeze({ create, add, remove, clear, recount });
+  ALV.counts = Object.freeze({ create, add, remove, clear, recount, tagHits });
 })(typeof window !== 'undefined' ? window : globalThis);

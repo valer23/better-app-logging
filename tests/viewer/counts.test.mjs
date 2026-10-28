@@ -104,3 +104,9 @@ test('incremental counts equal a full recount after 2 000 seeded sequences of ap
   assert.ok(trimmed >= 10000, `lines trimmed: ${trimmed}`);
   assert.equal(platforms.size, 2);
 });
+
+test('tagHits: the retained lines whose tag contains a value, case-insensitive, from the tag map (no scan of the lines)', () => {
+  const c = C.create();
+  for (const tag of ['BluetoothGatt', 'bluetoothd', 'bt_stack', 'bluetoothd', 'kernel']) C.add(c, { tag, app: '' });
+  assert.deepEqual(['blue', 'BT', 'kernel', 'nope', ''].map(v => C.tagHits(c, v)), [3, 1, 1, 0, 5]);
+});

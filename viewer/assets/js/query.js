@@ -197,9 +197,10 @@
 
   // compile(tokens, { case, regex }, devices) → { q, error }. Spec "Combination": the same key ORs, different keys AND,
   // every negation must not match, every text term must match. q = { key, gate, lvOk, levels, plats, rest, mark,
-  // hasText, usesDevNames }: levels is the 6-bit level mask, plats the platform bits (1 android, 2 ios), rest the
-  // non-level, non-platform tests (null when none), mark the first positive text term's RegExp for the <mark> (null
-  // when none). key changes exactly when the filter does: a recompile with an equal key needs no refilter.
+  // hasText, usesDevNames, tags, chipsOnly }: levels is the 6-bit level mask, plats the platform bits (1 android,
+  // 2 ios), rest the non-level, non-platform tests (null when none), mark the first positive text term's RegExp for
+  // the <mark> (null when none), tags the tag tokens as [value, negated], chipsOnly whether every token is a level,
+  // dev or plat token. key changes exactly when the filter does: a recompile with an equal key needs no refilter.
   function compile(tokens, opts, devices) {
     const mc = !!(opts && opts.case);
     const rx = !!(opts && opts.regex);
@@ -207,6 +208,7 @@
     const plat = { dev: [0, false, 0], plat: [0, false, 0] };   // [positive bits, any positive, negative bits]
     const tag = [[], []]; const app = [[], []]; const pid = [[], []];   // [positive values, negative values]
     const text = [];   // [RegExp, negated]
+    const tagList = [];   // [value as typed, negated], for the empty tile's causes
     let usesDevNames = false;
     let hasWord = false;
     for (const t of tokens) {
@@ -222,6 +224,7 @@
         if (t.neg) s[2] |= bits; else { s[0] |= bits; s[1] = true; }
       } else if (t.k === 'tag' || t.k === 'app') {
         (t.k === 'tag' ? tag : app)[t.neg ? 1 : 0].push(t.v.toLowerCase());
+        if (t.k === 'tag') tagList.push([t.v, t.neg]);
       } else if (t.k === 'pid') {
         pid[t.neg ? 1 : 0].push(Number(t.v));
       } else {
@@ -269,7 +272,8 @@
     const hasText = text.length > 0;
     const live = tokens.filter(t => !(t.k === 'level' && levelMask(t.v) === -1));
     const key = `${serialize(live)}\u0000${hasText ? (mc ? 'C' : 'c') : ''}${hasWord ? (rx ? 'R' : 'r') : ''}\u0000${plats}`;
-    return { q: { key, gate, lvOk, levels, plats, rest, mark: firstPos ? firstPos[0] : null, hasText, usesDevNames }, error: null };
+    const chipsOnly = tokens.every(t => t.k === 'level' || t.k === 'dev' || t.k === 'plat');
+    return { q: { key, gate, lvOk, levels, plats, rest, mark: firstPos ? firstPos[0] : null, hasText, usesDevNames, tags: tagList, chipsOnly }, error: null };
   }
 
   // parse + compile: { q, error }. The first error wins; an invalid query is never half applied.
@@ -304,6 +308,48 @@
     return out.join(' ');
   }
 
+  // ---- Rewrites (spec "Chips and text are one model") ----
+
+  // Removes the tokens drop(token, index) picks, with the spaces after each (before it, at the end of the text), and puts
+  // `insert` in place of the first of them, or in front when none matched. Every other byte of the text is kept.
+  function rewrite(text, drop, insert) {
+    let out = String(text == null ? '' : text);
+    const gone = parse(out).tokens.filter(drop);
+    for (let j = gone.length - 1; j >= 0; j--) {
+      let a = gone[j].start;
+      let b = gone[j].end;
+      if (j === 0 && insert) return out.slice(0, a) + insert + out.slice(b);   // in place: its spacing stays
+      let e = b;
+      while (e < out.length && isWs(out[e])) e++;
+      if (e > b) b = e; else while (a > 0 && isWs(out[a - 1])) a--;
+      out = out.slice(0, a) + out.slice(b);
+    }
+    if (!insert) return out;
+    return out ? `${insert} ${out}` : insert;
+  }
+  // The level chips: one level token for `mask` (levelText), none when all six are on.
+  const setLevels = (text, mask) => rewrite(text, t => t.k === 'level', levelText(mask));
+  // The device chips: one dev: token per platform set (one device per platform until the multi-device backend).
+  const setDevices = (text, plats) => rewrite(text, t => t.k === 'dev' || t.k === 'plat', ['dev:none', 'dev:android', 'dev:ios', ''][plats & 3]);
+  // A token chip's ×: token i of parse(text).tokens goes.
+  const removeToken = (text, i) => rewrite(text, (t, j) => j === i, '');
+  // The index of the first token with tok's kind, value and sign, or -1 (the text may have changed since a chip was drawn).
+  const indexOf = (text, tok) => parse(text).tokens.findIndex(t => t.k === tok.k && t.v === tok.v && t.neg === tok.neg);
+  // The token whose source range holds the caret (its end included), or -1: a chip's body puts the caret there (Open item 6).
+  const tokenAt = (text, caret) => parse(text).tokens.findIndex(t => t.start <= caret && caret <= t.end);
+
+  // The empty tile's tag causes (spec "Log grid", no matches), read from the counts, never from the lines. notTag: a
+  // negated tag that every retained line carries; tag: the first positive tag when no retained line carries any of the
+  // positive ones. hits(v) is the number of retained lines whose tag contains v; total the retained lines.
+  function tagCause(q, hits, total) {
+    let notTag = '';
+    for (const [v, neg] of q.tags) if (neg && total > 0 && hits(v) === total) { notTag = v; break; }
+    const pos = q.tags.filter(([, neg]) => !neg);
+    const tag = pos.length && pos.every(([v]) => hits(v) === 0) ? pos[0][0] : '';
+    return { notTag, tag };
+  }
+
   const ALV = g.ALV || (g.ALV = {});
-  ALV.query = Object.freeze({ parse, serialize, compile, build, levelMask, levelText, fromLegacy, LV, KEYS: Object.freeze(KEYS.slice()) });
+  ALV.query = Object.freeze({ parse, serialize, compile, build, levelMask, levelText, fromLegacy, setLevels, setDevices, removeToken, indexOf, tokenAt,
+    tagCause, LV, KEYS: Object.freeze(KEYS.slice()) });
 })(typeof window !== 'undefined' ? window : globalThis);
