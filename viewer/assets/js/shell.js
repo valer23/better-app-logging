@@ -201,10 +201,9 @@
     const sideOf = () => (rail() ? 'right' : 'bottom');
     const toggle = $('sidebarToggle');
     const toggleSidebar = () => prefs.set('sidebar', rail() ? 'expanded' : 'collapsed');
-    // Not over the legacy setup or stall modal (the rule ⌘E and ⌘O follow): collapsing moves focus to the
-    // toggle behind the modal.
-    const modalOpen = () => !!doc.querySelector('.modal-overlay.visible');
-    keys.register({ id: 'view.sidebar', keys: 'Mod+B', inText: true, when: () => !modalOpen(), run: toggleSidebar });
+    // Not over the legacy setup or stall modal (collapsing would move focus to the toggle behind it): the page's
+    // keys.setModalCheck blocks every binding then.
+    keys.register({ id: 'view.sidebar', keys: 'Mod+B', inText: true, run: toggleSidebar });
     const toggleTip = toggle ? ui.tooltip(toggle, { text: 'Hide sidebar', shortcut: 'view.sidebar', side: sideOf }) : null;
     if (toggle) toggle.addEventListener('click', toggleSidebar);
     railTip($('cmdTrigger'), 'Search actions');

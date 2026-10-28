@@ -582,8 +582,9 @@ test('tooltips: the toggle and the footer buttons show in both states, below whe
   }
 });
 
-test('rail: ⌘B does nothing over the legacy setup or stall modal (collapsing would move focus behind it)', () => {
+test('rail: ⌘B does nothing over the legacy setup or stall modal (collapsing would move focus behind it): the page\'s one modal check', () => {
   const { p, prefs } = shellPage();
+  p.keys.setModalCheck(() => !!p.doc.querySelector('.modal-overlay.visible'));   // what the page sets (applogs-viewer.html)
   const modal = p.doc.createElement('div');
   modal.className = 'modal-overlay visible';
   p.doc.body.appendChild(modal);

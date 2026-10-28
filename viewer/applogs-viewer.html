@@ -935,6 +935,10 @@ document.getElementById('logTable').addEventListener('click', e => {
   }
 });
 
+// The legacy setup and stall sheets are not ALV dialogs, so keys.setModal never covers them: while one shows, no shortcut
+// fires (it would act on the page behind the sheet: scroll it with End and Home, pause it with Space, open a menu over it).
+ALV.keys.setModalCheck(() => !!document.querySelector('.modal-overlay.visible'));
+
 // ── App shell (assets/js/shell.js): the sidebar and the window drag bands ──
 // The shell reads the page only through shellState() and acts only through these functions.
 shell = ALV.createShell({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, keys: ALV.keys, prefs: ALV.prefs, state: shellState,
@@ -951,10 +955,9 @@ function shellState() {
     live: { android: androidLive, ios: iosLive }, status: liveStatus, devices: deviceInfo, driverMissing: iosDriverMissing, noDevice,
     lines: wsLines, dropped: liveSession.dropped, enabled: enabledPlatforms, paused: livePaused, buffered: pendingBatch.length,
     maxRetained: MAX_RETAINED,   // the status bar's Following tooltip (Retained text)
-    // The stream keys (grid.js) fire only while the grid shows and no legacy modal (setup guide, stall) is over it:
-    // keys.setModal does not cover those, and the setup guide scrolls with Home and End. A getter: it is read only
-    // when End or Home is pressed, never by the per-flush and tick callers of shellState().
-    get gridShown() { return document.getElementById('logWrapper').classList.contains('visible') && !document.querySelector('.modal-overlay.visible'); },
+    // The stream keys (grid.js) fire only while the grid shows (a legacy modal over it blocks every key: setModalCheck).
+    // A getter: it is read only when End or Home is pressed, never by the per-flush and tick callers of shellState().
+    get gridShown() { return document.getElementById('logWrapper').classList.contains('visible'); },
     // The grid's empty states (grid.js): no line since a Clear on Live, the filter's levels and tag, and whether the
     // search or PID / App field filters too (the no-match tile then names no cause).
     // stale: the shown session's filtered list lags the filter (a file just opened, before its render): no tile yet.
@@ -1819,10 +1822,10 @@ function refreshExportMenu() {
   note.textContent = parts.join(' ');
 }
 const exportMenuCtl = ALV.ui.menu(document.getElementById('exportBtn'), document.getElementById('exportSurface'), { onOpen: refreshExportMenu });
-// Not while a legacy setup / stall modal is shown: they are not ALV dialogs, so keys.setModal never covers
-// them. Opened by the shortcut, the menu gives focus back to where it was (the search field), not the button.
+// Not while a legacy setup / stall modal is shown (setModalCheck). Opened by the shortcut, the menu gives focus back to
+// where it was (the query bar), not the button.
 ALV.keys.register({ id: 'export.menu', keys: 'Mod+E', inText: true,
-  when: () => cur.all.length > 0 && !document.querySelector('.modal-overlay.visible'),
+  when: () => cur.all.length > 0,
   run: () => (exportMenuCtl.isOpen() ? exportMenuCtl.close() : exportMenuCtl.open({ focus: 'first', returnFocus: document.activeElement })) });
 document.getElementById('exportBtn').setAttribute('aria-keyshortcuts', ALV.keys.aria('export.menu'));
 ALV.ui.tooltip(document.getElementById('exportBtn'), { text: 'Export', shortcut: 'export.menu' });

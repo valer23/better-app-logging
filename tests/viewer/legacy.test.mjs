@@ -24,7 +24,10 @@ const { api, run } = loadLegacy([
 const prefs = run('ALV.prefs');
 
 test('Ctrl+Shift+L (the shell\'s view.theme) cycles Dark, Light, System through ALV.prefs on the page', () => {
-  const keys = run('ALV.keys');
+  // A sticky document: the page's modal check (keys.setModalCheck) asks querySelector, which a deep stub always answers.
+  const page = loadLegacy([], { document: stickyDocument() });
+  const keys = page.run('ALV.keys');
+  const prefs = page.run('ALV.prefs');
   const press = () => keys.dispatch({ key: 'L', code: 'KeyL', ctrlKey: true, shiftKey: true, preventDefault() {} }, null);
   prefs.set('theme', 'dark');
   assert.equal(press(), 'view.theme');
@@ -485,12 +488,17 @@ test('Quiet system noise: a saved "on" is re-sent at startup (the bridge starts 
   await assert.rejects(bad.api.postIosQuiet(true), /403/);
 });
 
-test('shellState().gridShown: true only while #logWrapper shows and no legacy modal is open (the stream keys wait otherwise)', () => {
+test('shellState().gridShown: true only while #logWrapper shows; a legacy modal blocks every shortcut in keys.js instead', () => {
   const { run } = loadLegacy([], { document: stickyDocument() });
   run("showOnly('livePanel')");
   assert.equal(run('shellState().gridShown'), false, 'the device cards');
   run("showOnly('logWrapper')");
   assert.equal(run('shellState().gridShown'), true);
+  const end = () => run("ALV.keys.dispatch({ key: 'End', code: 'End', preventDefault() {} }, null)");
+  const ctrlE = () => run("ALV.keys.dispatch({ key: 'e', code: 'KeyE', ctrlKey: true, preventDefault() {} }, null)");   // not macOS: Mod is Ctrl
+  run('cur.all.push({})');   // Export needs a line
   run("document.getElementById('setupModal').classList.add('modal-overlay', 'visible')");
-  assert.equal(run('shellState().gridShown'), false, 'the setup guide scrolls with Home and End');
+  assert.deepEqual([end(), ctrlE()], [null, null], 'the setup guide scrolls with Home and End, and no menu opens over it');
+  run("document.getElementById('setupModal').classList.remove('visible')");
+  assert.deepEqual([end(), ctrlE()], ['stream.latest', 'export.menu']);
 });

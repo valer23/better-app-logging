@@ -19,6 +19,8 @@
    Meta/Ctrl/Alt fires in a text field or takes a key the focused control owns (a slider's End, a
    button's Enter), in the grid too; a Mod combo fires in a field only when its binding says inText.
    Option (macOS) and AltGr (Ctrl+Alt) type characters, so in a text field they never fire, inText or not.
+   setModalCheck(fn): while fn() says a modal the registry does not own is open (the legacy setup and stall sheets),
+   no binding fires; the page sets it once, so no binding carries its own modal guard.
    Escape backs out one layer in the spec's level order (pushEsc(fn, level); tooltips, menus and dialogs
    push one). */
 (function (g) {
@@ -201,6 +203,7 @@
     let escSeq = 0;
     let gridRoot = null;
     let modal = null;
+    let modalCheck = null;
     let singleKeys = true;
 
     const toCanon = keys => (Array.isArray(keys) ? keys : [keys]).map(k => parse(k, plat));
@@ -276,6 +279,7 @@
 
     // The binding this event would run, or null. `active` is document.activeElement.
     function match(ev, active) {
+      if (!modal && modalCheck && modalCheck()) return null;
       const inField = isTextEntry(active);
       if (inField && altTypes(ev, plat)) return null;   // Option / AltGr may type a character into the field
       for (const combo of eventCombos(ev, plat)) {
@@ -322,6 +326,7 @@
       escDepth: () => escStack.length,
       setGridRoot(el) { gridRoot = el || null; },
       setModal(el) { modal = el || null; },
+      setModalCheck(fn) { modalCheck = typeof fn === 'function' ? fn : null; },
       setSingleKeys(on) { singleKeys = !!on; },
       keysOf: id => { const b = bindings.get(id); return b ? b.keys.slice() : []; },
       label: id => { const c = first(id); return c ? label(c, plat) : ''; },

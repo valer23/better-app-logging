@@ -172,6 +172,25 @@ test('while a dialog is open only dialog bindings fire; with none open, dialog b
   assert.deepEqual(hits, ['primary', 'page']);
 });
 
+test('setModalCheck: while a modal the registry does not own is open, no binding fires; Esc still backs out (one check, not one per binding)', () => {
+  const k = ALV.createKeys({ platform: 'mac' });
+  const hits = [];
+  let open = false;
+  k.register({ id: 'export.menu', keys: 'Mod+E', inText: true, run: () => hits.push('menu') });
+  k.register({ id: 'stream.latest', keys: 'End', run: () => hits.push('end') });
+  k.setModalCheck(() => open);
+  assert.equal(k.dispatch(key('e', { meta: true }), SEARCH), 'export.menu');
+  open = true;
+  assert.equal(k.dispatch(key('e', { meta: true }), SEARCH), null, 'not over the legacy setup or stall sheet');
+  assert.equal(k.dispatch(key('End'), BODY), null);
+  const pop = k.pushEsc(() => hits.push('esc'), 'menu');
+  assert.equal(k.dispatch(key('Escape'), BODY), 'esc', 'the back-out stack is not a binding');
+  pop();
+  open = false;
+  assert.equal(k.dispatch(key('End'), BODY), 'stream.latest');
+  assert.deepEqual(hits, ['menu', 'esc', 'end']);
+});
+
 test('Esc backs out in the spec order, not push order; newest first within a level; a layer inside a sheet goes first', () => {
   const k = ALV.createKeys({ platform: 'mac' });
   const order = [];
