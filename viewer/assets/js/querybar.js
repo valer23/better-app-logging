@@ -69,7 +69,9 @@
       if (!err) drawTokens(input.value);
       actions.sync();
       const st = state();
-      if (st.filter !== before) ui.announce(lineCount(st.cur.filtered.length, st.cur.all.length));
+      // The no-match tile (grid.js) announces itself with its cause, which the count would displace in the 5 s throttle: it says only what the tile does not.
+      const tile = st.cur.all.length > 0 && st.cur.filtered.length === 0 && !st.stale;
+      if (st.filter !== before && !tile) ui.announce(lineCount(st.cur.filtered.length, st.cur.all.length));
     }
     // Writes `text` into the bar and applies it at once, under the modes `o` (the ones the text was read under, else the ones now on).
     function rewrite(text, o = opts()) { mc = o.case; rx = o.regex; input.value = text; apply(); }

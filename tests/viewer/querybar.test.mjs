@@ -421,3 +421,20 @@ test('a toggle turned on over text that is still valid under it is kept by a chi
   $('levelChips').children[0].click();
   assert.deepEqual([$('queryInput').value, $('queryError').hidden, $('queryRegexBtn').getAttribute('aria-pressed')], ['level:D+ a.b', true, 'true']);
 });
+
+test('a filter change that leaves the no-match tile up announces no count of its own: the tile\'s cause is the announcement and the count must not displace it (F5)', () => {
+  const { p, $, st, type } = barPage();
+  st.cur = { counts: { lvl: [0, 0, 0, 0, 0, 0] }, filtered: [], all: new Array(9) };
+  type('a');
+  p.advance(100);
+  assert.equal($('announcer').textContent, '', 'no "0 of 9 lines": grid.js says "No lines match this filter" and its cause');
+  st.cur = { counts: { lvl: [0, 0, 0, 0, 0, 0] }, filtered: new Array(4), all: new Array(9) };
+  type('ab');
+  p.advance(100);
+  assert.equal($('announcer').textContent, '4 of 9 lines', 'lines match again: the count is announced');
+  st.cur = { counts: { lvl: [0, 0, 0, 0, 0, 0] }, filtered: [], all: [] };
+  p.advance(6000);
+  type('abc');
+  p.advance(100);
+  assert.equal($('announcer').textContent, '0 of 0 lines', 'nothing retained at all: no tile, so the count says it');
+});
