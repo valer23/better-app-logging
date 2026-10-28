@@ -380,11 +380,11 @@ test('regex flags: "/foo/i" is reported with a hint, never searched as a word; p
 
 test('nested quantifiers: a regex that can backtrack exponentially is refused before it applies; flat and bounded repeats pass', () => {
   const msg = 'Invalid regex: Nested quantifiers such as (a+)+ can freeze the viewer. The last valid filter is still applied.';
-  for (const [text, opts] of [['/(a+)+$/', {}], ['/(x*)*y/', {}], ['/(?:a\\d+){2,}/', {}], ['/((a+)b)+/', {}], ['(\\w+\\s?)+$', { regex: true }], ['-(a+)*', { regex: true }], ['/(a*){25}/', {}]]) {
+  for (const [text, opts] of [['/(a+)+$/', {}], ['/(x*)*y/', {}], ['/(?:a\\d+){2,}/', {}], ['/((a+)b)+/', {}], ['(\\w+\\s?)+$', { regex: true }], ['-(a+)*', { regex: true }], ['/(a*){25}/', {}], ['/((a+){4}){4}$/', {}], ['/(a+){4}$/', {}], ['/(a+){3}$/', {}], ['/((a+){2}){2}/', {}], ['/(((a+){2}){1}){2}/', {}], ['/((a+){2}b){2}/', {}], ['/((a+){2}b)+/', {}]]) {
     const r = Q.build(text, opts, {});
     assert.deepEqual([r.q, r.error && r.error.msg], [null, msg], text);
   }
-  for (const [text, opts] of [['/(ab)+/', {}], ['/(a|b)+c/', {}], ['/a+b*/', {}], ['/(a{2}){3}/', {}], ['/([a+])+/', {}], ['/\\(a+\\)+/', {}], ['(a+)+', {}], ['/(ab){5}/', {}], ['/(a+){2}/', {}]]) {
+  for (const [text, opts] of [['/(ab)+/', {}], ['/(a|b)+c/', {}], ['/a+b*/', {}], ['/(a{2}){3}/', {}], ['/([a+])+/', {}], ['/\\(a+\\)+/', {}], ['(a+)+', {}], ['/(ab){5}/', {}], ['/(a+){2}/', {}], ['/(a+){2}(b+){2}/', {}], ['/((a+){2}){1}/', {}], ['/((a+){1}){2}/', {}]]) {
     assert.equal(Q.build(text, opts, {}).error, null, text);
   }
   const { start, end } = Q.build('ok /(a+)+/', {}, {}).error;

@@ -178,24 +178,35 @@
   const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   // The reason of a SyntaxError from new RegExp, without the engine's "Invalid regular expression: /…/: " prefix.
   const reason = e => String(e && e.message || e).replace(/^.*?:\s*\/.*\/[a-z]*:\s*/, '').replace(/^Invalid regular expression:\s*/, '');
-  // A regex term that can backtrack exponentially on a long line (ReDoS): a group holding an unbounded quantifier that
-  // is itself repeated, as in (a+)+, (x*)* or (?:a\d+){2,}. Its test runs on every line, in the drain and on each trim's
-  // dropped run, so it is refused before it applies. Escapes and character classes are skipped; a small exact repeat such
-  // as {3} is bounded, but {5} or more of such a group is refused too ((a*){25} ran 140 s on a 29-char line).
-  // Alternation overlap such as (a|a)+ is not detected.
+  // A regex term that can backtrack exponentially (or in high-degree polynomial time) on a long line (ReDoS). Its test
+  // runs on every line, in the drain and on each trim's dropped run, so it is refused before it applies. Each group
+  // carries two flags: U (its body holds an unbounded quantifier, directly or in a nested group) and M (that body is
+  // already multiplied by an exact {2}). A group with U is refused when it is repeated without bound, as in
+  // (a+)+, (x*)* or (?:a\d+){2,}, or by an exact {n} of 3 or more ((a*){25} ran 140 s on a 29-char line, (a+){4}$ 25 s
+  // on a 201-char one). An exact {2} is O(n^2) and passes once, but it sets M on the enclosing group, and
+  // a second multiplying repeat of a group with M is refused: ((a+){2}){2} is (a+){4}, ((a+){4}){4} is (a+){16}. Escapes
+  // and character classes are skipped. Sibling terms add degrees and alternation overlap such as (a|a)+ is not detected.
   function nestedQuantifier(src) {
+    const U = 1, M = 2;
     const rep = i => src[i] === '*' || src[i] === '+' || (src[i] === '{' && /^\{\d+,\d*\}/.test(src.slice(i, i + 24)));
-    const inner = [false];   // per open group: whether its body repeats without bound
+    const flags = [0];   // per open group
     for (let i = 0; i < src.length; i++) {
       const c = src[i];
       if (c === '\\') { i++; continue; }
       if (c === '[') { i++; while (i < src.length && src[i] !== ']') { if (src[i] === '\\') i++; i++; } continue; }
-      if (c === '(') { inner.push(false); continue; }
-      if (c === ')' && inner.length > 1) {
-        if (inner.pop()) { if (rep(i + 1) || /^\{(?:[5-9]|\d{2,})\}/.test(src.slice(i + 1, i + 25))) return true; inner[inner.length - 1] = true; }
+      if (c === '(') { flags.push(0); continue; }
+      if (c === ')' && flags.length > 1) {
+        const f = flags.pop();
+        if (f & U) {
+          if (rep(i + 1)) return true;
+          const ex = /^\{(\d+)\}/.exec(src.slice(i + 1, i + 25));
+          const n = ex ? Number(ex[1]) : 1;
+          if (n >= 3 || (n === 2 && (f & M))) return true;
+          flags[flags.length - 1] |= U | (n === 2 ? M : f & M);
+        }
         continue;
       }
-      if (rep(i)) inner[inner.length - 1] = true;
+      if (rep(i)) flags[flags.length - 1] |= U;
     }
     return false;
   }
