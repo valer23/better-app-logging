@@ -424,6 +424,24 @@ test('the <mark> takes the first non-empty hit of a regex term, as legacy did (a
   assert.deepEqual([hit(m, 'abb'), hit(m, 'cb'), m.global], [[1, 'bb'], [1, 'b'], false], 'no state carried from one row to the next');
 });
 
+test('the <mark> scan is bounded (F6): a regex that matches "" at every offset and scans on from each one costs a fixed budget per row, never O(length^2)', () => {
+  const mark = (t, o) => Q.build(t, o, {}).q.mark;
+  const line = 'a'.repeat(4000);
+  for (const [text, o] of [['.*x|', { regex: true }], ['/.*Exception|/', {}], ['/(?:.*x)?/', {}]]) {
+    const m = mark(text, o);
+    const t0 = process.hrtime.bigint();
+    for (let i = 0; i < 60; i++) assert.equal(m.exec(line), null, text);
+    const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+    assert.ok(ms < 150, `${text}: 60 rows of 4000 characters took ${ms} ms (unbounded: about 400 ms)`);
+  }
+  // Within the budget the first non-empty hit is still found, however many empty hits come before it ...
+  const hit = (m, s) => { const r = m.exec(s); return r && [r.index, r[0]]; };
+  assert.deepEqual(hit(mark('\\d*', { regex: true }), 'Connection failed after 3 retries'), [24, '3']);
+  assert.deepEqual(hit(mark('\\d*', { regex: true }), 'x'.repeat(100) + '42'), [100, '42'], 'a short row: far more offsets than 16');
+  // ... and a long row past the budget marks nothing (what P6a did) instead of stalling the flush.
+  assert.equal(hit(mark('\\d*', { regex: true }), 'x'.repeat(100000) + '42'), null);
+});
+
 test('pid: a number or a numeric string is the line\'s pid; an empty or blank pid is none, so pid:0 does not match it', () => {
   const lines = [0, '0', '', ' ', null, undefined, '57 ', 57, 'x'].map(pid => L({ pid }));
   const keep = text => { const { q } = Q.build(text, {}, {}); return lines.map((m, i) => [m, i]).filter(([m]) => q.gate(m) >= 0).map(([, i]) => i); };

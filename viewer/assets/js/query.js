@@ -232,11 +232,20 @@
   // The <mark>'s matcher for a regex term (buildMessageNodes calls exec once per row): its first non-empty hit, as legacy
   // marked it. /x*/ or \d* match '' at offset 0 first, so the plain RegExp would mark nothing. Literal terms keep their
   // RegExp: an escaped non-empty literal never matches ''. The 'g' copy is reset on every call, so no row sees another's state.
+  // The skip over empty hits is bounded, per row: a pattern that matches '' at every offset and scans on from each one (.*x|, a
+  // half-typed alternation) would cost O(length^2) a row, at every flush. A row gets about MARK_STEPS characters' worth of
+  // attempts (at least 8, at most 256); past that it marks nothing, which is what a plain RegExp did.
+  const MARK_STEPS = 16384;
   function firstNonEmpty(re) {
     const all = new RegExp(re.source, re.flags + 'g');
     return Object.freeze({ source: re.source, flags: re.flags, global: false, exec(s) {
       all.lastIndex = 0;
-      for (let m = all.exec(s); m !== null; m = all.exec(s)) { if (m[0] !== '') return m; all.lastIndex++; }
+      let left = Math.max(8, Math.min(256, Math.floor(MARK_STEPS / (s.length || 1))));
+      for (let m = all.exec(s); m !== null; m = all.exec(s)) {
+        if (m[0] !== '') return m;
+        if (--left <= 0) return null;
+        all.lastIndex++;
+      }
       return null;
     } });
   }
