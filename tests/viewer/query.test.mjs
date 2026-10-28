@@ -83,8 +83,7 @@ test('parse: a key still being typed is never an error, and it hides nothing onc
 test('parse: the spec\'s error copy, and the new copy for pid, plat and negated phrases or regexes', () => {
   assert.deepEqual(errs('tg:x'), ["Unknown field 'tg'. Did you mean tag:?"]);
   assert.deepEqual(errs('TG:x'), ["Unknown field 'TG'. Did you mean tag:?"]);
-  assert.deepEqual(errs('lebel:E apps:x pi:1 dv:a plt:ios'), ["Unknown field 'lebel'. Did you mean level:?", "Unknown field 'apps'. Did you mean app:?",
-    "Unknown field 'pi'. Did you mean pid:?", "Unknown field 'dv'. Did you mean dev:?", "Unknown field 'plt'. Did you mean plat:?"]);
+  assert.deepEqual(errs('pi:1 dv:a plt:ios'), ["Unknown field 'pi'. Did you mean pid:?", "Unknown field 'dv'. Did you mean dev:?", "Unknown field 'plt'. Did you mean plat:?"]);
   assert.deepEqual(errs('level:X'), ["Unknown level 'X'. Use V, D, I, W, E or F, or W+ for W and above."]);
   assert.deepEqual(errs('level:D,Q+'), ["Unknown level 'Q+'. Use V, D, I, W, E or F, or W+ for W and above."]);
   assert.deepEqual(errs('pid:abc'), ["PID 'abc' is not a number."]);
@@ -359,4 +358,54 @@ test('tagCause: NOT tag:x that every retained line carries; tag:x when no retain
   assert.deepEqual(cause('tag:bt tag:nope'), { notTag: '', tag: 'bt' });
   assert.deepEqual(cause('level:E'), { notTag: '', tag: '' });
   assert.deepEqual([Q.build('level:E dev:ios plat:ios', {}, {}).q.chipsOnly, Q.build('level:E x', {}, {}).q.chipsOnly], [true, false]);
+});
+
+// ---- Typed text (P6b): what the bar may apply on its 100 ms debounce ----
+
+test('unknown keys: only a missing letter or a swap of a known key is "Did you mean"; log words one letter away search the message', () => {
+  assert.deepEqual(errs('tg:x pi:1 ap:x de:a plt:ios leve:E tga:x pdi:1'), ["Unknown field 'tg'. Did you mean tag:?", "Unknown field 'pi'. Did you mean pid:?",
+    "Unknown field 'ap'. Did you mean app:?", "Unknown field 'de'. Did you mean dev:?", "Unknown field 'plt'. Did you mean plat:?",
+    "Unknown field 'leve'. Did you mean level:?", "Unknown field 'tga'. Did you mean tag:?", "Unknown field 'pdi'. Did you mean pid:?"]);
+  const words = 'pin:3 pod:a ppid:1 apk:x apn:y dex:z play:on lebel:E apps:x id:7 Exception:';
+  assert.deepEqual(errs(words), []);
+  assert.deepEqual(toks(words).map(t => t.k), Array(11).fill('word'));
+});
+
+test('regex flags: "/foo/i" is reported with a hint, never searched as a word; paths stay words', () => {
+  assert.deepEqual(errs('/foo/i -/a\\/b/gi'), ['Regex flags are not supported. Use /foo/, and Aa for match case.',
+    'Regex flags are not supported. Use /a\\/b/, and Aa for match case.']);
+  for (const p of ['/usr/lib', '/tmp/x', '/proc/sys', '/a/b/c', '/foo/', '/i']) assert.deepEqual(errs(p), [], p);
+  assert.equal(Q.build('/foo/i', {}, {}).q, null, 'never applied');
+});
+
+test('nested quantifiers: a regex that can backtrack exponentially is refused before it applies; flat and bounded repeats pass', () => {
+  const msg = 'Invalid regex: Nested quantifiers such as (a+)+ can freeze the viewer. The last valid filter is still applied.';
+  for (const [text, opts] of [['/(a+)+$/', {}], ['/(x*)*y/', {}], ['/(?:a\\d+){2,}/', {}], ['/((a+)b)+/', {}], ['(\\w+\\s?)+$', { regex: true }], ['-(a+)*', { regex: true }], ['/(a*){25}/', {}]]) {
+    const r = Q.build(text, opts, {});
+    assert.deepEqual([r.q, r.error && r.error.msg], [null, msg], text);
+  }
+  for (const [text, opts] of [['/(ab)+/', {}], ['/(a|b)+c/', {}], ['/a+b*/', {}], ['/(a{2}){3}/', {}], ['/([a+])+/', {}], ['/\\(a+\\)+/', {}], ['(a+)+', {}], ['/(ab){5}/', {}], ['/(a+){2}/', {}]]) {
+    assert.equal(Q.build(text, opts, {}).error, null, text);
+  }
+  const { start, end } = Q.build('ok /(a+)+/', {}, {}).error;
+  assert.deepEqual([start, end], [3, 10], 'the error carries the range of its token');
+});
+
+test('the <mark> takes the first non-empty hit of a regex term, as legacy did (a pattern such as /x*/ matches "" first)', () => {
+  const mark = (t, o) => Q.build(t, o, {}).q.mark;
+  const hit = (m, s) => { const r = m.exec(s); return r && [r.index, r[0]]; };
+  assert.deepEqual(hit(mark('/x*/', {}), 'abxxc'), [2, 'xx']);
+  assert.deepEqual(hit(mark('\\d*', { regex: true }), 'pid 12'), [4, '12']);
+  assert.equal(hit(mark('/x*/', {}), 'abc'), null, 'only empty hits: no mark');
+  assert.deepEqual(hit(mark('/x*/', {}), 'xab'), [0, 'x']);
+  const m = mark('/b+/', {});
+  assert.deepEqual([hit(m, 'abb'), hit(m, 'cb'), m.global], [[1, 'bb'], [1, 'b'], false], 'no state carried from one row to the next');
+});
+
+test('pid: a number or a numeric string is the line\'s pid; an empty or blank pid is none, so pid:0 does not match it', () => {
+  const lines = [0, '0', '', ' ', null, undefined, '57 ', 57, 'x'].map(pid => L({ pid }));
+  const keep = text => { const { q } = Q.build(text, {}, {}); return lines.map((m, i) => [m, i]).filter(([m]) => q.gate(m) >= 0).map(([, i]) => i); };
+  assert.deepEqual(keep('pid:0'), [0, 1]);
+  assert.deepEqual(keep('-pid:0'), [2, 3, 4, 5, 6, 7, 8]);
+  assert.deepEqual(keep('pid:57'), [6, 7]);
 });

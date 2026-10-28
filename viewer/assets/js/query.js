@@ -48,22 +48,27 @@
   }
   const wordEnd = (text, p) => { while (p < text.length && !isWs(text[p])) p++; return p; };
 
-  // An unknown key one edit (or one swap) away from a known key with the same first letter is a typo the spec names
-  // ("Unknown field 'tg'. Did you mean tag:?"); any other `word:` is a bare word, so 'Exception:', 'id:' and URLs
-  // still search the message.
-  function oneEdit(a, b) {
-    if (a === b || a[0] !== b[0] || Math.abs(a.length - b.length) > 1) return false;
-    if (a.length === b.length) {
-      const d = [];
-      for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) d.push(i);
-      return d.length === 1 || (d.length === 2 && d[1] === d[0] + 1 && a[d[0]] === b[d[1]] && a[d[1]] === b[d[0]]);
+  // An unknown key that is a known key with one letter missing ('tg', 'pi', 'plt') or two neighbouring letters swapped
+  // ('tga', 'pdi'), with the same first letter, is a typo the spec names ("Unknown field 'tg'. Did you mean tag:?").
+  // Any other `word:` is a bare word, so 'Exception:', 'id:', URLs and log words one letter from a key ('pin:', 'pod:',
+  // 'ppid:', 'apk:', 'apn:', 'dex:', 'play:') still search the message: a substituted or added letter is never a typo.
+  function typoOf(a, b) {
+    if (a[0] !== b[0]) return false;
+    if (a.length === b.length - 1) {
+      let i = 0;
+      while (i < a.length && a[i] === b[i]) i++;
+      return a.slice(i) === b.slice(i + 1);
     }
-    const [s, l] = a.length < b.length ? [a, b] : [b, a];
-    let i = 0;
-    while (i < s.length && s[i] === l[i]) i++;
-    return s.slice(i) === l.slice(i + 1);
+    if (a.length !== b.length) return false;
+    const d = [];
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) d.push(i);
+    return d.length === 2 && d[1] === d[0] + 1 && a[d[0]] === b[d[1]] && a[d[1]] === b[d[0]];
   }
-  const nearKey = k => KEYS.find(K => oneEdit(k, K)) || null;
+  const nearKey = k => KEYS.find(K => typoOf(k, K)) || null;
+  // '/foo/i': a regex with flags, which the grammar does not have (case follows Aa). It is reported, not searched as the
+  // word '/foo/i'. The flags are 1 to 4 distinct letters of gimsuy after a body with no unescaped '/', so paths such as
+  // '/usr/lib', '/tmp/x', '/proc/sys' or '/a/b/c' stay words. [, body, repeated letter, flags]
+  const REGEX_FLAGS = /^\/((?:\\[\s\S]|[^\\/])+)\/(?![a-z]*([a-z])[a-z]*\2)([gimsuy]{1,4})$/;
 
   // level: values → a 6-bit mask (bit k = level k), -1 when the value lists nothing yet ('level:,'), or { bad } for
   // the first item that is no level. Items: a letter or name, optionally followed by '+' (that level and above), or none.
@@ -145,6 +150,8 @@
       }
       const end = wordEnd(src, j);
       if (key && nearKey(k)) err(start, end, `Unknown field '${key[1]}'. Did you mean ${nearKey(k)}:?`);
+      const flags = src[j] === '/' ? REGEX_FLAGS.exec(src.slice(j, end)) : null;
+      if (flags) err(start, end, `Regex flags are not supported. Use /${flags[1]}/, and Aa for match case.`);
       tokens.push({ k: 'word', v: src.slice(j, end), neg, start, end });
       i = end;
     }
@@ -171,6 +178,38 @@
   const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   // The reason of a SyntaxError from new RegExp, without the engine's "Invalid regular expression: /…/: " prefix.
   const reason = e => String(e && e.message || e).replace(/^.*?:\s*\/.*\/[a-z]*:\s*/, '').replace(/^Invalid regular expression:\s*/, '');
+  // A regex term that can backtrack exponentially on a long line (ReDoS): a group holding an unbounded quantifier that
+  // is itself repeated, as in (a+)+, (x*)* or (?:a\d+){2,}. Its test runs on every line, in the drain and on each trim's
+  // dropped run, so it is refused before it applies. Escapes and character classes are skipped; a small exact repeat such
+  // as {3} is bounded, but {5} or more of such a group is refused too ((a*){25} ran 140 s on a 29-char line).
+  // Alternation overlap such as (a|a)+ is not detected.
+  function nestedQuantifier(src) {
+    const rep = i => src[i] === '*' || src[i] === '+' || (src[i] === '{' && /^\{\d+,\d*\}/.test(src.slice(i, i + 24)));
+    const inner = [false];   // per open group: whether its body repeats without bound
+    for (let i = 0; i < src.length; i++) {
+      const c = src[i];
+      if (c === '\\') { i++; continue; }
+      if (c === '[') { i++; while (i < src.length && src[i] !== ']') { if (src[i] === '\\') i++; i++; } continue; }
+      if (c === '(') { inner.push(false); continue; }
+      if (c === ')' && inner.length > 1) {
+        if (inner.pop()) { if (rep(i + 1) || /^\{(?:[5-9]|\d{2,})\}/.test(src.slice(i + 1, i + 25))) return true; inner[inner.length - 1] = true; }
+        continue;
+      }
+      if (rep(i)) inner[inner.length - 1] = true;
+    }
+    return false;
+  }
+  // The <mark>'s matcher for a regex term (buildMessageNodes calls exec once per row): its first non-empty hit, as legacy
+  // marked it. /x*/ or \d* match '' at offset 0 first, so the plain RegExp would mark nothing. Literal terms keep their
+  // RegExp: an escaped non-empty literal never matches ''. The 'g' copy is reset on every call, so no row sees another's state.
+  function firstNonEmpty(re) {
+    const all = new RegExp(re.source, re.flags + 'g');
+    return Object.freeze({ source: re.source, flags: re.flags, global: false, exec(s) {
+      all.lastIndex = 0;
+      for (let m = all.exec(s); m !== null; m = all.exec(s)) { if (m[0] !== '') return m; all.lastIndex++; }
+      return null;
+    } });
+  }
   // dev: value → the platforms it names: 'none', a platform, or a substring of a device's id or name (spaces and case
   // ignored). devices is the page's deviceInfo ({ android: { id, name }, ios: { id, name } }).
   function devBits(v, devices) {
@@ -207,7 +246,7 @@
     let lvPos = 0; let lvAny = false; let lvNeg = 0;
     const plat = { dev: [0, false, 0], plat: [0, false, 0] };   // [positive bits, any positive, negative bits]
     const tag = [[], []]; const app = [[], []]; const pid = [[], []];   // [positive values, negative values]
-    const text = [];   // [RegExp, negated]
+    const text = [];   // [RegExp, negated, from a regex (a /regex/ token, or a word under .*)]
     const tagList = [];   // [value as typed, negated], for the empty tile's causes
     let usesDevNames = false;
     let hasWord = false;
@@ -229,13 +268,17 @@
         pid[t.neg ? 1 : 0].push(Number(t.v));
       } else {
         if (t.v === '') continue;   // "" and // test nothing
-        const src = t.k === 'regex' || (t.k === 'word' && rx) ? t.v : escRe(t.v);
+        const isRe = t.k === 'regex' || (t.k === 'word' && rx);
+        const src = isRe ? t.v : escRe(t.v);
         if (t.k === 'word') hasWord = true;
         let re;
         try { re = new RegExp(src, mc ? '' : 'i'); } catch (e) {
           return { q: null, error: { start: t.start, end: t.end, msg: `Invalid regex: ${reason(e)}. The last valid filter is still applied.` } };
         }
-        text.push([re, t.neg]);
+        if (isRe && nestedQuantifier(src)) {
+          return { q: null, error: { start: t.start, end: t.end, msg: 'Invalid regex: Nested quantifiers such as (a+)+ can freeze the viewer. The last valid filter is still applied.' } };
+        }
+        text.push([re, t.neg, isRe]);
       }
     }
     const levels = (lvAny ? lvPos : ALL_LEVELS) & ~lvNeg;
@@ -246,8 +289,10 @@
     const preds = [];
     if (pid[0].length || pid[1].length) {
       const [pos, neg] = pid;
-      // == on purpose: a pid read from a file can be a numeric string.
-      preds.push(m => { const p = m.pid; for (const n of neg) if (p == n) return false; if (!pos.length) return true; for (const n of pos) if (p == n) return true; return false; });
+      // A pid is a number (live) or a numeric string (a file); anything else, '' and blank included, is no pid, so pid:0
+      // does not match it (a loose == did: '' == 0).
+      const num = p => (typeof p === 'number' ? p : typeof p === 'string' && /^\s*\d+\s*$/.test(p) ? Number(p) : NaN);
+      preds.push(m => { const p = num(m.pid); for (const n of neg) if (p === n) return false; if (!pos.length) return true; for (const n of pos) if (p === n) return true; return false; });
     }
     if (tag[0].length || tag[1].length) {
       const [pos, neg] = tag;
@@ -273,7 +318,8 @@
     const live = tokens.filter(t => !(t.k === 'level' && levelMask(t.v) === -1));
     const key = `${serialize(live)}\u0000${hasText ? (mc ? 'C' : 'c') : ''}${hasWord ? (rx ? 'R' : 'r') : ''}\u0000${plats}`;
     const chipsOnly = tokens.every(t => t.k === 'level' || t.k === 'dev' || t.k === 'plat');
-    return { q: { key, gate, lvOk, levels, plats, rest, mark: firstPos ? firstPos[0] : null, hasText, usesDevNames, tags: tagList, chipsOnly }, error: null };
+    const mark = firstPos ? (firstPos[2] ? firstNonEmpty(firstPos[0]) : firstPos[0]) : null;
+    return { q: { key, gate, lvOk, levels, plats, rest, mark, hasText, usesDevNames, tags: tagList, chipsOnly }, error: null };
   }
 
   // parse + compile: { q, error }. The first error wins; an invalid query is never half applied.

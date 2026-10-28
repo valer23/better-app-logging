@@ -110,3 +110,15 @@ test('tagHits: the retained lines whose tag contains a value, case-insensitive, 
   for (const tag of ['BluetoothGatt', 'bluetoothd', 'bt_stack', 'bluetoothd', 'kernel']) C.add(c, { tag, app: '' });
   assert.deepEqual(['blue', 'BT', 'kernel', 'nope', ''].map(v => C.tagHits(c, v)), [3, 1, 1, 0, 5]);
 });
+
+test('remove: a run that is the whole buffer clears the counts without running the gate (Resume after a backlog overflow)', () => {
+  const lines = Array.from({ length: 5 }, (_, i) => ({ tag: `t${i % 2}`, app: i ? 'com.x' : '', lvl: 'INFO' }));
+  let calls = 0;
+  const gate = () => { calls++; return 2; };
+  const c = C.recount(C.create(), lines, () => 2);
+  C.remove(c, lines, 0, lines.length, gate);
+  assert.deepEqual([calls, [...c.lvl], c.tags.size, c.apps.size], [0, [0, 0, 0, 0, 0, 0], 0, 0]);
+  const d = C.recount(C.create(), lines, () => 2);
+  C.remove(d, lines, 0, 4, gate);
+  assert.deepEqual([calls, [...d.lvl], Array.from(d.tags, ([k, n]) => `${k}=${n}`), d.apps.size], [4, [0, 0, 1, 0, 0, 0], ['t0=1'], 1], 'a partial run still runs the gate per line');
+});
