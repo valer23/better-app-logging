@@ -148,7 +148,7 @@ export function deepStub(name = 'stub') {
 // can read back what the legacy script wrote (textContent, title, value). `hidden` is a plain
 // writable flag: true (the default) keeps the live drain on its data-only path (renderLiveTail only
 // marks the DOM stale), false runs the render paths against stubs. `values` seeds input values.
-export function stickyDocument({ hidden = true, values = { search: '', tagFilter: '', pidFilter: '' } } = {}) {
+export function stickyDocument({ hidden = true, values = { queryInput: '' } } = {}) {
   const els = new Map();
   const doc = deepStub('document');
   doc.hidden = hidden;

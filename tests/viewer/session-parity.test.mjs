@@ -21,7 +21,7 @@ const VIEW = {
 const PINNED = {
   dropTooltipEnd: 'Resets on Clear.',
 };
-// P4b: #stats became the filter bar's #filterCount ("N of M lines") and the status bar's #retainedText
+// P4b: #stats became the filter bar's #filterCount ("N of M lines", the query region's since P6) and the status bar's #retainedText
 // ("Retained N of MAX" with the #45 note; the long explanation is its title). The drops moved from the live
 // bar's pills to the status bar's #dropsBtn (the total) and its popover (per platform).
 
@@ -45,6 +45,8 @@ function boot() {
     send(n, from = 0, platform = 'ios') { for (let i = 0; i < n; i++) api.handleWsMsg({ data: frame(from + i) }, platform); },
     drop(platform, count) { api.handleWsMsg({ data: JSON.stringify({ type: 'dropped', count }) }, platform); },
     text: id => doc.getElementById(id).textContent,
+    // P6: "N of M lines" is the query region's, written on its 250 ms interval (querybar.js), not by the flush.
+    count() { run('queryBar.numbers()'); return doc.getElementById('filterCount').textContent; },
     title: id => doc.getElementById(id).title,
     // P5b: the pill's text is "<pre><b>num</b><unit>" (spec: the number is bold), its button names its action.
     pill: () => ['newerPillPre', 'newerPillNum', 'newerPillUnit'].map(id => doc.getElementById(id).textContent || '').join(''),
@@ -58,7 +60,7 @@ test('#45: past MAX_RETAINED the oldest live lines go, and the Retained text say
   assert.equal(v.get('liveAll').length, 90);
   assert.equal(v.get('liveAll')[0].msg, 'line 60');
   assert.equal(v.get('liveDiscarded'), 60);
-  assert.equal(v.text('filterCount'), '90 of 90 lines');
+  assert.equal(v.count(), '90 of 90 lines');
   assert.equal(v.text('retainedText'), 'Retained 90 of 100 · 60 older discarded');
   assert.equal(v.title('retainedText'), 'Live view keeps the newest 100 lines; older lines are discarded to bound memory.');
   assert.equal(v.text('retainedNote'), '60 older discarded', 'the note alone: what the narrow status-bar tier shows instead of the count');
@@ -92,7 +94,7 @@ test('#55: Clear while paused discards the backlog, so Resume adds nothing', () 
   assert.equal(v.run('pendingBatch.length'), 0);
   v.api.togglePause();
   assert.equal(v.get('liveAll').length, 0);
-  assert.equal(v.text('filterCount'), '0 of 0 lines');
+  assert.equal(v.count(), '0 of 0 lines');
 });
 
 test('#45: Clear resets the discarded count, so the Retained text stops reporting older discarded lines', () => {
@@ -198,8 +200,7 @@ test('a filter change while the file session is shown leaves live stale; showing
   const v = boot();
   v.send(4); v.api.flushBatch();
   v.go('toFile');
-  v.doc.getElementById('search').value = 'line 1';
-  v.run('queryChanged()');
+  v.run('setQuery(\'"line 1"\')');
   v.send(10, 4); v.api.flushBatch();
   assert.equal(v.run('liveSession.filtered.length'), 4, 'not filtered while stale');
   assert.notEqual(v.run('liveSession.query'), v.run('filterGen'));
@@ -421,8 +422,7 @@ function followedLiveBehindAFilterChange(v, { sel = -1 } = {}) {
   v.send(1200); v.api.flushBatch();
   if (sel >= 0) v.run(`liveSession.sel = liveSession.all[${sel}]`);   // Follow stays on (Jump to latest keeps the selection)
   v.go('toFile');
-  v.doc.getElementById('search').value = 'line';
-  v.run('queryChanged()');
+  v.run("setQuery('line')");
   v.send(10, 1200); v.api.flushBatch();
 }
 
@@ -468,7 +468,7 @@ test('File tab: the line count and Export cover only the file; Live keeps its ow
   v.run('globalThis.__saved = null; legacyDownload = (name, content) => { __saved = content; }');
   v.go('toFile');
   v.api.handleFile({ text: fileText(4) });
-  assert.equal(v.text('filterCount'), '4 of 4 lines');
+  assert.equal(v.count(), '4 of 4 lines');
   assert.equal(v.text('retainedText'), '', 'Retained is about the live session');
   assert.equal(display(v, 'exportWrap'), '');
   for (const scope of ['all', 'filtered']) {
@@ -480,13 +480,13 @@ test('File tab: the line count and Export cover only the file; Live keeps its ow
     assert.ok(lines.every(l => l.includes('file ')) && !lines.some(l => l.includes('line ')), `export (${scope}) holds no live line`);
   }
   v.go('toLive');
-  assert.equal(v.text('filterCount'), '3 of 3 lines');
+  assert.equal(v.count(), '3 of 3 lines');
   v.run('__saved = null');
   await v.api.doExport('txt');
   assert.equal(v.run('__saved').split('\n').length, 3, 'on Live, Export writes the live lines');
   v.go('toFile');
   v.api.clearLogs();                            // Clear on File: nothing left to export there
-  assert.equal(v.text('filterCount'), '0 of 0 lines');
+  assert.equal(v.count(), '0 of 0 lines');
   assert.equal(display(v, 'exportWrap'), 'none');
   v.go('toLive');
   assert.equal(display(v, 'exportWrap'), '', 'live still has lines to export');
@@ -847,7 +847,7 @@ test('pill focus: a pointer click drops the pill button focus first (no parking 
 });
 
 // P5b: the grid's empty states (assets/js/grid.js) read these through shellState, and parse failures become a toast.
-test('empty states: Clear on Live says "Waiting for new lines…" until a line arrives; resetFilter turns the filters back on', () => {
+test('empty states: Clear on Live says "Waiting for new lines…" until a line arrives; resetFilter rewrites the query, one fix at a time', () => {
   const v = boot();
   v.run('iosLive = true');                // a device streams (with none, Clear shows the device panel: #70)
   v.send(3); v.api.flushBatch();
@@ -855,12 +855,18 @@ test('empty states: Clear on Live says "Waiting for new lines…" until a line a
   assert.equal(v.run('shellState().cleared'), true);
   v.send(1, 3); v.api.flushBatch();
   assert.equal(v.run('shellState().cleared'), false, 'the first line ends it');
-  v.run("enabledLevels.clear(); enabledPlatforms.delete('ios'); document.getElementById('tagFilter').value = 'bt'; document.getElementById('search').value = 'x'");
-  assert.deepEqual([v.run('shellState().levels'), v.run('shellState().tag'), v.run('shellState().query')], [0, 'bt', true]);
+  const field = v.doc.getElementById('queryInput');
+  field.value = 'level:none dev:android tag:bt x';
+  v.run('queryBar.apply()');
+  assert.deepEqual([v.run('shellState().levels'), v.run('shellState().enabled.size'), v.run('shellState().tag'), v.run('shellState().query')], [0, 1, 'bt', true]);
   v.run("resetFilter('levels')");
-  assert.deepEqual([v.run('enabledLevels.size'), v.run('enabledPlatforms.size'), v.doc.getElementById('tagFilter').value], [6, 1, 'bt'], 'one fix at a time');
+  assert.equal(field.value, 'dev:android tag:bt x', 'one fix at a time: the level token goes');
+  v.run("resetFilter('tag')");
+  assert.equal(field.value, 'dev:android x');
+  v.run("resetFilter('devices')");
+  assert.equal(field.value, 'x');
   v.run("resetFilter('all')");
-  assert.deepEqual([v.run('enabledPlatforms.size'), v.doc.getElementById('tagFilter').value, v.doc.getElementById('search').value, v.doc.getElementById('pidFilter').value], [2, '', '', '']);
+  assert.deepEqual([field.value, v.run('shellState().enabled.size'), v.run('shellState().levels')], ['', 2, 6]);
   assert.equal(v.run('shellState().query'), false);
   assert.equal(v.run('liveSession.query === filterGen'), true, 'refiltered');
 });

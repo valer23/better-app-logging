@@ -91,7 +91,7 @@ test('toolbar and status bar are fixed-height flex: none children of #main under
 
 test('the page passes every action that shell.js and live.js call (the fake pages answer any action name, so a missing one only throws on a real click)', () => {
   const code = inlineScripts(html).at(-1).code;
-  for (const [file, factory] of [['shell.js', 'createShell'], ['live.js', 'createLive'], ['grid.js', 'createGrid']]) {
+  for (const [file, factory] of [['shell.js', 'createShell'], ['live.js', 'createLive'], ['grid.js', 'createGrid'], ['querybar.js', 'createQueryBar']]) {
     const used = [...new Set([...read(path.join(ASSETS, 'js', file)).matchAll(/\bactions\.(\w+)/g)].map(m => m[1]))];
     const call = code.slice(code.indexOf(`ALV.${factory}(`));
     const open = call.indexOf('actions: {') + 'actions: '.length;
@@ -177,6 +177,23 @@ test('toolbar: the legacy top bar and its glass switch are gone; the controls mo
   assert.deepEqual(elements(more).filter(el => el.attrs.role).map(el => el.attrs.role), ['menuitem', 'separator', 'menuitemcheckbox']);
 });
 
+test('query region: the bar (labelled field, Aa, .*, Clear filter, the ⌘F hint), the alert line and the chip row replace the legacy filter controls', () => {
+  const fb = findById(root, 'filterbar');
+  assert.deepEqual([fb.attrs.class, fb.parent.attrs.id], ['chrome', 'main']);
+  const input = findById(root, 'queryInput');
+  assert.deepEqual([input.tag, input.attrs.type, input.attrs.spellcheck, input.attrs['aria-describedby']], ['input', 'text', 'false', 'queryError']);
+  assert.equal(input.attrs.placeholder, 'Filter: level:E  tag:Bluetooth  app:com.example.headset  &quot;timeout&quot;  -tag:chatty  /time(out|d)/');
+  const label = elements(fb).find(el => el.tag === 'label');
+  assert.deepEqual([label.attrs.for, label.attrs.class], ['queryInput', 'sr-only']);
+  for (const id of ['queryCaseBtn', 'queryRegexBtn']) assert.equal(findById(root, id).attrs['aria-pressed'], 'false', `#${id} is a toggle`);
+  assert.deepEqual([findById(root, 'queryError').attrs.role, 'hidden' in findById(root, 'queryError').attrs], ['alert', true]);
+  for (const id of ['levelChips', 'deviceChips']) assert.equal(findById(root, id).attrs.role, 'group');
+  for (const id of ['search', 'searchCaseBtn', 'searchRegexBtn', 'tagFilter', 'pidFilter', 'levelToggles', 'platToggles']) assert.equal(findById(root, id), null, `#${id} is gone`);
+  const legacy = read(path.join(ASSETS, 'css', 'legacy.css'));
+  assert.doesNotMatch(legacy, /#filterbar|#search\b|#tagFilter|#pidFilter|\.lvl-btn|\.plat-btn|\.search-mod|\.toggle-group|\.bar-spacer|\.stats\b|\.sep\b/);
+  assert.doesNotMatch(inlineScripts(html).at(-1).code, /enabledLevels|enabledPlatforms|platBtns|toggleSearchMod|queryChanged|fromLegacy|lastSearch|searchInvalid/);
+});
+
 test('status bar: devices, drops (with its popover in the popover layer), the moved #58 hint, Retained and Follow; the live bar and #stats are gone', () => {
   const sb = findById(root, 'statusBar');
   assert.deepEqual([sb.tag, sb.attrs.class, sb.parent.attrs.id], ['footer', 'chrome', 'main']);
@@ -185,7 +202,7 @@ test('status bar: devices, drops (with its popover in the popover layer), the mo
     assert.ok(closestWithin(findById(root, id), '[id=statusBar]', root), `#${id} is in the status bar`);
   }
   assert.equal(findById(root, 'dropsPopover').parent.attrs.id, 'ovPopovers');
-  assert.ok(closestWithin(findById(root, 'filterCount'), '[id=filterbar]', root), 'the line count waits in the filter bar for P6');
+  assert.ok(closestWithin(findById(root, 'filterCount'), '.chip-row', root), 'the line count is in the query region\'s chip row (P6)');
   for (const id of ['liveBar', 'stats', 'liveBarAndroidDropped', 'liveBarIosDropped']) assert.equal(findById(root, id), null, `#${id} is gone`);
   const legacy = read(path.join(ASSETS, 'css', 'legacy.css'));
   assert.doesNotMatch(legacy, /#liveBar|\.live-bar|\.reading-window-hint|\.stats-export|status-pill\.dropped/);
@@ -428,10 +445,10 @@ test('every sprite symbol is used by the page or the JS', () => {
 
 test('no emoji in the primitives, the shell, the app-layer CSS, the overlay root, the sidebar or the Export button', () => {
   const EMOJI = /\p{Extended_Pictographic}/u;
-  for (const p of ['js/dom.js', 'js/keys.js', 'js/ui.js', 'js/shell.js', 'js/grid.js', 'css/base.css', 'css/shell.css', 'css/grid.css']) assert.doesNotMatch(read(path.join(ASSETS, p)), EMOJI, p);
+  for (const p of ['js/dom.js', 'js/keys.js', 'js/ui.js', 'js/shell.js', 'js/grid.js', 'js/querybar.js', 'css/base.css', 'css/shell.css', 'css/grid.css', 'css/query.css']) assert.doesNotMatch(read(path.join(ASSETS, p)), EMOJI, p);
   const lines = html.split('\n');
   for (const p of ['js/live.js']) assert.doesNotMatch(read(path.join(ASSETS, p)), EMOJI, p);
-  for (const id of ['overlayRoot', 'exportWrap', 'sidebar', 'toolbar', 'statusBar']) {
+  for (const id of ['overlayRoot', 'exportWrap', 'sidebar', 'toolbar', 'statusBar', 'filterbar']) {
     const el = findById(root, id);
     const last = elements(el).at(-1);
     const text = lines.slice(el.line - 1, (last ? last.line : el.line)).join('\n');
@@ -748,8 +765,9 @@ test('pseudo-elements that set padding, a border or a percentage size declare th
 
 test('every legacy animation or transition is switched off by both Reduce motion rules', () => {
   const legacy = cssFiles.find(f => f.path === 'css/legacy.css').text;
-  // legacy.css shrinks with every region PR (P4b removes the top bar's switches and buttons, P5a the table rows: 15 left).
-  assert.ok(C.animatedSelectors(legacy).length >= 15, 'the legacy animation scan found too few selectors');
+  // legacy.css shrinks with every region PR (P4b removes the top bar's switches and buttons, P5a the table rows, P6b the
+  // filter bar's buttons: 12 left).
+  assert.ok(C.animatedSelectors(legacy).length >= 12, 'the legacy animation scan found too few selectors');
   assert.deepEqual(C.reducedMotionCoverageErrors(legacy, 'viewer/assets/css/legacy.css'), []);
 });
 

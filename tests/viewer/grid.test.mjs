@@ -576,12 +576,13 @@ test('empty tile: focus moves off a button the tile hides (Reset filter, or the 
   st.cur = { kind: 'live', all: new Array(500), filtered: [1] };
   grid.syncEmpty();
   assert.equal(p.doc.activeElement, $('logTableEl'), 'focus elsewhere is not moved');
-  p.focus($('search'));
+  const field = p.dom.el('input', { type: 'text' });   // a control outside the tile (the query region is not mounted here)
+  p.focus(field);
   st.cur = { kind: 'live', all: new Array(500), filtered: [] };
   grid.syncEmpty();
   st.cur = { kind: 'live', all: new Array(500), filtered: [1] };
   grid.syncEmpty();
-  assert.equal(p.doc.activeElement, $('search'), 'a focused control outside the tile keeps focus');
+  assert.equal(p.doc.activeElement, field, 'a focused control outside the tile keeps focus');
 });
 
 // ---- Arrival highlight (P5b) ----

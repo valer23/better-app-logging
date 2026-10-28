@@ -1,0 +1,27 @@
+/* The query region (roadmap P6b; spec "Query region", "Sizes"). @layer app, foundation tokens only (no hex). The bar,
+   the chips and the tokens are the foundation's .query, .chip, .lv-badge, .plat and .chip.token; this file lays the
+   region out. #filterbar is a size container: its tiers are content-box widths (32 px of padding), so the spec's
+   1 280 px and 860 px region widths are max-width: 1247px and 827px. */
+@layer app {
+  #filterbar { display: flex; flex-direction: column; gap: 4px; padding: 8px 16px; flex: none; border-bottom: 1px solid var(--hairline); container: queryregion / inline-size; }
+  .query .icon { flex: none; }
+  .query .q-mod { flex: none; font-family: var(--font-log); font-weight: 600; }
+  .query .kbd { flex: none; }
+  #queryClearBtn { flex: none; }
+  /* The invalid line (spec: 20 px, role="alert", error icon). */
+  .query-error { display: flex; align-items: center; gap: 6px; height: 20px; color: var(--err); font-size: var(--ui-fs-sm); }
+  .query-error[hidden] { display: none; }
+  /* The chip row: a 28 px content box plus 4 px above and below for the focus rings, which -4 px margins give back
+     (.app * is border-box: 28 + 4 + 4 = 36, so the row lays out at 28 px and its chips sit 4-5 px below the bar). The count and
+     Reset never leave the row: the chip area clips first, so it pads 4 px on every side (and gives it back with -4 px
+     margins) to keep its chips' 2 px rings, offset 2 px, inside its clip. */
+  .chip-row { display: flex; align-items: center; gap: 8px; height: 36px; margin-block: -4px; padding-block: 4px; }
+  .chip-area { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 8px; overflow: hidden; padding: 4px; margin: -4px; }
+  .chip-group { display: flex; align-items: center; gap: 4px; flex: none; }
+  .chip-group[hidden], .chip-row .divider-v[hidden] { display: none; }
+  .dev-name { max-width: 16ch; overflow: hidden; text-overflow: ellipsis; }
+  #filterCount { flex: none; color: var(--text-2); font-size: var(--ui-fs-sm); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  #queryResetBtn { flex: none; }
+  @container queryregion (max-width: 1247px) { .chip .lv-name { display: none; } }
+  @container queryregion (max-width: 827px) { .chip .count { display: none; } }
+}

@@ -72,16 +72,13 @@
   [data-glass="on"] #livePanel { background: var(--lg-bg); }
   /* Chrome text gains a 1px shadow against the bg color so it stays legible
      when the blurred desktop behind is bright/noisy. */
-  [data-glass="on"] #filterbar,
   [data-glass="on"] .modal,
   [data-glass="on"] .connect-card { text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25); }
-  [data-glass="on"][data-theme="light"] #filterbar,
   [data-glass="on"][data-theme="light"] .modal,
   [data-glass="on"][data-theme="light"] .connect-card { text-shadow: 0 1px 1px rgba(255, 255, 255, 0.55); }
 
   /* Apply backdrop-filter only to chrome surfaces when glass is on.
      Log rows + tbody intentionally stay opaque for readability. */
-  [data-glass="on"] #filterbar,
   [data-glass="on"] .modal,
   [data-glass="on"] .connect-card,
   [data-glass="on"] .device-menu {
@@ -99,41 +96,8 @@
   html, body, :where(.lg-scope, .lg-scope *) { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: var(--lg-bg); color: var(--lg-text); font-family: var(--font-ui); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
 
-  /* ── Filter bar ── */
-  #filterbar { background: var(--lg-surface); border-bottom: 1px solid var(--lg-border); padding: 8px 16px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex-shrink: 0; }
   :where(.lg-scope) input[type="text"] { background: var(--lg-bg); border: 1px solid var(--lg-border); border-radius: 6px; color: var(--lg-text); font-family: var(--font-log); font-size: 12px; padding: 5px 10px; outline: none; transition: border-color .15s; }
   :where(.lg-scope) input[type="text"]:focus { border-color: var(--lg-accent); }
-  #search { width: 280px; } #tagFilter { width: 220px; } #pidFilter { width: 220px; }
-
-  .toggle-group { display: flex; gap: 4px; }
-  .lvl-btn { font-family: var(--font-log); font-size: 11px; font-weight: 700; padding: 4px 7px; border-radius: 4px; border: 1px solid transparent; cursor: pointer; opacity: .35; transition: opacity .15s; background: transparent; }
-  .lvl-btn.active { opacity: 1; }
-
-  .search-mod { font-family: var(--font-log); font-size: 11px; font-weight: 700; padding: 4px 7px; border-radius: 4px; border: 1px solid var(--lg-border); cursor: pointer; background: transparent; color: var(--lg-muted); transition: color .15s, border-color .15s, background .15s; }
-  .search-mod:hover { color: var(--lg-text); border-color: var(--lg-muted); }
-  .search-mod.active { color: var(--lg-accent); border-color: var(--lg-accent); background: #58a6ff15; }
-  .search-mod.error { color: var(--lg-red); border-color: var(--lg-red); background: #ff7b7215; }
-  .lvl-btn[data-lvl="VERBOSE"] { color: #aaa; border-color: #aaa; }
-  .lvl-btn[data-lvl="DEBUG"]   { color: var(--lg-d); border-color: var(--lg-d); }
-  .lvl-btn[data-lvl="INFO"]    { color: var(--lg-i); border-color: var(--lg-i); }
-  .lvl-btn[data-lvl="WARN"]    { color: var(--lg-w); border-color: var(--lg-w); }
-  .lvl-btn[data-lvl="ERROR"]   { color: var(--lg-e); border-color: var(--lg-e); }
-  .lvl-btn[data-lvl="ASSERT"]  { color: var(--lg-a); border-color: var(--lg-a); }
-
-  .plat-btn { font-family: var(--font-ui); font-size: 11px; font-weight: 600; padding: 4px 8px; border-radius: 4px; border: 1px solid transparent; cursor: pointer; opacity: .35; transition: opacity .15s, color .15s, border-color .15s; background: transparent; }
-  .plat-btn.active { opacity: 1; }
-  .plat-btn[data-plat="android"]        { color: var(--lg-android); border-color: var(--lg-android); }
-  .plat-btn[data-plat="android"].active { color: var(--lg-green);   border-color: var(--lg-green);   }
-  .plat-btn[data-plat="ios"]            { color: var(--lg-ios);     border-color: var(--lg-ios);     }
-  .plat-btn[data-plat="ios"].active     { color: var(--lg-green);   border-color: var(--lg-green);   }
-
-  .sep { width: 1px; height: 20px; background: var(--lg-border); flex-shrink: 0; }
-  .bar-spacer { flex: 1; }
-
-  /* `tabular-nums` keeps digit widths uniform so the counter doesn't
-     jitter glyph-by-glyph as the value grows (e.g. 9 999 → 10 000). */
-  .stats { font-size: 11px; color: var(--lg-muted); font-family: var(--font-log); white-space: nowrap; font-variant-numeric: tabular-nums; }
-
   /* ── Drop Zone ── */
   #dropzone { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; border: 2px dashed var(--lg-border); margin: 24px; border-radius: 12px; cursor: pointer; transition: border-color .2s, background .2s; }
   #dropzone:hover, #dropzone.drag-over { border-color: var(--lg-accent); background: #161b2288; }
@@ -263,9 +227,6 @@
      missing here. !important because several selectors above out-rank a single class. */
   @media (prefers-reduced-motion: reduce) {
     :where(.app:not([data-motion="off"])) input[type="text"],
-    :where(.app:not([data-motion="off"])) .lvl-btn,
-    :where(.app:not([data-motion="off"])) .search-mod,
-    :where(.app:not([data-motion="off"])) .plat-btn,
     :where(.app:not([data-motion="off"])) #dropzone,
     :where(.app:not([data-motion="off"])) .ios-driver-warning a,
     :where(.app:not([data-motion="off"])) .ios-driver-warning button,
@@ -279,9 +240,6 @@
     :where(.app:not([data-motion="off"])) .spinner { animation: none !important; transition: none !important; }
   }
   .app[data-motion="reduce"] input[type="text"],
-  .app[data-motion="reduce"] .lvl-btn,
-  .app[data-motion="reduce"] .search-mod,
-  .app[data-motion="reduce"] .plat-btn,
   .app[data-motion="reduce"] #dropzone,
   .app[data-motion="reduce"] .ios-driver-warning a,
   .app[data-motion="reduce"] .ios-driver-warning button,

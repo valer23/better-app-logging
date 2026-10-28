@@ -1,14 +1,15 @@
 // Legacy parity (roadmap P6 acceptance): the filter bar's old search, Aa, .*, Tag, PID / App, level and platform
-// filters equal compile() of their translation into query text (ALV.query.fromLegacy), line by line, on a corpus that
+// filters equal compile() of their translation into query text (fromLegacy, P6a's page code), line by line, on a corpus that
 // covers both platforms, every level, unknown levels and platforms, empty apps, string pids, unicode and regex
 // metacharacters. The oracle is df8eacc's code, verbatim (_legacy-filter.mjs). Three deviations are declared and
 // asserted as their own rows: an invalid regex, a numeric PID / App value, and the iOS app rule.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadPureModule } from './_load.mjs';
-import { legacyFilter } from './_legacy-filter.mjs';
+import { legacyFilter, fromLegacy as translate } from './_legacy-filter.mjs';
 
 const Q = loadPureModule('query.js').query;
+const fromLegacy = st => translate(st, Q);
 const LEVELS = ['VERBOSE', 'DEBUG', 'INFO', 'WARN', 'ERROR', 'ASSERT'];
 
 const TAGS = ['BluetoothGatt', 'bt_stack', 'bluetoothd', 'Blue Tooth', 'SpringBoard', 'chatty', 'İstanbul', 'STRASSE', '', 'headset(Kit)'];
@@ -31,7 +32,7 @@ const subsets = list => Array.from({ length: 1 << list.length }, (_, mask) => li
 const state = o => ({ search: '', case: false, regex: false, tag: '', pid: '', levels: LEVELS, plats: ['android', 'ios'], ...o });
 // The P6 path the page takes: translate, build, then gate and lvOk as the drain uses them. null when fromLegacy refuses.
 function viaQuery(st) {
-  const text = Q.fromLegacy(st);
+  const text = fromLegacy(st);
   if (text === null) return null;
   const { q, error } = Q.build(text, { case: st.case }, {});
   assert.equal(error, null, `${JSON.stringify(st)} → ${text}: ${error && error.msg}`);
@@ -67,17 +68,17 @@ test('search × Aa × .* × Tag, with three level sets and two platform sets: eq
 });
 
 test('the translation: one token per control, in canonical form', () => {
-  assert.equal(Q.fromLegacy(state({})), '');
-  assert.equal(Q.fromLegacy(state({ levels: ['WARN', 'ERROR', 'ASSERT'], plats: ['ios'], tag: 'Blue "x"', pid: '52', search: 'a b' })),
+  assert.equal(fromLegacy(state({})), '');
+  assert.equal(fromLegacy(state({ levels: ['WARN', 'ERROR', 'ASSERT'], plats: ['ios'], tag: 'Blue "x"', pid: '52', search: 'a b' })),
     'level:W+ dev:ios tag:"Blue \\"x\\"" pid:52 "a b"');
-  assert.equal(Q.fromLegacy(state({ levels: [], plats: [], pid: 'headset' })), 'level:none dev:none app:"headset"');
-  assert.equal(Q.fromLegacy(state({ search: 'x/y\\/z', regex: true })), '/x\\/y\\/z/', 'every unescaped slash is escaped, escapes are kept');
+  assert.equal(fromLegacy(state({ levels: [], plats: [], pid: 'headset' })), 'level:none dev:none app:"headset"');
+  assert.equal(fromLegacy(state({ search: 'x/y\\/z', regex: true })), '/x\\/y\\/z/', 'every unescaped slash is escaped, escapes are kept');
 });
 
 test('declared deviation: an invalid regex. Legacy matched nothing; fromLegacy refuses it, so the page keeps the last valid filter', () => {
   for (const search of ['(x', 'a"b\\', '[']) {
     const st = state({ search, regex: true });
-    assert.equal(Q.fromLegacy(st), null, search);
+    assert.equal(fromLegacy(st), null, search);
     assert.equal(CORPUS.filter(legacyFilter(st)).length, 0, `${search}: legacy showed nothing`);
     same(state({ search }), legacyFilter(state({ search })));   // the same text without .* is a plain search, equal as before
   }

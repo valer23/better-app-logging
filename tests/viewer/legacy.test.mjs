@@ -69,16 +69,16 @@ test('pageScriptSrcs lists the <script src> files in page order and skips inline
 test('a sticky document hands out one stub per id, keeps what the legacy script writes, and has a writable hidden flag', () => {
   const doc = stickyDocument();
   assert.equal(doc.getElementById('stats'), doc.getElementById('stats'));
-  assert.equal(doc.getElementById('search').value, '');
+  assert.equal(doc.getElementById('queryInput').value, '');
   assert.equal(doc.hidden, true);
   doc.hidden = false;
   assert.equal(doc.hidden, false);
   const { run } = loadLegacy([], { document: doc });
-  run('updateStats()');
+  run('queryBar.numbers()');
   assert.equal(doc.getElementById('filterCount').textContent, '0 of 0 lines');
 });
 
-test('updateStats (every flush) writes the line count and the Retained text only when they change (P4b)', () => {
+test('updateStats (every flush) writes the Retained text only when it changes, and the line count no more (P6: the query region\'s interval)', () => {
   const { run } = loadLegacy([], { document: stickyDocument() });
   const writes = run(`(() => {
     const seen = { filterCount: 0, retainedText: 0 }, get = document.getElementById;
@@ -90,7 +90,7 @@ test('updateStats (every flush) writes the line count and the Retained text only
     document.getElementById = get;
     return JSON.stringify(seen);
   })()`);
-  assert.equal(writes, '{"filterCount":2,"retainedText":2}', 'one write per change, none for a repeat');
+  assert.equal(writes, '{"filterCount":0,"retainedText":2}', 'one write per change, none for a repeat');
 });
 
 test('the page wires both window drag bands through the shell: one mousedown and one dblclick listener each', () => {
@@ -204,13 +204,19 @@ test('known gap, fixed in P11: a TXT export of Android lines does not re-import'
   assert.deepEqual(parsed, []);   // EXPORTED_TXT_RE only accepts the iOS timestamp shape
 });
 
-test('togglePlatform hides and shows one platform\'s lines and keeps the filter bar button in step (P4 sidebar rows)', () => {
+test('togglePlatform hides and shows one platform\'s lines by rewriting the query\'s dev: token (P4 sidebar rows, P6 device chips)', () => {
   const doc = stickyDocument();
   const { run } = loadLegacy([], { document: doc });
+  doc.getElementById('queryInput').value = 'level:W+';
   run('togglePlatform("ios")');
-  assert.deepEqual([run('enabledPlatforms.has("ios")'), run('enabledPlatforms.has("android")'), run('filterGen')], [false, true, 1]);
+  assert.deepEqual([doc.getElementById('queryInput').value, run('shellState().enabled.has("ios")'), run('shellState().enabled.has("android")'), run('filterGen')], ['dev:android level:W+', false, true, 1], 'a new chip token goes in front, away from the caret');
   run('togglePlatform("ios")');
-  assert.deepEqual([run('enabledPlatforms.has("ios")'), run('filterGen')], [true, 2]);
+  assert.deepEqual([doc.getElementById('queryInput').value, run('shellState().enabled.size'), run('filterGen')], ['level:W+', 2, 2]);
+  doc.getElementById('queryInput').value = 'tg:x';
+  run('queryBar.apply()');
+  run('togglePlatform("ios")');
+  assert.deepEqual([doc.getElementById('queryInput').value, doc.getElementById('queryError').hidden, run('shellState().enabled.size'), run('filterGen')], ['dev:android level:W+', true, 1, 3],
+    'an invalid edit in the bar is dropped: the sidebar row still toggles the platform (parity: platform toggles)');
 });
 
 const LOG = '{"type":"log","ts":"2026 Oct 14 15:53:43","pid":1,"tid":0,"lvl":"INFO","tag":"t","app":"","msg":"m"}';
@@ -305,14 +311,15 @@ const settle = () => new Promise(r => setImmediate(r));
 test('shellState has the shape the shell reads: live, status, devices, driverMissing, lines, dropped and enabled', () => {
   const { run } = loadLegacy([], { document: stickyDocument() });
   const st = run('shellState()');
-  assert.deepEqual(Object.keys(st).sort(), ['buffered', 'cleared', 'cur', 'devices', 'driverMissing', 'dropped', 'enabled', 'gridShown', 'levels', 'lines', 'live', 'maxRetained', 'noDevice', 'paused', 'query', 'sessions', 'stale', 'status', 'tag']);
+  assert.deepEqual(Object.keys(st).sort(), ['buffered', 'cleared', 'cur', 'devices', 'driverMissing', 'dropped', 'enabled', 'filter', 'gridShown', 'levels', 'lines', 'live', 'maxRetained', 'noDevice', 'paused', 'query', 'sessions', 'stale', 'status', 'tag']);
   assert.deepEqual([st.cur === run('liveSession'), st.sessions[0] === run('liveSession'), st.sessions[1] === run('fileSession')], [true, true, true]);
   assert.equal(st.dropped, run('liveSession.dropped'), 'the same object, so a drop shows without a copy');
   assert.equal(st.lines, run('wsLines'));
   assert.equal(st.noDevice, run('noDevice'));
   assert.equal(st.devices, run('deviceInfo'));
   assert.equal(st.status, run('liveStatus'));
-  assert.equal(st.enabled, run('enabledPlatforms'));
+  assert.equal(st.enabled, run('PLAT_SETS[3]'), 'both platforms: the shared set');
+  assert.equal(st.filter, run('activeQuery'));
   assert.deepEqual(JSON.parse(JSON.stringify(st.live)), { android: false, ios: false });
   assert.equal(st.driverMissing, false);
   run('androidLive = true; iosLive = true');
