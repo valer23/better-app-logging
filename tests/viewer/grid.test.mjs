@@ -429,10 +429,10 @@ test('stream keys: End and ⌘↓ go to the newest line, Home and ⌘↑ to the 
   assert.deepEqual(calls.map(c => c[0]), ['jumpToEnd', 'jumpToEnd', 'jumpToEnd', 'jumpToOldest', 'jumpToOldest']);
 });
 
-test('stream keys: End and Home wait while the grid is hidden or a legacy modal is over it (the setup guide scrolls with them)', () => {
+test('stream keys: End and Home wait while the grid is hidden', () => {
   const { p, st, calls } = gridPage();
   const end = () => ({ key: 'End', code: 'End', preventDefault() {} });
-  st.gridShown = false;   // the device cards, the dropzone or the loading view; or #setupModal / #stallModal open
+  st.gridShown = false;   // the device cards, the dropzone or the loading view
   assert.equal(p.keys.dispatch(end(), p.doc.body), null, 'the key stays the page\'s: no preventDefault, no jump');
   assert.equal(press(p, p.doc.body, 'Home'), null);
   assert.equal(press(p, null, 'ArrowDown', { metaKey: true }), null);
@@ -458,10 +458,10 @@ test('stream keys: Space pauses and F toggles Follow only with the grid focused,
   assert.deepEqual(calls.map(c => c[0]), ['togglePause', 'toggleAutoScroll']);
 });
 
-test('stream keys: Space and F wait while a legacy modal covers the grid (the stall or setup sheet leaves focus on the table), review F4', () => {
+test('stream keys: Space, F, End and Home wait while the grid is hidden or a legacy modal is open (the stall or setup sheet leaves focus on the table), review F4', () => {
   const { p, st, calls } = gridPage();
   const t = p.byId.logTableEl;
-  st.gridShown = false;   // #stallModal / #setupModal open over the grid, or the grid hidden
+  st.gridShown = false;   // the grid hidden: the device cards, the dropzone or loading
   assert.equal(press(p, t, ' ', { code: 'Space' }), null, 'Space does not pause the stream behind the sheet');
   assert.equal(press(p, t, 'f', { code: 'KeyF' }), null, 'F does not flip Follow unseen');
   assert.deepEqual(calls, []);
@@ -469,6 +469,21 @@ test('stream keys: Space and F wait while a legacy modal covers the grid (the st
   assert.equal(press(p, t, ' ', { code: 'Space' }), 'stream.pause');
   assert.equal(press(p, t, 'f', { code: 'KeyF' }), 'stream.follow');
   assert.deepEqual(calls.map(c => c[0]), ['togglePause', 'toggleAutoScroll']);
+  // A legacy modal over a shown grid: the page's one modal check (keys.setModalCheck) blocks all four, gridShown stays true.
+  calls.length = 0;
+  let open = true;
+  p.keys.setModalCheck(() => open);
+  assert.equal(press(p, t, ' ', { code: 'Space' }), null, 'Space does not pause behind the sheet');
+  assert.equal(press(p, t, 'f', { code: 'KeyF' }), null, 'F does not flip Follow behind the sheet');
+  assert.equal(press(p, t, 'End'), null, 'End does not scroll the sheet\'s page');
+  assert.equal(press(p, t, 'Home'), null);
+  assert.deepEqual(calls, []);
+  open = false;
+  assert.equal(press(p, t, ' ', { code: 'Space' }), 'stream.pause');
+  assert.equal(press(p, t, 'f', { code: 'KeyF' }), 'stream.follow');
+  assert.equal(press(p, t, 'End'), 'stream.latest');
+  assert.equal(press(p, t, 'Home'), 'stream.oldest');
+  assert.deepEqual(calls.map(c => c[0]), ['togglePause', 'toggleAutoScroll', 'jumpToEnd', 'jumpToOldest']);
 });
 
 test('stream keys: Pause and Follow carry aria-keyshortcuts and show their key in the toolbar kbd', () => {

@@ -146,9 +146,9 @@
     // line and Home / ⌘↑ go to the oldest retained line, from anywhere but a text field or a control that owns the
     // key; Space† pauses and F† toggles Follow while the grid has focus, on the live session only. ----
     const onLive = () => state().cur.kind === 'live';
-    // All four wait while the grid is hidden (the device cards, the dropzone, loading) or a legacy modal is over it:
-    // keys.setModal does not cover the setup guide or the stall modal, which leave focus on the table (Space and F
-    // would pause or flip Follow behind the sheet, unseen) and scroll with End and Home.
+    // `shown` covers only a hidden grid (the device cards, the dropzone, loading): all four wait then. A legacy modal
+    // (the setup guide, the stall modal) is not this check's job: it blocks every key in one place, the page's
+    // keys.setModalCheck, so Space and F never pause or flip Follow behind a sheet and End and Home never scroll it.
     const shown = () => !!state().gridShown;
     keys.register({ id: 'stream.latest', keys: ['End', 'Mod+ArrowDown'], when: shown, run: () => actions.jumpToEnd() });
     keys.register({ id: 'stream.oldest', keys: ['Home', 'Mod+ArrowUp'], when: shown, run: () => actions.jumpToOldest() });
