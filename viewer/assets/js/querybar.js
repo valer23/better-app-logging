@@ -126,7 +126,7 @@
       return { b, count };
     });
     const devices = DEVICES.map(([p, , badge, cls]) => {
-      const name = dom.el('span', { class: 'dev-name' });
+      const name = dom.el('span', { class: 'chip-dev-name' });
       const b = dom.el('button', { type: 'button', class: 'chip dev', 'aria-pressed': 'true' }, dom.el('span', { class: cls, 'aria-hidden': 'true', text: badge }), name);
       b.addEventListener('click', () => toggleDevice(p));
       $('deviceChips').appendChild(b);

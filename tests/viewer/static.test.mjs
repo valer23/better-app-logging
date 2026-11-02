@@ -1026,7 +1026,7 @@ test('the device chips give way before the token chips, and a token chip keeps a
   assert.equal(queryDecl('#tokenChips', 'flex'), '0 1 auto');
   assert.equal(queryDecl('.chip.dev', 'min-width'), 'calc(var(--badge) + 24px)', '8 + 8 px padding, 2 px border, 6 px gap, the badge');
   assert.equal(queryDecl('#deviceChips', 'min-width'), 'calc(2 * (var(--badge) + 24px) + 4px)', 'two device chips and the group gap');
-  assert.equal(queryDecl('.dev-name', 'min-width'), '0', 'its ellipsis takes effect early');
+  assert.equal(queryDecl('.chip-dev-name', 'min-width'), '0', 'its ellipsis takes effect early');
   // The token group, its single-token box and every token chip (incl. "N filters") share the floor: nothing narrower can hide the ×.
   for (const sel of ['#tokenChips', '#tokenOne', '.chip.token']) assert.equal(queryDecl(sel, 'min-width'), 'var(--tok-floor)', `${sel} keeps the floor`);
   assert.equal(queryDecl('#tokenOne:empty', 'display'), 'none', 'with 2+ tokens the empty box must not reserve the floor');

@@ -38,7 +38,7 @@
   #tokenMoreText { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   #tokenMore .icon { flex: none; }
   .chip-group[hidden], .chip-row .divider-v[hidden] { display: none; }
-  .dev-name { min-width: 0; max-width: 16ch; overflow: hidden; text-overflow: ellipsis; }
+  .chip-dev-name { min-width: 0; max-width: 16ch; overflow: hidden; text-overflow: ellipsis; }
   .chip[hidden] { display: none; }
   /* A token chip: its body (puts the caret on the token) and its 24 px × (foundation .chip-x) are two buttons. */
   .chip-body { display: inline-flex; align-items: center; gap: 4px; height: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: text; min-width: 0; overflow: hidden; }
