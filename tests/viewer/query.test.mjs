@@ -178,9 +178,9 @@ test('round trip: parse output survives serialize and parse (explicit rows, then
     assert.equal(Q.serialize(Q.parse(out).tokens), out, `idempotent: ${JSON.stringify(out)}`);
   };
   for (const text of ['/x "a\\/ "', '/x tag:"a\\/ "', '/x -tag:"\\/ \\\\" /y', 'a "b\\\\" /c "\\/ d"', 'tag:"\\\\" /z',
-    '/x tag:"a/"', '/x -app:"a/" y', '/x dev:"b/"']) same(text);
+    '/x tag:"a/"', '/x -app:"a/" y', '/x dev:"b/"', '/foo tag:"a/i"']) same(text);
   const r = rng(99);
-  const parts = ['/', ' ', '\\', '"', 'a', 'a', 'tag:', '-', '\\/ ', '\\"', '/ ', 'tag:"a/"', ' tag:"a/" '];
+  const parts = ['/', ' ', '\\', '"', 'a', 'a', 'tag:', '-', '\\/ ', '\\"', '/ ', 'tag:"a/"', ' tag:"a/" ', 'i', 'g', '/i', 'a/i', ' tag:"a/i" ', '/gi'];
   for (let n = 0; n < 20000; n++) {
     const text = Array.from({ length: 1 + r(14) }, () => parts[r(parts.length)]).join('');
     if (Q.parse(text).errors.length === 0) same(text);

@@ -181,10 +181,12 @@
   // quote. Any other backslash is written as it is, so '\/ ' inside a value stays '\/ ' and the regexEnd scan, which skips
   // the character after a backslash, sees the same pairs the parser did.
   const escQ = v => v.replace(/"|\\(?=["\\]|$)/g, '\\$&');
-  // A value ending in '/' is quoted too: unquoted, that '/' could close a leading '/word' regex when the text is re-parsed.
-  const quoteIf = v => (/[\s"]/.test(v) || v === '' || v.endsWith('/') ? `"${escQ(v)}"` : v);
+  // A value ending in '/', or in '/' plus one to three of g, i, m, is quoted too: unquoted, that '/' (with its flags) could close a
+  // leading '/word' as a flagged regex when the text is re-parsed.
+  const quoteIf = v => (/[\s"]/.test(v) || v === '' || v.endsWith('/') || /\/[gim]{1,3}$/.test(v) ? `"${escQ(v)}"` : v);
   // serialize(tokens) → the canonical text: one space between tokens, keys in lower case, a value quoted only when it
-  // is empty, holds whitespace or a quote, or ends in '/'. parse(serialize(tokens)) gives the same tokens (ranges aside).
+  // is empty, holds whitespace or a quote, ends in '/', or ends in '/' and 1-3 of g, i, m (a regex's close and its flags).
+  // parse(serialize(tokens)) gives the same tokens (ranges aside).
   function serialize(tokens) {
     return tokens.map(t => {
       const body = t.k === 'word' ? t.v : t.k === 'phrase' ? `"${escQ(t.v)}"` : t.k === 'regex' ? `/${t.v}/` : `${t.k}:${quoteIf(t.v)}`;
