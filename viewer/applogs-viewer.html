@@ -680,7 +680,6 @@ function selectSession(next) {
   }
   const live = next.kind === 'live';
   shellSync();
-  if (queryBar) queryBar.numbers();   // the shown session's numbers at once (shellSync leaves them to the 250 ms interval)
   ['autoScrollBtn','pauseBtn'].forEach(id => document.getElementById(id).style.display = live ? '' : 'none');
   document.getElementById('clearBtn').style.display = '';   // Clear empties the session on screen; on File it brings the dropzone back
   if (live) {

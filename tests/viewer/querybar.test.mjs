@@ -445,7 +445,7 @@ test('a sync (the shell\'s, a dropped frame\'s) writes no number: the 250 ms int
   let writes = 0;
   let text = count.textContent;
   Object.defineProperty(count, 'textContent', { get: () => text, set(v) { writes++; text = v; } });
-  st.cur = { counts: { lvl: [3, 0, 0, 0, 0, 0] }, filtered: new Array(3), all: new Array(9) };
+  Object.assign(st.cur, { counts: { lvl: [3, 0, 0, 0, 0, 0] }, filtered: new Array(3), all: new Array(9) });   // the same session grows: no switch
   bar.sync();
   bar.sync();
   assert.equal(writes, 0, 'shellSync runs at WS-frame rate: it leaves the numbers to the interval');
@@ -455,4 +455,20 @@ test('a sync (the shell\'s, a dropped frame\'s) writes no number: the 250 ms int
   type('a');
   p.advance(100);
   assert.deepEqual([writes, text], [2, '2 of 9 lines'], 'a filter change shows its result at once, not on the next tick');
+});
+
+test('sync() writes the numbers at once only when the shown session changed (selectSession stays untouched; sync notices the switch)', () => {
+  const { $, st, bar } = barPage();
+  const count = $('filterCount');
+  let writes = 0;
+  let text = count.textContent;
+  Object.defineProperty(count, 'textContent', { get: () => text, set(v) { writes++; text = v; } });
+  bar.sync();
+  assert.equal(writes, 0, 'same cur: no number');
+  const other = { counts: { lvl: [4, 0, 0, 0, 0, 0] }, filtered: new Array(4), all: new Array(7) };
+  st.cur = other;
+  bar.sync();
+  assert.deepEqual([writes, text], [1, '4 of 7 lines'], 'another cur: its numbers at once');
+  bar.sync();
+  assert.equal(writes, 1, 'and only once for that switch');
 });

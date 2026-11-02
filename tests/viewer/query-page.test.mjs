@@ -212,7 +212,7 @@ test('a {type:"dropped"} frame runs shellSync but writes no visible number: the 
   assert.equal(count.textContent, '15 of 15 lines', 'the interval\'s write shows them');
 });
 
-test('a session switch shows the shown session\'s numbers at once (selectSession asks for them: shellSync no longer writes any)', () => {
+test('a session switch shows the shown session\'s numbers at once (selectSession no longer asks for them: queryBar.sync notices the switch)', () => {
   const v = boot();
   v.send(10); v.api.flushBatch();
   v.run('queryBar.numbers()');

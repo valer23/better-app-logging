@@ -217,9 +217,16 @@
       setAttr(regexBtn, 'aria-pressed', String(rx));
       syncBar();
     }
-    // shellSync (the shell's tick, a dropped frame, a device pick, a session switch): the chips and the bar only. The numbers are the 250 ms
-    // interval's, and apply() and selectSession ask for them at once on a filter or session change (spec "Performance": at most 4 writes a second).
-    const sync = syncChips;
+    // shellSync (the shell's tick, a dropped frame, a device pick, a session switch): the chips and the bar, and no number, except when the
+    // shown session is another one than the last sync saw: that switch writes the new session's numbers at once. Otherwise the numbers are the
+    // 250 ms interval's, and apply() asks for them at once on a filter change (spec "Performance": at most 4 writes a second). selectSession
+    // stays untouched (the drain functions are byte-identical to P6a): sync() is how the query bar notices the switch.
+    let shownSession = state().cur;
+    function sync() {
+      syncChips();
+      const c = state().cur;
+      if (c !== shownSession) { shownSession = c; numbers(); }
+    }
     win.setInterval(() => { if (!doc.hidden) numbers(); }, NUMBERS_MS);
     shell.onTick(syncChips);
 
