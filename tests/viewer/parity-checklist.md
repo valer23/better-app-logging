@@ -13,17 +13,17 @@ the PR body says which part landed. P16 requires every box ticked, except rows b
 - [ ] **Zoom A− / A / A+ (8–20 px), ⌘ +/−/0, persisted** → Toolbar group "A− 13 px A+", ⌘= / ⌘− / ⌘0, Settings → Appearance slider (10–20 px, persisted). Interface size S/M/L added. _(P1 (store, 10–20 px), P4, P14)_
 - [ ] **Theme switch light/dark, persisted** → Settings → Appearance (Light / Dark / System), sidebar footer cycle, ⇧⌘L, onboarding step 3, palette "Toggle theme" _(P1 (three-state store), P4, P13, P14, P15)_
 - [ ] **Liquid Glass switch (macOS)** → Settings → Appearance → Material Solid / Glass, and onboarding step 3. Not in the main toolbar. _(P1 (material store), P4 (interim home so Glass / Solid stays reachable, e.g. the More menu; the legacy switch goes away in P4), P14, P15)_
-- [ ] **Message search** → Query bar bare words and `"phrase"` _(P6)_
+- [x] **Message search** → Query bar bare words and `"phrase"` _(P6)_
 - [ ] **Case-sensitive (Aa)** → Query bar "Aa" (⌥C) _(P6, P13)_
 - [ ] **Regex (.*)** → Query bar ".*" (⌥R) and `/regex/` tokens _(P6, P13)_
 - [ ] **Tag/Process field** → `tag:` tokens and chips, autocomplete with counts, drawer "Only / Hide tag", T and X keys _(P6, P7, P9, P13)_
 - [ ] **PID/App field** → `app:` and `pid:` tokens, drawer "Only this app" and PID only/hide, P key _(P6, P9, P13)_
 - [ ] **Level toggles V D I W E A** → Level chips V D I W E **F** (= Fatal / Assert) with live counts, `level:`, ⌥ letter _(P6, P13)_
-- [ ] **Platform toggles Android / iOS** → Device chips (per device, with platform badge), `plat:` / `dev:` tokens, sidebar device row and status bar device button _(P6)_
+- [x] **Platform toggles Android / iOS** → Device chips (per device, with platform badge), `plat:` / `dev:` tokens, sidebar device row and status bar device button _(P6)_
 - [ ] **Auto-scroll toggle** → Toolbar Follow toggle (End); turns off on scroll-up and selection _(P5)_
 - [x] **Pause / Resume** → Toolbar Pause (Space), "Paused · N buffered" badge, Resume pill _(P4, P5)_
 - [ ] **Clear** → Toolbar far-right Clear (⌘⌫) with a 10 s Undo; "New session" in More _(P4, P12)_
-- [ ] **Stats "332 / 332 lines" + discarded notes** → Chip row "47 106 of 48 310 lines", status bar "Retained 48 310 of 500 000", buffer-full pill text, export notes _(P4, P6)_
+- [x] **Stats "332 / 332 lines" + discarded notes** → Chip row "47 106 of 48 310 lines", status bar "Retained 48 310 of 500 000", buffer-full pill text, export notes _(P4, P6)_
 - [ ] **Export menu (Plain text / CSV / JSON, Filtered / All, warning note)** → Toolbar Export menu with the same formats and captions, scopes Filtered / All / Around marker / Selection, the same gap and discard notes; defaults in Settings → Export _(P3 (portal), P11, P14)_
 - [ ] **Android card + iOS card status pill** → Sidebar device rows (always visible) and Devices cards with status badges _(P4, P8)_
 - [ ] **Status pill Error / bridge `error` frames (non-stall)** → Device card: err badge "Error" with the frame text and a primary "Try again"; sidebar row "Error"; an err toast on the first occurrence. Until `/devices/*` reports tool errors, show only frames received on the WebSocket. _(P8)_
