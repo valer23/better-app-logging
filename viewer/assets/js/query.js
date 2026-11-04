@@ -405,20 +405,24 @@
   //   a pause, and three windows in a row hold three: window-level confirmation cannot remove load. A call that reads over
   //   GAP (GAP_MS, or two steps of a coarse clock) is run again, up to RETRIES times, and counts at its cheapest: a pause
   //   rarely hits the same call twice, a slow regex is slow every time. So the load drops out of each timing, refusals
-  //   included, with no window repeated.
+  //   included, with no window repeated. Only a reading within a plausible pause (PAUSE_MS, or GAP when larger) is run
+  //   again: a call that reads more is slow, not paused, and counts once.
   // - A coarse clock (WebKit's may step 1 ms): a timing lasts TICK_MS or four steps, whichever is longer, and counts one
   //   step less than it read, so its error leans toward accepting (up to 4/3 of a threshold), not toward refusing.
-  // - Worst line: the session's longest line, repeated to at least MIN_LEN chars, timed on prefixes doubling from START.
-  //   It accepts early once even a degree-4 growth from there stays under LINE_MS. Otherwise it reads the degree from each
-  //   doubling (1 below NOISE_MS, at most 4), never runs a step it predicts over STEP_MS, and extrapolates to the full
-  //   length: over LINE_MS is refused.
+  // - Worst line: the session's longest line, repeated to at least MIN_LEN chars, timed on prefixes doubling from START (8
+  //   chars; the first doubling is predicted as degree 4). It accepts early once even a degree-4 growth from there stays under
+  //   LINE_MS. Otherwise it reads the degree from each doubling (1 below NOISE_MS, at most 4), never runs a step it predicts
+  //   over STEP_MS, and extrapolates to the full length: over LINE_MS is refused.
   // - Mean: SAMPLE evenly spaced lines, timed call by call. It stops at TICK_MS of timed calls, or as soon as the running
   //   mean is over MEAN_US (after TICK_MS), or the probe's own time is over MEAN_BUDGET_MS. Over MEAN_US a line is
   //   refused (what the drain can afford at 27k lines/s). The mean times this session's lines over TOTAL_MS is refused:
   //   that is the refilter this apply would run, and TOTAL_MS is the longest freeze a filter change may cost (Decision D4).
+  //   A sample line longer than PREFIX chars is projected on its own prefixes first (the worst-line rule, up to PREFIX chars,
+  //   extrapolated to its length): one predicted over LINE_MS is refused without running it whole.
   // - The probe stops at APPLY_MS per call, counted as the sum of the timings it keeps (the cheapest of each call's
   //   retries), so a load pause does not spend it: the term it reaches past that is refused. A wall-clock stop at
-  //   4 × APPLY_MS bounds the worst wait; past it the remaining terms are refused with the same copy.
+  //   4 × APPLY_MS bounds the worst wait: it is checked after every call, inside each timing and the mean, and the probe is
+  //   refused with the same copy as soon as it is passed.
   // Once per filter change, never per line, per flush or per row. Not a linear engine (P16).
   // BOUNDED_LOG2_MAX: a group repeated {n} or {n,m} times with overlapping alternatives is refused when ub * log2(k) >= 8, that
   // is when k^ub >= 256 paths (ub: the upper bound, k: the number of overlapping alternatives; consecutive groups add their sums). The cost
@@ -426,8 +430,8 @@
   // (a|aa){8}z ran 5 ms on 'a'x1024. Two alternatives keep a cut-off of 8, three start at 6, four at 4: (a|aa){40}z took 41 s
   // on 40 a's, (\w|\d|[0-9a-f]){15}x 8.7 s on 17 digits. Legit bounded repeats (\d{1,3}, (ab|cd){2,20}) have no overlapping
   // alternatives and are untouched. A heuristic, not a linear engine.
-  const GUARD = Object.freeze({ BOUNDED_LOG2_MAX: 8, LINE_MS: 20, MEAN_US: 5, TOTAL_MS: 2000, STEP_MS: 8, SAMPLE: 256, MIN_LEN: 1024, START: 32,
-    TICK_MS: 2, NOISE_MS: 0.02, GAP_MS: 0.25, RETRIES: 2, MEAN_BUDGET_MS: 30, APPLY_MS: 100, MAX_CALLS: 100000 });
+  const GUARD = Object.freeze({ BOUNDED_LOG2_MAX: 8, LINE_MS: 20, MEAN_US: 5, TOTAL_MS: 2000, STEP_MS: 8, SAMPLE: 256, MIN_LEN: 1024, START: 8, PREFIX: 256,
+    TICK_MS: 2, NOISE_MS: 0.02, GAP_MS: 0.25, PAUSE_MS: 10, RETRIES: 2, MEAN_BUDGET_MS: 30, APPLY_MS: 100, MAX_CALLS: 100000 });
   const SYNTH = 'D/BluetoothGatt( 1234): onClientConnectionState() status=0 clientIf=7 device=DE:AD:BE:EF:00:42 mtu 517 handle 0x002a '
     + 'payload {"id": 42, "name": "left bud", "rssi": -61, "path": "/data/user/0/com.example.headset/files/log.txt"} '
     + 'took 12 ms, retry 3 of 5, 0123456789abcdef0123456789abcdef, uuid 6e400001-b5a3-f393-e0a9-e50e24dcca9e';
@@ -443,29 +447,62 @@
     return step;
   }
   // The cost (ms) of one re.test(s), timed from the clock read before it (`at.t`), so a run of calls loses no clock step.
-  // While it reads over `gap` (a preemption, or a slow call) it is run again, up to RETRIES times, and the cheapest counts.
+  // While it reads over `gap` it is run again, up to RETRIES times, and the cheapest counts: but only while the reading is
+  // within a plausible preemption pause (up to PAUSE_MS, or `gap` when that is larger). A reading over that is a slow call,
+  // not a pause: it is conclusive and counts once (a 500 ms call must not run three times).
   function call(re, s, now, gap, at) {
-    let best = Infinity;
-    for (let k = 0; k <= GUARD.RETRIES && best > gap; k++) { re.test(s); const t = now(); if (t - at.t < best) best = t - at.t; at.t = t; }
+    const cap = Math.max(gap, GUARD.PAUSE_MS);
+    let best = Infinity, last = 0;
+    for (let k = 0; k <= GUARD.RETRIES && best > gap && last <= cap; k++) { re.test(s); const t = now(); last = t - at.t; if (last < best) best = last; at.t = t; }
     return best;
   }
+  // The wall-clock stop (4 × APPLY_MS from the start of the probe), checked on the clock read after each call: it makes the
+  // probe's loops end, and slowRegex refuses with the same copy as the per-term check.
+  const walled = (clk, at) => clk.walled || (at.t - clk.began > 4 * GUARD.APPLY_MS && (clk.walled = true));
   // One timing (ms a call) of re.test(s): calls until `clk.tick` of their own time, at most MAX_CALLS; one clock step less
   // than read counts (a coarse clock's error leans toward accepting).
   function timeOnce(re, s, now, clk) {
     const at = { t: now() };
     let n = 0, t = 0;
-    do { const c = call(re, s, now, clk.gap, at); t += c; clk.spent += c; n++; } while (t < clk.tick && n < GUARD.MAX_CALLS);
+    do { const c = call(re, s, now, clk.gap, at); t += c; clk.spent += c; n++; } while (t < clk.tick && n < GUARD.MAX_CALLS && !walled(clk, at));
     return Math.max(0, t - clk.step) / n;
   }
+  // The ms one line of `s` is predicted to cost, or 0 when it is cheap or short: a line longer than PREFIX chars is timed on its
+  // prefixes doubling from START (single calls, each as call() times it: a pause is retried), up to PREFIX chars, and the
+  // last degree extrapolates to the whole line. As in the worst-line probe it accepts early once even a degree-4 growth to the
+  // full length stays under LINE_MS, and never runs a prefix predicted over STEP_MS (degree 4 first). The worst-line probe
+  // only saw the longest line, and a line of another shape may be arbitrarily slower.
+  function projectLine(re, s, now, clk, at) {
+    const full = s.length, top = Math.min(full, GUARD.PREFIX);
+    let len = Math.min(GUARD.START, top), t = Math.max(0, call(re, s.slice(0, len), now, clk.gap, at) - clk.step), d = 4;
+    clk.spent += t;
+    while (len < top) {
+      if (t * Math.pow(full / len, 4) <= GUARD.LINE_MS) return 0;
+      const next = Math.min(top, len * 2);
+      if (t * Math.pow(next / len, d) > GUARD.STEP_MS) break;
+      const t2 = Math.max(0, call(re, s.slice(0, next), now, clk.gap, at) - clk.step);
+      clk.spent += t2;
+      d = degree(t, t2, len, next); t = t2; len = next;
+    }
+    return t * Math.pow(full / len, d);
+  }
   // The mean cost of a line of `sample`, in µs (one clock step less than read, as timeOnce): call by call, stopping early.
+  // Each line longer than PREFIX chars is projected (projectLine) before it first runs whole, and a line predicted over LINE_MS
+  // is not run: clk.slowLine = the prediction (ms) and the mean stops there. It also stops at the wall-clock stop (clk.walled).
   function meanUs(re, sample, now, clk) {
-    const at = { t: now() }, t0 = at.t;
+    const at = { t: now() }, t0 = at.t, seen = new Set();
     let calls = 0, el = 0;
-    const lo = () => Math.max(0, el - clk.step) * 1000 / calls;
+    const lo = () => Math.max(0, el - clk.step) * 1000 / Math.max(1, calls);
     pass: for (;;) {
       for (let i = 0; i < sample.length; i++) {
+        if (sample[i].length > GUARD.PREFIX && !seen.has(i)) {
+          seen.add(i);
+          const ms = projectLine(re, sample[i], now, clk, at);
+          if (ms > GUARD.LINE_MS) { clk.slowLine = ms; break pass; }
+          if (walled(clk, at)) break pass;
+        }
         const c = call(re, sample[i], now, clk.gap, at); el += c; clk.spent += c; calls++;
-        if (at.t - t0 > GUARD.MEAN_BUDGET_MS || (el >= clk.tick && lo() > GUARD.MEAN_US)) break pass;
+        if (walled(clk, at) || at.t - t0 > GUARD.MEAN_BUDGET_MS || (el >= clk.tick && lo() > GUARD.MEAN_US)) break pass;
       }
       if (el >= clk.tick || calls >= GUARD.MAX_CALLS) break;
     }
@@ -476,7 +513,7 @@
     if (!terms.length) return null;
     const step = clockStep(now);
     if (!step) return null;
-    const clk = { step, gap: Math.max(GUARD.GAP_MS, 2 * step), tick: Math.max(GUARD.TICK_MS, 4 * step), spent: 0 };
+    const clk = { step, gap: Math.max(GUARD.GAP_MS, 2 * step), tick: Math.max(GUARD.TICK_MS, 4 * step), spent: 0, began: now(), walled: false, slowLine: 0 };
     const n = lines.length;
     let longest = '';
     for (let i = 0; i < n; i++) { const s = msgOf(lines[i]); if (s.length > longest.length) longest = s; }
@@ -490,20 +527,27 @@
       const reason = `${cause}. ${next}`;
       return { start: r.start, end: r.end, cause, reason, msg: `Invalid regex: ${reason}. The last valid filter is still applied.` };
     };
-    const began = now();
+    const wall = r => refuse(r, `Its regex terms take over ${GUARD.APPLY_MS} ms to check on these lines`, 'Use fewer regex terms');
     for (const r of terms) {
-      if (clk.spent > GUARD.APPLY_MS || now() - began > 4 * GUARD.APPLY_MS) return refuse(r, `Its regex terms take over ${GUARD.APPLY_MS} ms to check on these lines`, 'Use fewer regex terms');
-      let len = Math.min(GUARD.START, L), t = timeOnce(r.re, long.slice(0, len), now, clk), d = 1, early = false;
+      if (clk.spent > GUARD.APPLY_MS || clk.walled || now() - clk.began > 4 * GUARD.APPLY_MS) return wall(r);
+      // 8 chars first, and the first doubling is predicted as degree 4: nothing is known of the growth yet, and a first timing on
+      // more chars can itself cost seconds (\w*\w*\w*\w*\w*\w*\w*\w*z: about 5 s on 32 chars).
+      let len = Math.min(GUARD.START, L), t = timeOnce(r.re, long.slice(0, len), now, clk), d = 4, early = false;
       while (len < L) {
+        if (clk.walled) return wall(r);
         if (t * Math.pow(L / len, 4) <= GUARD.LINE_MS) { early = true; break; }   // even quartic growth stays under LINE_MS
         const next = Math.min(L, len * 2);
         if (t * Math.pow(next / len, d) > GUARD.STEP_MS) break;                  // never run a step predicted over STEP_MS
         const t2 = timeOnce(r.re, long.slice(0, next), now, clk);
         d = degree(t, t2, len, next); t = t2; len = next;
       }
+      if (clk.walled) return wall(r);
       const ms = early ? 0 : t * Math.pow(L / len, d);
       if (ms > GUARD.LINE_MS) return refuse(r, `It would take about ${group(ms)} ms on one of these lines and can freeze the viewer`);
+      clk.slowLine = 0;
       const us = meanUs(r.re, sample, now, clk);
+      if (clk.walled) return wall(r);
+      if (clk.slowLine > GUARD.LINE_MS) return refuse(r, `It would take about ${group(clk.slowLine)} ms on one of these lines and can freeze the viewer`);
       if (us > GUARD.MEAN_US) return refuse(r, `It takes about ${us.toFixed(1)} µs a line, over the ${GUARD.MEAN_US} µs a line the viewer allows`);
       const total = us * n / 1000;
       if (total > GUARD.TOTAL_MS) return refuse(r, `It would take about ${(total / 1000).toFixed(1)} s to filter these ${group(n)} lines`);
@@ -609,8 +653,13 @@
         // keeps the pattern as typed. Anchored (^.*x) and .+ are different patterns and stay.
         const bare = isRe ? src.replace(/^(?:\.\*\??)+/, '') : src;
         const test = bare === src ? re : new RegExp(bare, re.flags);
+        // The <mark> runs on every rendered row, and a run of leading .* (.*.*.*error) costs O(d^k) there, d the characters after
+        // the last hit (944 ms on a 1 021-char row, and the strip above hides it from slowRegex). One .* gives the same leftmost
+        // hit and is linear: a run of lazy .*? stays lazy, any greedy one makes it greedy. The rest of the pattern is as typed.
+        const lead = isRe ? /^(?:\.\*\??)+/.exec(src) : null;
+        const markSrc = lead && lead[0].length > 3 ? (/^(?:\.\*\?)+$/.test(lead[0]) ? '.*?' : '.*') + src.slice(lead[0].length) : src;
         if (isRe) regexes.push({ re: test, start: t.start, end: t.end });
-        text.push([test, t.neg, isRe, re]);
+        text.push([test, t.neg, isRe, markSrc === src ? re : new RegExp(markSrc, re.flags)]);
       }
     }
     const levels = (lvAny ? lvPos : ALL_LEVELS) & ~lvNeg;
