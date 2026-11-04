@@ -91,7 +91,8 @@
     }
     // Writes `text` into the bar and applies it at once, under the modes `o` (the ones the text was read under, else the ones now on).
     function rewrite(text, o = opts()) { mc = o.case; rx = o.regex; input.value = text; return apply(); }
-    // What a chip, row or tile fix rewrites: the bar's text when it compiles, else the last applied text (the invalid edit is dropped, so the fix always applies).
+    // What a chip, row or tile fix rewrites: the bar's text when it compiles and the page did not refuse it (the regex guard), else the shown
+    // session's applied text (cur.queryText; the invalid or refused edit is dropped, so the fix always applies).
     // The text and the modes it compiles under travel together, and the rewrite is applied under those modes: the bar's text with the modes now on, else the
     // applied text with the modes now on when it compiles under them, else the applied text with the modes it was applied under (cur.queryOpts) (.* turned on over `a(`
     // fails, the literal filter stays, and a chip on that literal must not be compiled as a regex).
