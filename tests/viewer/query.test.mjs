@@ -543,6 +543,14 @@ test('S1 (task 2c): consecutive bounded groups of overlapping alternatives add t
     assert.equal(r.q, null, re);
     assert.deepEqual([r.error.msg, r.error.start, r.error.end], [S1_MSG, 0, re.length + 2], re);
   }
+  // A repeated group inside an overlapping group (any {n}, (?:...){1} included) sits between that group and its next sibling in
+  // open order. The run is kept per parent, so the child does not reset the siblings' run: each of these sums to 7 + 7 = 14, as
+  // (a|aa){7}(a|aa){7}z does. (a|a(?:a){1}){7}(a|aa){7}z ran 1 452 ms on 'a'x200 and 2 278 ms on 'a'x400 while it was accepted.
+  for (const re of ['(a|a(?:a){1}){7}(a|aa){7}z', '(a|a(a){1}){7}(a|aa){7}z', '(a|a(?:a){2}){7}(a|aa){7}z', '(a|a(?:a){3}){7}(a|aa){7}z', '(a|aa){7}(a|a(?:a){1}){7}z']) {
+    const r = Q.build(`/${re}/`, {}, {});
+    assert.equal(r.q, null, re);
+    assert.deepEqual([r.error.msg, r.error.start, r.error.end], [S1_MSG, 0, re.length + 2], re);
+  }
   // 4 + 3 = 7 passes; a sibling without overlap adds nothing; a plain term (not a repeated group) between two groups ends the run;
   // so does the end of an alternative.
   for (const re of ['(a|aa){4}(a|aa){3}z', '(a|aa){7}(b|c){9}z', '(a|aa){7}x(a|aa){7}z', '(a|aa){7}|(a|aa){7}']) assert.equal(Q.build(`/${re}/`, {}, {}).error, null, re);

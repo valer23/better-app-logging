@@ -351,8 +351,9 @@
     // plain cut-off for a lone alternative that can match ''), summed over the consecutive groups that start where the one before
     // ends (a plain term between two groups ends the run; a repeated group without overlap does not, it may match the same
     // characters: (a|aa){4}(a|b){2}(a|aa){4}z). The sum is compared with BOUNDED_LOG2_MAX. A group is judged as soon as its own
-    // cost, or the run it is in, reaches it.
-    let run = 0, runEnd = -1;
+    // cost, or the run it is in, reaches it. The run is kept per enclosing group (runs: parent index -> { sum, end }), so a repeated
+    // group inside an overlapping group does not end the run of that group's siblings: (a|a(?:a){1}){7}(a|aa){7}z is 7 + 7.
+    const runs = new Map();
     for (const g of groups) {
       if (g.i < 0 || !g.ub) continue;
       // The repeats around the group multiply its bound: ((a|aa){8}){8} is (a|aa){64}. An enclosing group repeated without
@@ -364,8 +365,9 @@
       }
       const alts = alternatives(src, g.b, g.i);
       const cost = ub * Math.log2(Math.max(2, alts.length));
-      if (g.o !== runEnd) run = 0;
-      runEnd = g.e;
+      let r = runs.get(g.up);
+      if (!r || g.o !== r.end) runs.set(g.up, r = { sum: 0, end: -1 });
+      r.end = g.e;
       if (!alpha) alpha = alphaOf(src);
       let overlap = false;
       for (let x = 0; x < alts.length && !overlap; x++) {
@@ -373,8 +375,8 @@
         for (let y = x + 1; y < alts.length && !overlap; y++) if (ambiguous(atom, alts[x], alts[y])) overlap = true;
       }
       if (!overlap) continue;
-      run += cost;
-      if (run >= GUARD.BOUNDED_LOG2_MAX) return true;
+      r.sum += cost;
+      if (r.sum >= GUARD.BOUNDED_LOG2_MAX) return true;
     }
     return false;
   }
