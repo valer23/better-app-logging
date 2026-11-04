@@ -192,7 +192,8 @@ test('the no-match tile\'s tag causes come from the tag counts: NOT tag:x on eve
   v.send(8); v.api.flushBatch();             // tags bt_stack, BluetoothGatt, chatty, kernel, twice each
   const causes = text => { v.run(`setQuery(${JSON.stringify(text)})`); return [v.run('shellState().notTag'), v.run('shellState().tag')]; };
   assert.deepEqual(causes('tag:zzz'), ['', 'zzz'], 'no retained line matches tag:zzz');
-  assert.deepEqual(causes('tag:zzz tag:kernel'), ['', ''], 'kernel lines exist: the tag is not why nothing shows');
+  assert.deepEqual(causes('tag:zzz tag:kernel level:none'), ['', ''], 'kernel lines exist: the tag is not why nothing shows (the levels are)');
+  assert.deepEqual(causes('tag:zzz tag:yyy'), ['', 'zzz'], 'no retained line carries either positive tag: the first is named');
   assert.deepEqual(causes('tag:kernel level:none'), ['', ''], 'the levels are the cause');
   v.run("liveSession.all.forEach(m => { m.tag = 'chatty'; }); ALV.counts.recount(liveSession.counts, liveSession.all, liveSession.query.gate)");
   assert.deepEqual(causes('-tag:chatty'), ['chatty', ''], 'every retained line carries it');
@@ -380,4 +381,29 @@ test('dev:<name> on a background session: the recompile makes it stale, it refil
   v.run('__n = 0; __rf = refilterSession; refilterSession = s => { __n++; return __rf(s); }');
   v.api.selectSession(v.run('liveSession'));
   assert.deepEqual([v.run('__n'), v.run('liveSession.filtered.length')], [1, 0]);
+});
+
+const countTagCause = v => v.run('__tc = 0; __t = ALV.query.tagCause; ALV.query = Object.assign({}, ALV.query, { tagCause: (...a) => { __tc++; return __t(...a); } })');
+
+test('F7: one shellState() computes the tag causes once for notTag and tag; a new state object computes them again', () => {
+  const v = boot();
+  v.send(12); v.api.flushBatch();
+  v.bar('tag:zzz');
+  countTagCause(v);
+  v.run('__st = shellState(); __st.notTag; __st.tag; __st.notTag');
+  assert.equal(v.run('__tc'), 1);
+  assert.equal(v.run('__st.tag'), 'zzz');
+  v.run('shellState().tag');
+  assert.equal(v.run('__tc'), 2);
+});
+
+test('F7 stale guard: while the shown session is stale (a file loaded, not rendered) the causes are empty and tagCause is never asked', () => {
+  const v = boot();
+  v.api.selectSession(v.run('fileSession'));
+  v.bar('tag:zzz');
+  v.run(`resetLines(fileSession, [${JSON.stringify(fileLine({ tag: 'kernel' }))}]); fileSession.query = null`);
+  countTagCause(v);
+  assert.deepEqual([v.run('shellState().notTag'), v.run('shellState().tag'), v.run('__tc')], ['', '', 0]);
+  v.run('applyFilters()');
+  assert.deepEqual([v.run('shellState().tag'), v.run('__tc')], ['zzz', 1], 'from the File session\'s own counts once it is current');
 });

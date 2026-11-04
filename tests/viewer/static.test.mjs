@@ -1047,3 +1047,10 @@ test('P7a: no global query state is left; every session owns its query', () => {
     assert.doesNotMatch(read(path.join(ASSETS, 'js', f)), /\b(filterGen|activeQuery)\b/, f);
   assert.match(read(path.join(ASSETS, 'js', 'session.js')), /query: null,[^\n]*\n\s*filter: null,[^\n]*\n\s*queryText: '',[^\n]*\n\s*queryOpts: null,/);
 });
+
+test('NO_TAG_CAUSE is declared before the shell, the grid and the query bar are created (no TDZ if one reads a cause while it is built)', () => {
+  const page = read(HTML_PATH);
+  const decl = page.indexOf('const NO_TAG_CAUSE');
+  for (const call of ['shell = ALV.createShell(', 'grid = ALV.createGrid(', 'queryBar = ALV.createQueryBar('])
+    assert.ok(decl >= 0 && decl < page.indexOf(call), call);
+});

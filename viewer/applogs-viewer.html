@@ -940,6 +940,10 @@ document.getElementById('logTable').addEventListener('click', e => {
 // fires (it would act on the page behind the sheet: scroll it with End and Home, pause it with Space, open a menu over it).
 ALV.keys.setModalCheck(() => !!document.querySelector('.modal-overlay.visible'));
 
+// No tag cause (tagCauses below). Declared before the shell, the grid and the query bar are created, so none of them can
+// reach it in its temporal dead zone while it is built.
+const NO_TAG_CAUSE = Object.freeze({ notTag: '', tag: '' });
+
 // ── App shell (assets/js/shell.js): the sidebar and the window drag bands ──
 // The shell reads the page only through shellState() and acts only through these functions.
 shell = ALV.createShell({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, keys: ALV.keys, prefs: ALV.prefs, state: shellState,
@@ -952,6 +956,7 @@ grid = ALV.createGrid({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, ke
 queryBar = ALV.createQueryBar({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, keys: ALV.keys, shell, state: shellState,
   actions: { setQuery, recompile: recompileDevNames, sync: shellSync } });
 function shellState() {
+  let causes = null;   // tagCauses() at most once per state object (F7): the tile reads notTag, then tag, on each flush
   return {
     cur, sessions: [liveSession, fileSession],
     live: { android: androidLive, ios: iosLive }, status: liveStatus, devices: deviceInfo, driverMissing: iosDriverMissing, noDevice,
@@ -968,16 +973,15 @@ function shellState() {
     // stale: the shown session's filtered list lags the filter (a file just opened, before its render): no tile yet.
     stale: cur.query !== cur.filter,
     cleared: liveClearedSeq === nextSeq, levels: LEVEL_BITS[cur.filter.levels],
-    get notTag() { return tagCauses().notTag; },
-    get tag() { return tagCauses().tag; },
+    get notTag() { return (causes || (causes = tagCauses())).notTag; },
+    get tag() { return (causes || (causes = tagCauses())).tag; },
     query: !cur.filter.chipsOnly,
   };
 }
 function shellSync() { if (shell) shell.sync(); if (liveUi) liveUi.sync(); if (grid) grid.sync(); if (queryBar) queryBar.sync(); }
 // The no-match tile's tag causes (spec "Log grid"; ALV.query.tagCause): a negated tag every retained line of the shown
 // session carries, or a tag none carries, from its tag counts (O(distinct tags), no scan of the lines). Only while it has
-// lines, none passes and its filtered list is current; otherwise none.
-const NO_TAG_CAUSE = Object.freeze({ notTag: '', tag: '' });
+// lines, none passes and its filtered list is current; otherwise none (NO_TAG_CAUSE, declared above the shell).
 function tagCauses() {
   const s = cur;
   if (s.filtered.length || !s.all.length || s.query !== s.filter) return NO_TAG_CAUSE;
