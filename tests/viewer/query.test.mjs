@@ -824,6 +824,44 @@ test('slowRegex: a call that reads 500 ms is conclusive: it runs once, not three
   assert.equal(Q.slowRegex(qOf(p.re), msgs(1000, 200), p.now), null, 'a 5 ms pause is not a slow regex');
 });
 
+test('slowRegex on a busy machine: an occasional pause of 15 to 30 ms (the p90 of a pause is 10 ms, so some are longer) refuses nothing that is linear', () => {
+  for (const pause of [15, 25, 30]) {
+    const busy = { work: 3, pause };
+    const lin = fakeClock(s => 1e-6 * s.length, 'f+', busy);
+    assert.equal(Q.slowRegex(qOf(lin.re), msgs(1000, 200), lin.now), null, `${pause} ms pauses: a linear regex is accepted`);
+    const fine = fakeClock(() => 0.002, 'f+', busy);
+    assert.equal(Q.slowRegex(qOf(fine.re), msgs(1000, 200), fine.now), null, `${pause} ms pauses: 2 µs a line is accepted`);
+    const mean = fakeClock(() => 0.008, 'f+', busy);
+    assert.match(Q.slowRegex(qOf(mean.re), msgs(1000, 200), mean.now).cause, /^It takes about 8\.\d µs a line/, `${pause} ms pauses: 8 µs a line is still refused, at its own cost`);
+    const cubic = fakeClock(s => 1e-7 * s.length ** 3, 'f+', busy);
+    assert.match(Q.slowRegex(qOf(cubic.re), msgs(10, 200), cubic.now).cause, /ms on one of these lines/, `${pause} ms pauses: a cubic cost is still refused`);
+  }
+});
+
+test('slowRegex: a pause over the 10 ms cap is retried, never extrapolated: on the first call of a timing, in the mean, and after cheaper calls of the same line', () => {
+  // The very first call (8 chars) pays 30 ms: it used to read as 30 ms at 8 chars, and (L/8)^4 of that is millions of ms.
+  let first = true;
+  const a = fakeClock(s => (first ? (first = false, 30) : 1e-6 * s.length));
+  assert.equal(Q.slowRegex(qOf(a.re), msgs(1000, 200), a.now), null, 'a 30 ms pause on the first call');
+  // One 15 ms pause inside the mean (the first sampled line).
+  const lines = msgs(1000, 100);
+  lines[1] = { msg: 'L'.repeat(300) };
+  let paused = false;
+  const b = fakeClock(s => (s[0] === 'L' ? 1e-6 * s.length : paused ? 1e-4 : (paused = true, 15)));
+  assert.equal(Q.slowRegex(qOf(b.re), lines, b.now), null, 'a 15 ms pause in the mean');
+  // An 80 ms pause (over the 100 ms a single reading is conclusive at) after cheaper calls of the same string is a pause.
+  let n = 0;
+  const c = fakeClock(s => (s.length === 8 && ++n === 3 ? 80 : 1e-6 * s.length));
+  assert.equal(Q.slowRegex(qOf(c.re), msgs(1000, 200), c.now), null, 'an 80 ms pause after cheaper calls of the same line');
+  // What stays conclusive: a first reading over 100 ms is slow, counted once; between 10 and 100 ms it runs once more and the cheaper counts.
+  const slow = fakeClock(() => 120);
+  assert.match(Q.slowRegex(qOf(slow.re), msgs(10, 200), slow.now).cause, /ms on one of these lines/);
+  assert.equal(slow.calls, 1, `${slow.calls} calls of 120 ms each`);
+  const mid = fakeClock(() => 20);
+  assert.match(Q.slowRegex(qOf(mid.re), msgs(10, 200), mid.now).cause, /ms on one of these lines/);
+  assert.equal(mid.calls, 4, `${mid.calls} calls of 20 ms each: once more, then conclusive; the refusal is confirmed by timing the prefix again (2 more)`);
+});
+
 test('slowRegex: the first timing runs 8 chars, and the first doubling is predicted as degree 4', () => {
   const c = fakeClock(s => 0.6 * (s.length / 8) ** 4);   // 0.6 ms at 8 chars; 9.6 ms at 16 if it ran
   const err = Q.slowRegex(qOf(c.re), msgs(10, 200), c.now);
@@ -831,31 +869,66 @@ test('slowRegex: the first timing runs 8 chars, and the first doubling is predic
   assert.equal(c.longest, 8, `probed up to ${c.longest} chars: 0.6 ms x 2^4 is over STEP_MS, so the 16-char step never runs`);
 });
 
-test('slowRegex: a sample line unlike the longest one is timed on its 256-char prefix first, and never run whole when that predicts a freeze', () => {
-  const lines = msgs(100, 100);
-  lines[0] = { msg: 'L'.repeat(2000) };                       // the longest line (the worst-line probe): linear
-  lines[50] = { msg: 'S' + 'x'.repeat(1199) };                // a line of another shape, in the sample: cubic
-  let wholeS = 0, prefixS = 0;
-  const c = fakeClock(s => {
-    if (s[0] !== 'S') return 1e-6 * s.length;
-    if (s.length === 256) prefixS++; else if (s.length > 256) wholeS++;
-    return 3e-8 * s.length ** 3;                              // 0.5 ms at 256 chars, 0.06 ms at 128 (degree 3): 52 ms predicted on 1 200
-  });
-  const err = Q.slowRegex(qOf(c.re), lines, c.now);
-  assert.match(err.cause, /^It would take about [\d\u2009]+ ms on one of these lines and can freeze the viewer$/, JSON.stringify(err));
-  assert.equal(err.reason, `${err.cause}. ${NEXT}`);
-  assert.ok(prefixS >= 1, 'its prefix was timed');
-  assert.equal(wholeS, 0, 'the whole line never ran');
+// A fake clock reads a step apart on a coarse browser clock (WebKit about 1 ms, Chromium 100 µs, 5 µs when isolated); 0 is the fine one.
+const STEPS = [0, 0.005, 0.1, 1];
+
+test('slowRegex: a sample line unlike the longest one is projected on its own prefixes and never run whole when that predicts a freeze (any clock step)', () => {
+  for (const step of STEPS) {
+    const lines = msgs(100, 100);
+    lines[0] = { msg: 'L'.repeat(2000) };                       // the longest line (the worst-line probe): linear
+    lines[50] = { msg: 'S' + 'x'.repeat(1199) };                // a line of another shape, in the sample: cubic
+    let whole = 0, prefix = 0;
+    const c = fakeClock(s => {
+      if (s[0] !== 'S') return 1e-6 * s.length;
+      if (s.length === 1200) whole++; else if (s.length >= 128) prefix++;
+      return 3e-8 * s.length ** 3;                              // 0.5 ms at 256 chars, 0.06 ms at 128 (degree 3): 52 ms predicted on 1 200
+    }, 'f+', { step });
+    const err = Q.slowRegex(qOf(c.re), lines, c.now);
+    assert.ok(err && /^It would take about [\d ]+ ms on one of these lines and can freeze the viewer$/.test(err.cause), `step ${step}: ${JSON.stringify(err)}`);
+    assert.equal(err.reason, `${err.cause}. ${NEXT}`);
+    assert.ok(prefix >= 1, `step ${step}: its prefixes were timed`);
+    assert.equal(whole, 0, `step ${step}: the whole line never ran`);
+  }
 });
 
-test('slowRegex: a sample line unlike the longest one that is fine on its prefix still runs whole', () => {
+test('slowRegex: a sample line whose slow part starts past char 256 is caught too: the projection grows to the whole line, never past a step predicted over STEP_MS (any clock step)', () => {
+  for (const step of STEPS) {
+    const lines = msgs(100, 100);
+    lines[0] = { msg: 'L'.repeat(2400) };
+    lines[50] = { msg: 'S' + 'x'.repeat(1499) };                // 1 500 chars; cheap up to 300, then cubic in what follows
+    let whole = 0;
+    const c = fakeClock(s => {
+      if (s[0] !== 'S') return 1e-6 * s.length;
+      if (s.length === 1500) whole++;
+      return 1e-6 * s.length + 1e-7 * Math.max(0, s.length - 300) ** 3;   // 0.95 ms at 512 chars, 173 ms on the whole 1 500
+    }, 'f+', { step });
+    const err = Q.slowRegex(qOf(c.re), lines, c.now);
+    assert.match(err && err.cause || '', /ms on one of these lines/, `step ${step}: ${JSON.stringify(err)}`);
+    assert.equal(whole, 0, `step ${step}: the whole line never ran`);
+  }
+});
+
+test('slowRegex: a sample line unlike the longest one that is fine on its prefixes still runs whole (any clock step)', () => {
+  for (const step of STEPS) {
+    const lines = msgs(100, 100);
+    lines[0] = { msg: 'L'.repeat(2000) };
+    lines[50] = { msg: 'S' + 'x'.repeat(1199) };
+    let whole = 0;
+    const c = fakeClock(s => { if (s.length === 1200) whole++; return 1e-6 * s.length; }, 'f+', { step });
+    assert.equal(Q.slowRegex(qOf(c.re), lines, c.now), null, `step ${step}`);
+    assert.ok(whole > 0, `step ${step}: the line was run whole once its prefixes were cheap`);
+  }
+});
+
+test('slowRegex: only a few of the longest distinct sample lines are projected; the rest run on their first PREFIX chars, so no line runs whole unprojected', () => {
   const lines = msgs(100, 100);
-  lines[0] = { msg: 'L'.repeat(2000) };
-  lines[50] = { msg: 'S' + 'x'.repeat(1199) };
-  let whole = 0;
-  const c = fakeClock(s => { if (s[0] === 'S' && s.length > 256) whole++; return 1e-6 * s.length; });
+  lines[0] = { msg: 'L'.repeat(3000) };                         // the longest: the worst-line probe
+  for (let i = 1; i <= 20; i++) lines[i * 4] = { msg: String.fromCharCode(64 + i) + 'x'.repeat(599 + i) };   // 20 long lines, all distinct
+  const seen = new Map();
+  const c = fakeClock(s => { if (s[0] !== 'L' && s.length > Q.GUARD.PREFIX) seen.set(s[0], Math.max(seen.get(s[0]) || 0, s.length)); return 1e-6 * s.length; });
   assert.equal(Q.slowRegex(qOf(c.re), lines, c.now), null);
-  assert.ok(whole > 0, 'the line was run whole once its prefix was cheap');
+  const whole = [...seen].filter(([ch, len]) => len >= 600).map(([ch]) => ch);
+  assert.ok(whole.length <= Q.GUARD.PROJECT, `${whole.length} long lines ran whole (${whole.join('')}), at most ${Q.GUARD.PROJECT} are projected`);
 });
 
 test('slowRegex: the 4 x APPLY_MS wall stop fires inside one term: the first timing that reads past it ends the probe', () => {
@@ -953,4 +1026,32 @@ test('slowRegex on a real clock (V8): the guard itself stays bounded on a padded
   }
   assert.ok(err, 'refused');
   assert.ok(ms < 600, `the guard took ${ms.toFixed(0)} ms`);
+});
+
+// The same guard on the clocks the webviews give (the figures in the commit message for the fine clock were taken on node's own): a
+// real regex on a real clock rounded down to a step. The padded line is NOT the longest: a whitespace-free blob is, so only the
+// worst-line probe sees the blob, and the padded line is reached by the mean (projectLine) on every clock.
+test('slowRegex on a real clock rounded to the webviews\' steps (5 µs, 100 µs, 1 ms): a padded line next to a longer blob, and a slow part past char 256, are refused with the guard under 600 ms', () => {
+  const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const blob = n => Array.from({ length: n }, (_, i) => B64[(i * 7 + (i >> 3)) % 64]).join('');
+  const normal = Array.from({ length: 100 }, (_, i) => ({ msg: `D/BluetoothGatt( ${1000 + i}): onClientConnectionState() status=${i % 3} took ${i % 97} ms` }));
+  const sessions = {
+    'padded line next to a longer blob': [{ msg: 'state dump:' + ' '.repeat(1200) + 'end' }, { msg: 'blob: ' + blob(2399) }, ...normal],
+    'slow part past char 256': [{ msg: 'dump:' + blob(300) + ' '.repeat(1200) + 'end' }, { msg: 'blob: ' + blob(2399) }, ...normal],
+  };
+  const clockOf = step => (step ? () => Math.floor(performance.now() / step) * step : () => performance.now());
+  for (const [name, lines] of Object.entries(sessions)) {
+    for (const step of [0, 0.005, 0.1, 1]) {
+      let err = null, ms = Infinity;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        const now = clockOf(step), t0 = performance.now();
+        err = Q.slowRegex(Q.build('/\\s.*.*z/', {}, {}).q, lines, now);
+        ms = performance.now() - t0;
+        console.log(`# real clock, step ${step} ms: \\s.*.*z on ${name} ${err ? 'refused' : 'accepted'} in ${ms.toFixed(0)} ms (attempt ${attempt})`);
+        if (err && ms < 600) break;
+      }
+      assert.ok(err, `${name}, step ${step}: refused`);
+      assert.ok(ms < 600, `${name}, step ${step}: the guard took ${ms.toFixed(0)} ms`);
+    }
+  }
 });
