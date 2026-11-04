@@ -465,6 +465,24 @@ test('S1: a group repeated without bound whose alternatives overlap or can be em
   assert.equal(Q.build('(\\w|\\d)+z', { regex: true }, {}).error.msg, S1_MSG, 'a word under .* is a regex term too');
 });
 
+test('S1 (task 2b): overlap is judged over every literal in the source, and under bounded repeats of 16 or more', () => {
+  // (ü|üü)+z on 'ü'x32 ran 2 065 ms; (a|aa){40}z on 'a'x40 ran 41 172 ms; (a|aa){1,100}z on 'a'x32 ran 2 513 ms.
+  for (const re of ['(ü|üü)+z', '(è|èè)+z', '(\\u00fc|\\u00fc\\u00fc)+z', '(\\xfc|\\xfc\\xfc)+z',
+    '(a|aa){40}z', '(a|aa){1,100}z', '(a|aa){16}z']) {
+    const r = Q.build(`/${re}/`, {}, {});
+    assert.equal(r.q, null, re);
+    assert.deepEqual([r.error.msg, r.error.start, r.error.end], [S1_MSG, 0, re.length + 2], re);
+  }
+});
+
+test('S1 (task 2b): legitimate bounded repeats and log regexes still build', () => {
+  // Not \d{1,3}(?:x\d{1,3}){3}: nestedQuantifier (unchanged) refuses a quantified group that holds a quantifier, as it did before.
+  for (const re of ['(a|b){40}z', '(ab|cd){2,20}x', '(a|aa){2,15}z', '(a|aa){15}z', 'gatt.*mtu', 'status=\\d+.*handle',
+    '([0-9a-f]{2}:){5}[0-9a-f]{2}']) {
+    assert.equal(Q.build(`/${re}/`, {}, {}).error, null, re);
+  }
+});
+
 test('S1 passes common log regexes', () => {
   // Not \d{1,3}(\.\d{1,3}){3}: nestedQuantifier (unchanged) already refuses a quantified group that holds a quantifier,
   // before S1 runs. S1 neither widens nor narrows that rule, so the unrolled dotted quad stands in for it.

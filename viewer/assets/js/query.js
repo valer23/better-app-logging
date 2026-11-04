@@ -234,19 +234,34 @@
   }
   // ---- The regex guard (P7a, follow-up F4) ----
   // nestedQuantifier (above) refuses exponential nesting. Two more shapes freeze a WebKit or V8 regex on one long line:
-  // (1) a group repeated without bound whose alternatives overlap (one is a prefix of another, atom by atom, under the
+  // (1) a group repeated without bound, or at least BOUNDED_MIN times, whose alternatives overlap (one is a prefix of another, atom by atom, under the
   //     term's own case flag) or can match '' ((a|aa)+, (\w|\d)+, (.|\s)*, (a|)+): exponential, so it is refused here,
-  //     before anything runs (one RegExp.test cannot be interrupted); and
+  //     before anything runs (one RegExp.test cannot be interrupted). {n} and {n,m} count by their upper bound; and
   // (2) polynomial backtracking (\s.*.*.*z, \w+\w+z, (.*){2}z, a.*a.*z): its cost depends on the lines, so slowRegex below
   //     times it on the session's own lines when a filter is applied (the page injects the clock). A leading .* is not
   //     among them: compile drops it from the regex a line is tested with (below), so .*.*.*z runs as z.
-  // Atoms are compared by the characters of ALPHA they match (exact for literals, escapes, classes and the dot; the line terminators are in ALPHA, so \n and \s overlap). A group or
-  // a quantified atom inside an alternative is not judged here; slowRegex times it.
+  // Atoms are compared by the characters they match among ALPHA plus every literal character written in the regex source
+  // (\uXXXX, \u{...} and \xXX escapes decoded; the line terminators are in ALPHA, so \n and \s overlap). That is exact for
+  // literals, escapes and the dot, and for a class whenever it shares an end point or a listed character with the other atom;
+  // a character matched by neither the source nor ALPHA is not compared. A group or a quantified atom inside an alternative
+  // is not judged here; slowRegex times it.
   const ALPHA = (() => { const a = ['\t', '\n', '\r', '\u2028', '\u2029', '\u00e9', '\u00df', '\u4e2d', '\u00a0']; for (let c = 0x20; c < 0x7f; c++) a.push(String.fromCharCode(c)); return a; })();
   const skipClass = (src, i, to) => { i++; if (src[i] === '^') i++; if (src[i] === ']') i++; while (i < to && src[i] !== ']') { if (src[i] === '\\') i++; i++; } return i; };
-  // The atom at src[i]: { end, set, opt, q } (set: the ALPHA characters it matches; opt: it can match ''; q: it has a
+  // ALPHA plus every character src writes as a literal, with \uXXXX, \u{...} and \xXX decoded (UTF-16 code units, as the
+  // regex engine reads a pattern without the u flag). Built once per overlapRepeat call.
+  function alphaOf(src) {
+    const a = new Set(ALPHA);
+    for (let i = 0; i < src.length; i++) {
+      if (src[i] !== '\\') { a.add(src[i]); continue; }
+      const rest = src.slice(i + 1, i + 12), m = /^u\{([0-9a-fA-F]{1,6})\}/.exec(rest) || /^u([0-9a-fA-F]{4})/.exec(rest) || /^x([0-9a-fA-F]{2})/.exec(rest);
+      if (m) { const cp = parseInt(m[1], 16); if (cp <= 0x10ffff) for (const u of String.fromCodePoint(cp)) a.add(u); i += m[0].length; }
+      else i++;
+    }
+    return [...a];
+  }
+  // The atom at src[i]: { end, set, opt, q } (set: the `alpha` characters it matches; opt: it can match ''; q: it has a
   // quantifier), or null for a group, an anchor or anything not judged here.
-  function atomAt(src, i, flags) {
+  function atomAt(src, i, flags, alpha) {
     const c = src[i];
     let j;
     if (c === '(' || c === '^' || c === '$' || c === '|' || c === ')') return null;
@@ -255,7 +270,7 @@
     else j = i + 1;
     let re;
     try { re = new RegExp(`^(?:${src.slice(i, j)})$`, flags); } catch (e) { return null; }
-    const set = new Set(ALPHA.filter(ch => re.test(ch)));
+    const set = new Set(alpha.filter(ch => re.test(ch)));
     let k = j, opt = false, q = false;
     if (src[k] === '?' || src[k] === '*') { opt = true; q = true; k++; }
     else if (src[k] === '+') { q = true; k++; }
@@ -276,15 +291,15 @@
     return out;
   }
   // Every atom optional (or none): the alternative can match ''.
-  function canBeEmpty(src, [from, to], flags) {
-    for (let i = from; i < to;) { const x = atomAt(src, i, flags); if (!x || !x.opt) return false; i = x.end; }
+  function canBeEmpty(src, [from, to], flags, alpha) {
+    for (let i = from; i < to;) { const x = atomAt(src, i, flags, alpha); if (!x || !x.opt) return false; i = x.end; }
     return true;
   }
   // Atom by atom, every pair shares a character and one alternative runs out first: the repeat can split a run two ways.
-  function ambiguous(src, a, b, flags) {
+  function ambiguous(src, a, b, flags, alpha) {
     for (let i = a[0], j = b[0]; ;) {
       if (i >= a[1] || j >= b[1]) return true;
-      const x = atomAt(src, i, flags), y = atomAt(src, j, flags);
+      const x = atomAt(src, i, flags, alpha), y = atomAt(src, j, flags, alpha);
       if (!x || !y || x.q || y.q) return false;
       let share = false;
       for (const ch of x.set) if (y.set.has(ch)) { share = true; break; }
@@ -294,6 +309,7 @@
   }
   function overlapRepeat(src, flags) {
     const open = [];
+    let alpha = null;
     for (let i = 0; i < src.length; i++) {
       const c = src[i];
       if (c === '\\') { i++; continue; }
@@ -306,11 +322,18 @@
       }
       if (c !== ')' || !open.length) continue;
       const b = open.pop(), n = src[i + 1];
-      if (!(n === '*' || n === '+' || (n === '{' && /^\{\d+,\}/.test(src.slice(i + 1, i + 25))))) continue;
+      let repeated = n === '*' || n === '+';
+      if (n === '{') {
+        const m = /^\{(\d+)(,(\d*))?\}/.exec(src.slice(i + 1, i + 25));
+        // {n,} is unbounded; {n} and {n,m} count by their upper bound.
+        if (m) repeated = (m[2] !== undefined && m[3] === '') || Number(m[2] === undefined ? m[1] : m[3]) >= GUARD.BOUNDED_MIN;
+      }
+      if (!repeated) continue;
       const alts = alternatives(src, b, i);
+      if (!alpha) alpha = alphaOf(src);
       for (let x = 0; x < alts.length; x++) {
-        if (canBeEmpty(src, alts[x], flags)) return true;
-        for (let y = x + 1; y < alts.length; y++) if (ambiguous(src, alts[x], alts[y], flags)) return true;
+        if (canBeEmpty(src, alts[x], flags, alpha)) return true;
+        for (let y = x + 1; y < alts.length; y++) if (ambiguous(src, alts[x], alts[y], flags, alpha)) return true;
       }
     }
     return false;
@@ -341,7 +364,10 @@
   //   retries), so a load pause does not spend it: the term it reaches past that is refused. A wall-clock stop at
   //   4 × APPLY_MS bounds the worst wait; past it the remaining terms are refused with the same copy.
   // Once per filter change, never per line, per flush or per row. Not a linear engine (P16).
-  const GUARD = Object.freeze({ LINE_MS: 20, MEAN_US: 5, TOTAL_MS: 2000, STEP_MS: 8, SAMPLE: 256, MIN_LEN: 1024, START: 32,
+  // BOUNDED_MIN: a group repeated {n} or {n,m} times with overlapping alternatives is refused from an upper bound of 16, since
+  // Fib(30) is already about 1.3M paths ((a|aa){40}z took 41 s on 40 a's). Legit bounded repeats (\d{1,3}, (ab|cd){2,20}) have
+  // no overlapping alternatives and are untouched.
+  const GUARD = Object.freeze({ BOUNDED_MIN: 16, LINE_MS: 20, MEAN_US: 5, TOTAL_MS: 2000, STEP_MS: 8, SAMPLE: 256, MIN_LEN: 1024, START: 32,
     TICK_MS: 2, NOISE_MS: 0.02, GAP_MS: 0.25, RETRIES: 2, MEAN_BUDGET_MS: 30, APPLY_MS: 100, MAX_CALLS: 100000 });
   const SYNTH = 'D/BluetoothGatt( 1234): onClientConnectionState() status=0 clientIf=7 device=DE:AD:BE:EF:00:42 mtu 517 handle 0x002a '
     + 'payload {"id": 42, "name": "left bud", "rssi": -61, "path": "/data/user/0/com.example.headset/files/log.txt"} '
