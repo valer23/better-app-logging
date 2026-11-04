@@ -17,7 +17,7 @@ const T = (k, v, neg = false) => ({ k, v, neg });
 test('query.js loads in an empty context, names no page, storage or timer API, and loads right after session.js', () => {
   assert.equal(typeof Q.parse, 'function');
   assert.ok(Object.isFrozen(Q));
-  assert.doesNotMatch(SRC, /\b(document|window\.document|localStorage|sessionStorage|setTimeout|setInterval|requestAnimationFrame)\b/);
+  assert.doesNotMatch(SRC, /\b(document|window\.document|localStorage|sessionStorage|setTimeout|setInterval|requestAnimationFrame|performance)\b/);
   const srcs = pageScriptSrcs();
   assert.equal(srcs.indexOf('assets/js/query.js'), srcs.indexOf('assets/js/session.js') + 1);
 });
@@ -448,4 +448,219 @@ test('pid: a number or a numeric string is the line\'s pid; an empty or blank pi
   assert.deepEqual(keep('pid:0'), [0, 1]);
   assert.deepEqual(keep('-pid:0'), [2, 3, 4, 5, 6, 7, 8]);
   assert.deepEqual(keep('pid:57'), [6, 7]);
+});
+
+// ---- P7a: the regex guard (follow-up F4) ----
+
+const S1_MSG = 'Invalid regex: Repeated alternatives that overlap, such as (a|aa)+, can freeze the viewer. The last valid filter is still applied.';
+
+test('S1: a group repeated without bound whose alternatives overlap or can be empty is refused at compile time', () => {
+  for (const re of ['(a|aa)+z', '(\\w|\\d)+z', '(.|\\s)*z', '(a|a)+', '(x|x?)+y', '(a|)+b', '(?:ab|a)*c', '(a|b|ab){2,}c']) {
+    const r = Q.build(`/${re}/`, {}, {});
+    assert.equal(r.q, null, re);
+    assert.deepEqual([r.error.msg, r.error.start, r.error.end], [S1_MSG, 0, re.length + 2], re);
+  }
+  assert.equal(Q.build('(\\w|\\d)+z', { regex: true }, {}).error.msg, S1_MSG, 'a word under .* is a regex term too');
+});
+
+test('S1 passes common log regexes', () => {
+  // Not \d{1,3}(\.\d{1,3}){3}: nestedQuantifier (unchanged) already refuses a quantified group that holds a quantifier,
+  // before S1 runs. S1 neither widens nor narrows that rule, so the unrolled dotted quad stands in for it.
+  const pass = ['(POST|PUT)+', '(ab|ac)+', '(foo|bar)+', '(a|b)+c', '\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}', '([0-9a-f]{2}:){5}[0-9a-f]{2}', 'time(out)?\\s+\\d+',
+    '(error|fail|timeout|disconnect)', '\\bconn(ected|ecting)\\b', '(a+){2}', '^\\[(\\w+)\\]\\s+(.*)$', 'gatt.*mtu', 'foo.*bar.*baz.*qux',
+    'status=\\d+.*handle', '(?<=id=)\\d+', '(?!foo)bar', '(\\w)\\1', '[A-Z]\\w+Exception', '0x[0-9a-f]+', '(a|b){3}'];
+  for (const re of pass) assert.equal(Q.build(`/${re}/`, {}, {}).error, null, re);
+  assert.equal(Q.overlapRepeat('(a|aa)+', 'i'), true);
+  assert.equal(Q.overlapRepeat('(A|b)+', ''), false, 'case-sensitive: A and b share nothing');
+  assert.equal(Q.overlapRepeat('(A|a)+', 'i'), true, 'case-insensitive: A and a overlap');
+});
+
+test('compile exposes q.regexes: every /regex/ token and word under .*, negated ones included; literals are not regexes', () => {
+  const q = Q.build('tag:x "lit" /a b/ -c word', { regex: true }, {}).q;
+  assert.deepEqual(Array.from(q.regexes, r => [r.re.source, r.start, r.end]), [['a b', 12, 17], ['c', 18, 20], ['word', 21, 25]]);
+  assert.equal(Q.build('plain "words"', {}, {}).q.regexes.length, 0);
+});
+
+test('a leading .* is dropped from the regex a line is tested with (same result), and kept in the mark', () => {
+  const q = Q.build('/.*err(or)?/', {}, {}).q;
+  assert.equal(q.regexes[0].re.source, 'err(or)?');
+  assert.equal(q.gate({ lvl: 'INFO', platform: 'ios', tag: '', app: '', pid: 1, msg: 'x error y' }), 2);
+  assert.equal(q.gate({ lvl: 'INFO', platform: 'ios', tag: '', app: '', pid: 1, msg: 'nothing' }), -1);
+  assert.equal(q.mark.source, '.*err(or)?', 'the <mark> highlights the pattern as typed');
+  assert.equal(Q.build('/.*?x/', {}, {}).q.regexes[0].re.source, 'x', 'lazy too');
+  assert.equal(Q.build('/^.*x/', {}, {}).q.regexes[0].re.source, '^.*x', 'anchored: a different pattern, kept');
+  assert.equal(Q.build('/.+x/', {}, {}).q.regexes[0].re.source, '.+x', '.+ needs a character: kept');
+  const lines = ['x', 'ax', '', 'a\nx', 'yyy'];
+  for (const src of ['.*x', '.*?x', '.*.*x', '.*|x', '.*']) {
+    const t = Q.build(`/${src}/`, {}, {}).q.regexes[0].re, o = new RegExp(src, 'i');
+    for (const s of lines) assert.equal(t.test(s), o.test(s), `${src} on ${JSON.stringify(s)}`);
+  }
+});
+
+// A fake clock: each re.test(s) advances it by cost(s) ms, and each read by 1 ns (a real clock always moves), so the probe
+// never runs a real slow regex. `t` is the clock time the probe spent. Options: `pause` ms added to every `every`-th call
+// (a busy machine preempting the thread), and `step` (a coarse clock: reads are rounded down to it, and a read takes 20 ns,
+// so the clock moves within GUARD.MAX_CALLS reads).
+function fakeClock(cost, source = 'f+', { every = 0, pause = 0, step = 0 } = {}) {
+  let t = 0, longest = 0, calls = 0;
+  const re = { source, test(s) { longest = Math.max(longest, s.length); t += cost(s); if (every && ++calls % every === 0) t += pause; return false; } };
+  const now = step ? () => Math.floor((t += 2e-5) / step) * step : () => (t += 1e-6);
+  return { now, re, get longest() { return longest; }, get t() { return t; } };
+}
+const qOf = re => ({ regexes: [{ re, start: 3, end: 9 }] });
+const msgs = (n, len) => Array.from({ length: n }, (_, i) => ({ msg: `m${i} `.padEnd(len, 'z') }));
+const NEXT = 'Make it more specific, for example with fewer .* or a ^ anchor';
+
+test('slowRegex: a degree-3 cost is refused on the worst-line projection without running a step predicted over STEP_MS', () => {
+  const c = fakeClock(s => 1e-7 * s.length ** 3);   // 0.1 ms at 100 chars, 107 ms at 1 024
+  const err = Q.slowRegex(qOf(c.re), msgs(10, 200), c.now);
+  assert.match(err.cause, /^It would take about [\d\u2009]+ ms on one of these lines and can freeze the viewer$/);
+  assert.equal(err.reason, `${err.cause}. ${NEXT}`);
+  assert.equal(err.msg, `Invalid regex: ${err.reason}. The last valid filter is still applied.`);
+  assert.deepEqual([err.start, err.end], [3, 9]);
+  assert.ok(c.longest < Q.GUARD.MIN_LEN, `stopped before the ${Q.GUARD.MIN_LEN}-char step (longest probed: ${c.longest})`);
+});
+
+test('slowRegex: a linear cost is accepted early; a high mean is refused; a high total for this session is refused', () => {
+  const lin = fakeClock(s => 1e-6 * s.length);   // 1 ns a char: 0.2 µs a 200-char line
+  assert.equal(Q.slowRegex(qOf(lin.re), msgs(1000, 200), lin.now), null);
+  assert.ok(lin.t < 10, `accepted after ${lin.t.toFixed(1)} ms of probing (early accept, no repeated timings)`);
+  const mean = fakeClock(() => 0.008);        // 8 µs a line whatever its length
+  assert.equal(Q.slowRegex(qOf(mean.re), msgs(1000, 200), mean.now).msg,
+    `Invalid regex: It takes about 8.0 µs a line, over the 5 µs a line the viewer allows. ${NEXT}. The last valid filter is still applied.`);
+  const total = fakeClock(() => 0.004);       // 4 µs a line: under MEAN_US, but 600 000 lines × 4 µs = 2.4 s
+  const big = { length: 600000 };
+  for (let i = 0; i < 256; i++) big[Math.floor(i * 600000 / 256)] = { msg: 'x'.repeat(100) };
+  assert.equal(Q.slowRegex(qOf(total.re), big, total.now).msg,
+    `Invalid regex: It would take about 2.4 s to filter these 600\u2009000 lines. ${NEXT}. The last valid filter is still applied.`);
+});
+
+test('slowRegex: the mean is timed line by line and stops early: lines of 10 ms each are refused after at most 50 ms of probing', () => {
+  const lines = msgs(1000, 100);
+  lines[1] = { msg: 'L'.repeat(300) };   // the longest line (not in the evenly spaced sample) is linear: the mean decides
+  const c = fakeClock(s => (s[0] === 'L' ? 1e-6 * s.length : 10));
+  const err = Q.slowRegex(qOf(c.re), lines, c.now);
+  assert.equal(err.cause, 'It takes about 10000.0 µs a line, over the 5 µs a line the viewer allows');
+  assert.ok(c.t <= 50, `the probe read the clock for ${c.t.toFixed(1)} ms (one 10 ms line per mean timing, three timings)`);
+});
+
+test('slowRegex: one inflated call (a GC pause, a JIT compile) does not refuse a fine regex: a call over GAP_MS runs again and counts at its cheapest', () => {
+  let paused = false;
+  const a = fakeClock(() => (paused ? 1e-4 : (paused = true, 5)));   // the very first test call pays 5 ms
+  assert.equal(Q.slowRegex(qOf(a.re), msgs(1000, 200), a.now), null, 'in the worst-line probe');
+  paused = false;
+  const lines = msgs(1000, 100);
+  lines[1] = { msg: 'L'.repeat(300) };
+  const b = fakeClock(s => (s[0] === 'L' ? 1e-6 * s.length : paused ? 1e-4 : (paused = true, 5)));   // the first sampled line pays 5 ms
+  assert.equal(Q.slowRegex(qOf(b.re), lines, b.now), null, 'in the mean');
+});
+
+test('slowRegex on a busy machine: a pause in every timing window (5 ms every 40 calls) refuses nothing fine, and what is slow is still refused', () => {
+  // Measured with 8–16 CPU burners on 10 cores: the thread runs 0.4–0.8 ms between pauses of up to 10 ms, so every 2 ms
+  // window holds one (the round-1 guard's three windows in a row held three). The paused call reads over GAP_MS, runs
+  // again without the pause, and counts at its own cost.
+  const busy = { every: 40, pause: 5 };
+  const lin = fakeClock(s => 1e-6 * s.length, 'f+', busy);
+  assert.equal(Q.slowRegex(qOf(lin.re), msgs(1000, 200), lin.now), null, 'a linear regex is accepted');
+  const fine = fakeClock(() => 0.002, 'f+', busy);
+  assert.equal(Q.slowRegex(qOf(fine.re), msgs(1000, 200), fine.now), null, '2 µs a line is accepted');
+  const mean = fakeClock(() => 0.008, 'f+', busy);
+  assert.match(Q.slowRegex(qOf(mean.re), msgs(1000, 200), mean.now).cause, /^It takes about 8\.\d µs a line/, '8 µs a line is still refused, at its own cost');
+  const cubic = fakeClock(s => 1e-7 * s.length ** 3, 'f+', busy);
+  assert.match(Q.slowRegex(qOf(cubic.re), msgs(10, 200), cubic.now).cause, /ms on one of these lines/);
+});
+
+test('slowRegex on a coarse clock (WebKit may step 1 ms): fine regexes are accepted, slow ones refused, and the error leans toward accepting', () => {
+  const coarse = { step: 1 };
+  const lin = fakeClock(s => 1e-6 * s.length, 'f+', coarse);
+  assert.equal(Q.slowRegex(qOf(lin.re), msgs(1000, 200), lin.now), null, 'a linear regex is accepted');
+  const fine = fakeClock(() => 0.003, 'f+', coarse);
+  assert.equal(Q.slowRegex(qOf(fine.re), msgs(1000, 200), fine.now), null, '3 µs a line is accepted');
+  const mean = fakeClock(() => 0.008, 'f+', coarse);
+  assert.match(Q.slowRegex(qOf(mean.re), msgs(1000, 200), mean.now).cause, /^It takes about [67]\.\d µs a line/, '8 µs a line is refused, counted one clock step low (6–8)');
+  const cubic = fakeClock(s => 1e-7 * s.length ** 3, 'f+', coarse);
+  assert.match(Q.slowRegex(qOf(cubic.re), msgs(10, 200), cubic.now).cause, /ms on one of these lines/);
+});
+
+test('slowRegex: the probe stops at APPLY_MS per apply: the term it reaches past the cap is refused', () => {
+  let t = 0;
+  const lin = { source: 'x+', test(s) { t += 1e-6 * s.length; return false; } };   // about 6 ms of probing per term
+  const q = { regexes: Array.from({ length: 30 }, (_, i) => ({ re: lin, start: i * 4, end: i * 4 + 3 })) };
+  const err = Q.slowRegex(q, msgs(1000, 200), () => (t += 1e-6));
+  assert.equal(err.cause, `Its regex terms take over ${Q.GUARD.APPLY_MS} ms to check on these lines`);
+  assert.equal(err.reason, `${err.cause}. Use fewer regex terms`);
+  assert.ok(err.start > 0 && t <= Q.GUARD.APPLY_MS + 10, `refused at the term at ${err.start}, after ${t.toFixed(0)} ms`);
+});
+
+test('slowRegex: the APPLY_MS cap counts the timings it keeps, not the wall clock: a 30 ms pause before each of five terms refuses nothing', () => {
+  let t = 0;
+  const mk = () => { let first = true; return { source: 'x+', test(s) { t += 1e-6 * s.length; if (first) { first = false; t += 30; } return false; } }; };   // the first call of a term is preempted for 30 ms
+  const q = { regexes: [0, 1, 2, 3, 4].map(i => ({ re: mk(), start: i * 4, end: i * 4 + 3 })) };
+  assert.equal(Q.slowRegex(q, msgs(1000, 200), () => (t += 1e-6)), null);
+  assert.ok(t > Q.GUARD.APPLY_MS, `the wall clock read ${t.toFixed(0)} ms, over the ${Q.GUARD.APPLY_MS} ms cap, and the query was still accepted`);
+});
+
+test('slowRegex: a wall-clock stop at 4 x APPLY_MS refuses the remaining terms with the same copy', () => {
+  let t = 0;
+  const lin = { source: 'x+', test(s) { t += 1e-6 * s.length; return false; } };
+  const q = { regexes: [{ re: lin, start: 0, end: 3 }, { re: lin, start: 4, end: 7 }] };
+  const now = () => (t += 1e-6);
+  const clock = { now, jump() { t += 4 * Q.GUARD.APPLY_MS + 1; } };
+  let calls = 0;
+  const err = Q.slowRegex(q, msgs(1000, 200), () => { if (++calls === 3000) clock.jump(); return now(); });
+  assert.ok(err && err.cause === `Its regex terms take over ${Q.GUARD.APPLY_MS} ms to check on these lines`, JSON.stringify(err));
+});
+
+test('slowRegex: a term without a quantifier is linear and not timed; /.*.*.*z/ runs as /z/ and is accepted at no cost', () => {
+  let reads = 0;
+  const count = () => ++reads;
+  assert.equal(Q.slowRegex(Q.build('tag:x "a b" word', {}, {}).q, msgs(10, 50), count), null);
+  assert.equal(Q.slowRegex(Q.build('/error|fail/ /^E\\//', {}, {}).q, msgs(10, 50), count), null);
+  assert.equal(Q.slowRegex(Q.build('error timeout disconnect', { regex: true }, {}).q, msgs(10, 50), count), null);
+  const q = Q.build('/.*.*.*z/', {}, {}).q;
+  assert.equal(q.regexes[0].re.source, 'z');
+  assert.equal(Q.slowRegex(q, msgs(10, 50), count), null);
+  assert.equal(reads, 0, 'no clock read for any of them');
+});
+
+test('slowRegex: a clock that never moves (the test sandbox) cannot time anything: accepted after a bounded number of reads', () => {
+  let reads = 0;
+  assert.equal(Q.slowRegex(qOf(/a+b/), msgs(10, 50), () => { reads++; return 0; }), null);
+  assert.ok(reads <= Q.GUARD.MAX_CALLS + 1, `${reads} reads`);
+});
+
+test('slowRegex: an empty session is probed on SYNTH', () => {
+  const seen = new Set(), c = fakeClock(s => { seen.add(s.slice(0, 20)); return 1e-6 * s.length; });
+  assert.equal(Q.slowRegex(qOf(c.re), [], c.now), null);
+  assert.ok(seen.has(Q.SYNTH.slice(0, 20)), 'the probe line and the sample are SYNTH');
+  assert.ok(Q.SYNTH.length > 200 && !/[<>&]/.test(Q.SYNTH));
+});
+
+test('slowRegex: every timed term is probed in order, and the first slow one is the one reported', () => {
+  let t = 0;
+  const mk = cost => ({ source: 'x+', test(s) { t += cost(s.length); return false; } });
+  const q = { regexes: [{ re: mk(len => 1e-6 * len), start: 0, end: 3 }, { re: mk(len => 1e-7 * len ** 3), start: 10, end: 13 }] };
+  assert.equal(Q.slowRegex(q, msgs(10, 200), () => (t += 1e-6)).start, 10);
+});
+
+test('slowRegex on a real clock (V8): pathological regexes are refused fast, common ones accepted (a refusal that does not repeat is retried, at most twice)', () => {
+  const now = () => performance.now();
+  const lines = Array.from({ length: 2000 }, (_, i) => ({ msg: `D/BluetoothGatt( ${1000 + i % 900}): onClientConnectionState() status=${i % 3} clientIf=${i % 9} device=DE:AD:BE:EF:00:${(i % 256).toString(16)} took ${i % 97} ms`.repeat(1 + (i % 3)) }));
+  // \s.*.*.*z, not .*.*.*z: the strip turns .*.*.*z into z (accepted below), so the pathological sample must not start with .*
+  for (const src of ['\\s.*.*.*z', '(.*){2}z', '\\w+\\w+z']) {
+    const t0 = now();
+    const err = Q.slowRegex(Q.build(`/${src}/`, {}, {}).q, lines, now);
+    assert.ok(err, `${src} refused`);
+    assert.ok(now() - t0 < 400, `${src} refused in ${(now() - t0).toFixed(0)} ms`);
+  }
+  // A real clock on a shared machine: each accepted regex gets up to 3 attempts. The busy-machine and coarse-clock tests
+  // above pin the mechanism deterministically; a retry here is logged, never hidden. The refused ones get one attempt.
+  for (const src of ['time ?out', '\\d+ms', '^E\\/', 'gatt.*mtu', 'foo.*bar.*baz.*qux', 'status=\\d+.*handle', '.*error', '.*.*.*z', '(error|fail|timeout)', '0x[0-9a-f]+', '\\S+\\s+\\S+', '^\\s*at\\s+\\S+']) {
+    let err = Q.slowRegex(Q.build(`/${src}/`, {}, {}).q, lines, now);
+    for (let i = 1; err && i < 3; i++) {
+      console.log(`# real clock: ${src} refused once (${err.cause}); retrying`);
+      err = Q.slowRegex(Q.build(`/${src}/`, {}, {}).q, lines, now);
+    }
+    assert.equal(err, null, src);
+  }
 });

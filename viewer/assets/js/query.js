@@ -206,7 +206,8 @@
   // (a+)+, (x*)* or (?:a\d+){2,}, or by an exact {n} of 3 or more ((a*){25} ran 140 s on a 29-char line, (a+){4}$ 25 s
   // on a 201-char one). An exact {2} is O(n^2) and passes once, but it sets M on the enclosing group, and
   // a second multiplying repeat of a group with M is refused: ((a+){2}){2} is (a+){4}, ((a+){4}){4} is (a+){16}. Escapes
-  // and character classes are skipped. Sibling terms add degrees and alternation overlap such as (a|a)+ is not detected.
+  // and character classes are skipped. Alternation overlap ((a|a)+) is refused by overlapRepeat below, and sibling terms
+  // (\s.*.*z) are timed by slowRegex.
   function nestedQuantifier(src) {
     const U = 1, M = 2;
     const rep = i => src[i] === '*' || src[i] === '+' || (src[i] === '{' && /^\{\d+,\d*\}/.test(src.slice(i, i + 24)));
@@ -231,6 +232,200 @@
     }
     return false;
   }
+  // ---- The regex guard (P7a, follow-up F4) ----
+  // nestedQuantifier (above) refuses exponential nesting. Two more shapes freeze a WebKit or V8 regex on one long line:
+  // (1) a group repeated without bound whose alternatives overlap (one is a prefix of another, atom by atom, under the
+  //     term's own case flag) or can match '' ((a|aa)+, (\w|\d)+, (.|\s)*, (a|)+): exponential, so it is refused here,
+  //     before anything runs (one RegExp.test cannot be interrupted); and
+  // (2) polynomial backtracking (\s.*.*.*z, \w+\w+z, (.*){2}z, a.*a.*z): its cost depends on the lines, so slowRegex below
+  //     times it on the session's own lines when a filter is applied (the page injects the clock). A leading .* is not
+  //     among them: compile drops it from the regex a line is tested with (below), so .*.*.*z runs as z.
+  // Atoms are compared by the characters of ALPHA they match (exact for literals, escapes, classes and the dot). A group or
+  // a quantified atom inside an alternative is not judged here; slowRegex times it.
+  const ALPHA = (() => { const a = ['\t', '\u00e9', '\u00df', '\u4e2d', '\u00a0']; for (let c = 0x20; c < 0x7f; c++) a.push(String.fromCharCode(c)); return a; })();
+  const skipClass = (src, i, to) => { i++; if (src[i] === '^') i++; if (src[i] === ']') i++; while (i < to && src[i] !== ']') { if (src[i] === '\\') i++; i++; } return i; };
+  // The atom at src[i]: { end, set, opt, q } (set: the ALPHA characters it matches; opt: it can match ''; q: it has a
+  // quantifier), or null for a group, an anchor or anything not judged here.
+  function atomAt(src, i, flags) {
+    const c = src[i];
+    let j;
+    if (c === '(' || c === '^' || c === '$' || c === '|' || c === ')') return null;
+    if (c === '\\') { const n = src[i + 1]; j = i + (n === 'x' ? 4 : n === 'u' ? 6 : n === 'c' ? 3 : 2); }
+    else if (c === '[') j = skipClass(src, i, src.length) + 1;
+    else j = i + 1;
+    let re;
+    try { re = new RegExp(`^(?:${src.slice(i, j)})$`, flags); } catch (e) { return null; }
+    const set = new Set(ALPHA.filter(ch => re.test(ch)));
+    let k = j, opt = false, q = false;
+    if (src[k] === '?' || src[k] === '*') { opt = true; q = true; k++; }
+    else if (src[k] === '+') { q = true; k++; }
+    else if (src[k] === '{') { const m = /^\{(\d+)(,\d*)?\}/.exec(src.slice(k, k + 24)); if (m) { q = true; opt = m[1] === '0'; k += m[0].length; } }
+    if (q && src[k] === '?') k++;
+    return { end: k, set, opt, q };
+  }
+  // The top-level alternatives of src[from, to), as [start, end] pairs.
+  function alternatives(src, from, to) {
+    const out = []; let d = 0, s = from;
+    for (let i = from; i < to; i++) {
+      const c = src[i];
+      if (c === '\\') { i++; continue; }
+      if (c === '[') { i = skipClass(src, i, to); continue; }
+      if (c === '(') d++; else if (c === ')') d--; else if (c === '|' && d === 0) { out.push([s, i]); s = i + 1; }
+    }
+    out.push([s, to]);
+    return out;
+  }
+  // Every atom optional (or none): the alternative can match ''.
+  function canBeEmpty(src, [from, to], flags) {
+    for (let i = from; i < to;) { const x = atomAt(src, i, flags); if (!x || !x.opt) return false; i = x.end; }
+    return true;
+  }
+  // Atom by atom, every pair shares a character and one alternative runs out first: the repeat can split a run two ways.
+  function ambiguous(src, a, b, flags) {
+    for (let i = a[0], j = b[0]; ;) {
+      if (i >= a[1] || j >= b[1]) return true;
+      const x = atomAt(src, i, flags), y = atomAt(src, j, flags);
+      if (!x || !y || x.q || y.q) return false;
+      let share = false;
+      for (const ch of x.set) if (y.set.has(ch)) { share = true; break; }
+      if (!share) return false;
+      i = x.end; j = y.end;
+    }
+  }
+  function overlapRepeat(src, flags) {
+    const open = [];
+    for (let i = 0; i < src.length; i++) {
+      const c = src[i];
+      if (c === '\\') { i++; continue; }
+      if (c === '[') { i = skipClass(src, i, src.length); continue; }
+      if (c === '(') {
+        let b = i + 1;
+        if (src[b] === '?') { const m = /^\?(?::|=|!|<=|<!|<[A-Za-z_$][\w$]*>)/.exec(src.slice(b, b + 40)); b += m ? m[0].length : 1; }
+        open.push(b);
+        continue;
+      }
+      if (c !== ')' || !open.length) continue;
+      const b = open.pop(), n = src[i + 1];
+      if (!(n === '*' || n === '+' || (n === '{' && /^\{\d+,\}/.test(src.slice(i + 1, i + 25))))) continue;
+      const alts = alternatives(src, b, i);
+      for (let x = 0; x < alts.length; x++) {
+        if (canBeEmpty(src, alts[x], flags)) return true;
+        for (let y = x + 1; y < alts.length; y++) if (ambiguous(src, alts[x], alts[y], flags)) return true;
+      }
+    }
+    return false;
+  }
+
+  // slowRegex(q, lines, now) → null | { start, end, msg, reason, cause }: times the regex terms of q (q.regexes) on `lines`
+  // (the session's own; [] uses SYNTH) before the filter applies, with `now` the page's clock (ms). cause says what
+  // happened, reason adds what to do next, msg is the spec's "Invalid regex: …" frame.
+  // - Only a term with a quantifier is timed: without one (error, ^E\/, err|fail) a regex is linear in the line.
+  // - A clock that never moves (a test sandbox) cannot time anything: accepted.
+  // - Every timing is a sum of single calls, each timed from the clock read before it. A busy machine preempts this thread
+  //   every 0.4–0.8 ms (median) for up to 10 ms (p90; measured with 8–16 CPU burners on 10 cores), so any 2 ms window holds
+  //   a pause, and three windows in a row hold three: window-level confirmation cannot remove load. A call that reads over
+  //   GAP (GAP_MS, or two steps of a coarse clock) is run again, up to RETRIES times, and counts at its cheapest: a pause
+  //   rarely hits the same call twice, a slow regex is slow every time. So the load drops out of each timing, refusals
+  //   included, with no window repeated.
+  // - A coarse clock (WebKit's may step 1 ms): a timing lasts TICK_MS or four steps, whichever is longer, and counts one
+  //   step less than it read, so its error leans toward accepting (up to 4/3 of a threshold), not toward refusing.
+  // - Worst line: the session's longest line, repeated to at least MIN_LEN chars, timed on prefixes doubling from START.
+  //   It accepts early once even a degree-4 growth from there stays under LINE_MS. Otherwise it reads the degree from each
+  //   doubling (1 below NOISE_MS, at most 4), never runs a step it predicts over STEP_MS, and extrapolates to the full
+  //   length: over LINE_MS is refused.
+  // - Mean: SAMPLE evenly spaced lines, timed call by call. It stops at TICK_MS of timed calls, or as soon as the running
+  //   mean is over MEAN_US (after TICK_MS), or the probe's own time is over MEAN_BUDGET_MS. Over MEAN_US a line is
+  //   refused (what the drain can afford at 27k lines/s). The mean times this session's lines over TOTAL_MS is refused:
+  //   that is the refilter this apply would run, and TOTAL_MS is the longest freeze a filter change may cost (Decision D4).
+  // - The probe stops at APPLY_MS per call, counted as the sum of the timings it keeps (the cheapest of each call's
+  //   retries), so a load pause does not spend it: the term it reaches past that is refused. A wall-clock stop at
+  //   4 × APPLY_MS bounds the worst wait; past it the remaining terms are refused with the same copy.
+  // Once per filter change, never per line, per flush or per row. Not a linear engine (P16).
+  const GUARD = Object.freeze({ LINE_MS: 20, MEAN_US: 5, TOTAL_MS: 2000, STEP_MS: 8, SAMPLE: 256, MIN_LEN: 1024, START: 32,
+    TICK_MS: 2, NOISE_MS: 0.02, GAP_MS: 0.25, RETRIES: 2, MEAN_BUDGET_MS: 30, APPLY_MS: 100, MAX_CALLS: 100000 });
+  const SYNTH = 'D/BluetoothGatt( 1234): onClientConnectionState() status=0 clientIf=7 device=DE:AD:BE:EF:00:42 mtu 517 handle 0x002a '
+    + 'payload {"id": 42, "name": "left bud", "rssi": -61, "path": "/data/user/0/com.example.headset/files/log.txt"} '
+    + 'took 12 ms, retry 3 of 5, 0123456789abcdef0123456789abcdef, uuid 6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+  const NEXT = 'Make it more specific, for example with fewer .* or a ^ anchor';
+  const QUANT = /[*+?{]/;   // a quantifier (a (?: group or an escaped \* is timed too: harmless)
+  const group = n => String(Math.max(0, Math.round(n))).replace(/\B(?=(\d{3})+(?!\d))/g, '\u2009');   // as shellPure.num
+  const msgOf = m => (m == null || m.msg == null ? '' : String(m.msg));
+  const degree = (t1, t2, l1, l2) => (t1 < GUARD.NOISE_MS ? 1 : Math.min(4, Math.max(1, Math.log2(t2 / t1) / Math.log2(l2 / l1))));
+  // The clock's step in ms (the smaller of its first two moves), or 0 when it never moves in MAX_CALLS reads.
+  function clockStep(now) {
+    let a = now(), step = 0;
+    for (let i = 0, seen = 0; i < GUARD.MAX_CALLS && seen < 2; i++) { const b = now(); if (b !== a) { step = seen++ ? Math.min(step, b - a) : b - a; a = b; } }
+    return step;
+  }
+  // The cost (ms) of one re.test(s), timed from the clock read before it (`at.t`), so a run of calls loses no clock step.
+  // While it reads over `gap` (a preemption, or a slow call) it is run again, up to RETRIES times, and the cheapest counts.
+  function call(re, s, now, gap, at) {
+    let best = Infinity;
+    for (let k = 0; k <= GUARD.RETRIES && best > gap; k++) { re.test(s); const t = now(); if (t - at.t < best) best = t - at.t; at.t = t; }
+    return best;
+  }
+  // One timing (ms a call) of re.test(s): calls until `clk.tick` of their own time, at most MAX_CALLS; one clock step less
+  // than read counts (a coarse clock's error leans toward accepting).
+  function timeOnce(re, s, now, clk) {
+    const at = { t: now() };
+    let n = 0, t = 0;
+    do { const c = call(re, s, now, clk.gap, at); t += c; clk.spent += c; n++; } while (t < clk.tick && n < GUARD.MAX_CALLS);
+    return Math.max(0, t - clk.step) / n;
+  }
+  // The mean cost of a line of `sample`, in µs (one clock step less than read, as timeOnce): call by call, stopping early.
+  function meanUs(re, sample, now, clk) {
+    const at = { t: now() }, t0 = at.t;
+    let calls = 0, el = 0;
+    const lo = () => Math.max(0, el - clk.step) * 1000 / calls;
+    pass: for (;;) {
+      for (let i = 0; i < sample.length; i++) {
+        const c = call(re, sample[i], now, clk.gap, at); el += c; clk.spent += c; calls++;
+        if (at.t - t0 > GUARD.MEAN_BUDGET_MS || (el >= clk.tick && lo() > GUARD.MEAN_US)) break pass;
+      }
+      if (el >= clk.tick || calls >= GUARD.MAX_CALLS) break;
+    }
+    return lo();
+  }
+  function slowRegex(q, lines, now) {
+    const terms = q && q.regexes ? q.regexes.filter(r => QUANT.test(r.re.source)) : [];
+    if (!terms.length) return null;
+    const step = clockStep(now);
+    if (!step) return null;
+    const clk = { step, gap: Math.max(GUARD.GAP_MS, 2 * step), tick: Math.max(GUARD.TICK_MS, 4 * step), spent: 0 };
+    const n = lines.length;
+    let longest = '';
+    for (let i = 0; i < n; i++) { const s = msgOf(lines[i]); if (s.length > longest.length) longest = s; }
+    const base = longest || SYNTH, L = Math.max(base.length, GUARD.MIN_LEN);
+    let long = base;
+    while (long.length < L) long += ' ' + base;
+    const k = Math.min(n, GUARD.SAMPLE), sample = [];
+    for (let i = 0; i < k; i++) sample.push(msgOf(lines[Math.floor(i * n / k)]));
+    if (!sample.length) sample.push(SYNTH);
+    const refuse = (r, cause, next = NEXT) => {
+      const reason = `${cause}. ${next}`;
+      return { start: r.start, end: r.end, cause, reason, msg: `Invalid regex: ${reason}. The last valid filter is still applied.` };
+    };
+    const began = now();
+    for (const r of terms) {
+      if (clk.spent > GUARD.APPLY_MS || now() - began > 4 * GUARD.APPLY_MS) return refuse(r, `Its regex terms take over ${GUARD.APPLY_MS} ms to check on these lines`, 'Use fewer regex terms');
+      let len = Math.min(GUARD.START, L), t = timeOnce(r.re, long.slice(0, len), now, clk), d = 1, early = false;
+      while (len < L) {
+        if (t * Math.pow(L / len, 4) <= GUARD.LINE_MS) { early = true; break; }   // even quartic growth stays under LINE_MS
+        const next = Math.min(L, len * 2);
+        if (t * Math.pow(next / len, d) > GUARD.STEP_MS) break;                  // never run a step predicted over STEP_MS
+        const t2 = timeOnce(r.re, long.slice(0, next), now, clk);
+        d = degree(t, t2, len, next); t = t2; len = next;
+      }
+      const ms = early ? 0 : t * Math.pow(L / len, d);
+      if (ms > GUARD.LINE_MS) return refuse(r, `It would take about ${group(ms)} ms on one of these lines and can freeze the viewer`);
+      const us = meanUs(r.re, sample, now, clk);
+      if (us > GUARD.MEAN_US) return refuse(r, `It takes about ${us.toFixed(1)} µs a line, over the ${GUARD.MEAN_US} µs a line the viewer allows`);
+      const total = us * n / 1000;
+      if (total > GUARD.TOTAL_MS) return refuse(r, `It would take about ${(total / 1000).toFixed(1)} s to filter these ${group(n)} lines`);
+    }
+    return null;
+  }
+
   // The <mark>'s matcher for a regex term (buildMessageNodes calls exec once per row): its first non-empty hit, as legacy
   // marked it. /x*/ or \d* match '' at offset 0 first, so the plain RegExp would mark nothing. Literal terms keep their
   // RegExp: an escaped non-empty literal never matches ''. The 'g' copy is reset on every call, so no row sees another's state.
@@ -281,13 +476,15 @@
   // 2 ios), rest the non-level, non-platform tests (null when none), mark the first positive text term's RegExp for
   // the <mark> (null when none), tags the tag tokens as [value, negated], chipsOnly whether every token is a level,
   // dev or plat token. key changes exactly when the filter does: a recompile with an equal key needs no refilter.
+  // regexes: every regex term ({ re, start, end }, negated ones included), what slowRegex times before the filter applies.
   function compile(tokens, opts, devices) {
     const mc = !!(opts && opts.case);
     const rx = !!(opts && opts.regex);
     let lvPos = 0; let lvAny = false; let lvNeg = 0;
     const plat = { dev: [0, false, 0], plat: [0, false, 0] };   // [positive bits, any positive, negative bits]
     const tag = [[], []]; const app = [[], []]; const pid = [[], []];   // [positive values, negative values]
-    const text = [];   // [RegExp, negated, from a regex (a /regex/ token, or a word under .*)]
+    const text = [];   // [test RegExp, negated, from a regex (a /regex/ token, or a word under .*), the RegExp as typed]
+    const regexes = [];   // { re, start, end } per regex term (slowRegex)
     const tagList = [];   // [value as typed, negated], for the empty tile's causes
     let usesDevNames = false;
     let hasWord = false;
@@ -319,7 +516,16 @@
         if (isRe && nestedQuantifier(src)) {
           return { q: null, error: { start: t.start, end: t.end, msg: 'Invalid regex: Nested quantifiers such as (a+)+ can freeze the viewer. The last valid filter is still applied.' } };
         }
-        text.push([re, t.neg, isRe]);
+        if (isRe && overlapRepeat(src, re.flags)) {
+          return { q: null, error: { start: t.start, end: t.end, msg: 'Invalid regex: Repeated alternatives that overlap, such as (a|aa)+, can freeze the viewer. The last valid filter is still applied.' } };
+        }
+        // A leading .* (or .*?) changes nothing a test can see (/.*x/ matches a line exactly when /x/ does: .* may match
+        // nothing), but the engine retries it from every offset, O(n²) a line. Lines are tested without it; the <mark>
+        // keeps the pattern as typed. Anchored (^.*x) and .+ are different patterns and stay.
+        const bare = isRe ? src.replace(/^(?:\.\*\??)+/, '') : src;
+        const test = bare === src ? re : new RegExp(bare, re.flags);
+        if (isRe) regexes.push({ re: test, start: t.start, end: t.end });
+        text.push([test, t.neg, isRe, re]);
       }
     }
     const levels = (lvAny ? lvPos : ALL_LEVELS) & ~lvNeg;
@@ -359,8 +565,8 @@
     const live = tokens.filter(t => !(t.k === 'level' && levelMask(t.v) === -1));
     const key = `${serialize(live)}\u0000${hasText ? (mc ? 'C' : 'c') : ''}${hasWord ? (rx ? 'R' : 'r') : ''}\u0000${plats}`;
     const chipsOnly = tokens.every(t => t.k === 'level' || t.k === 'dev' || t.k === 'plat');
-    const mark = firstPos ? (firstPos[2] ? firstNonEmpty(firstPos[0]) : firstPos[0]) : null;
-    return { q: { key, gate, lvOk, levels, plats, rest, mark, hasText, usesDevNames, tags: tagList, chipsOnly }, error: null };
+    const mark = firstPos ? (firstPos[2] ? firstNonEmpty(firstPos[3]) : firstPos[3]) : null;
+    return { q: { key, gate, lvOk, levels, plats, rest, mark, hasText, usesDevNames, tags: tagList, chipsOnly, regexes }, error: null };
   }
 
   // parse + compile: { q, error }. The first error wins; an invalid query is never half applied.
@@ -413,5 +619,5 @@
 
   const ALV = g.ALV || (g.ALV = {});
   ALV.query = Object.freeze({ parse, serialize, compile, build, levelMask, levelText, setLevels, setDevices, removeToken, indexOf, tokenAt,
-    tagCause, LV, KEYS: Object.freeze(KEYS.slice()) });
+    tagCause, overlapRepeat, slowRegex, GUARD, SYNTH, LV, KEYS: Object.freeze(KEYS.slice()) });
 })(typeof window !== 'undefined' ? window : globalThis);
