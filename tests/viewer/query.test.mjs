@@ -475,9 +475,21 @@ test('S1 (task 2b): overlap is judged over every literal in the source, and unde
   }
 });
 
+test('S1 (task 2b review): the bounded cut-off scales with the number of alternatives, and every escaped literal is compared', () => {
+  // k overlapping alternatives grow as k^n: (\w|\d|[0-9a-f]){15}x ran 8 674 ms on 17 digits, (a|aa|aaa){15}z 7 973 ms on 30 a's,
+  // (a|a|a){15}z 2 586 ms on 16 a's, (a|a|a|a){12}z 5 242 ms on 13 a's; (\ü|\ü\ü)+z 1 122 ms on 30 ü; (\0|\0\0)+z, (\cA|\cA\cA)+z
+  // and (\377|\377\377)+z 170 to 300 ms on 28 characters and exponential.
+  for (const re of ['(\\w|\\d|[0-9a-f]){15}x', '(a|aa|aaa){15}z', '(a|a|a){15}z', '(a|a|a|a){12}z', '(a|a|a){11}z', '(a|a|a|a){8}z',
+    '(\\ü|\\ü\\ü)+z', '(\\0|\\0\\0)+z', '(\\cA|\\cA\\cA)+z', '(\\377|\\377\\377)+z']) {
+    const r = Q.build(`/${re}/`, {}, {});
+    assert.equal(r.q, null, re);
+    assert.deepEqual([r.error.msg, r.error.start, r.error.end], [S1_MSG, 0, re.length + 2], re);
+  }
+});
+
 test('S1 (task 2b): legitimate bounded repeats and log regexes still build', () => {
   // Not \d{1,3}(?:x\d{1,3}){3}: nestedQuantifier (unchanged) refuses a quantified group that holds a quantifier, as it did before.
-  for (const re of ['(a|b){40}z', '(ab|cd){2,20}x', '(a|aa){2,15}z', '(a|aa){15}z', 'gatt.*mtu', 'status=\\d+.*handle',
+  for (const re of ['(a|b){40}z', '(ab|cd){2,20}x', '(a|aa){2,15}z', '(a|aa){15}z', '(a|a|a){10}z', '(a|a|a|a){7}z', 'gatt.*mtu', 'status=\\d+.*handle',
     '([0-9a-f]{2}:){5}[0-9a-f]{2}']) {
     assert.equal(Q.build(`/${re}/`, {}, {}).error, null, re);
   }

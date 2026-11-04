@@ -234,18 +234,19 @@
   }
   // ---- The regex guard (P7a, follow-up F4) ----
   // nestedQuantifier (above) refuses exponential nesting. Two more shapes freeze a WebKit or V8 regex on one long line:
-  // (1) a group repeated without bound, or at least BOUNDED_MIN times, whose alternatives overlap (one is a prefix of another, atom by atom, under the
-  //     term's own case flag) or can match '' ((a|aa)+, (\w|\d)+, (.|\s)*, (a|)+): exponential, so it is refused here,
+  // (1) a group repeated without bound, or often enough (see BOUNDED_MIN), whose alternatives overlap (one is a prefix of another, atom by atom,
+  //     under the term's own case flag) or can match '' ((a|aa)+, (\w|\d)+, (.|\s)*, (a|)+): exponential, so it is refused here,
   //     before anything runs (one RegExp.test cannot be interrupted). {n} and {n,m} count by their upper bound; and
   // (2) polynomial backtracking (\s.*.*.*z, \w+\w+z, (.*){2}z, a.*a.*z): its cost depends on the lines, so slowRegex below
   //     times it on the session's own lines when a filter is applied (the page injects the clock). A leading .* is not
   //     among them: compile drops it from the regex a line is tested with (below), so .*.*.*z runs as z.
-  // Atoms are compared by the characters they match among ALPHA plus every literal character written in the regex source
-  // (\uXXXX, \u{...} and \xXX escapes decoded; the line terminators are in ALPHA, so \n and \s overlap). That is exact for
-  // literals, escapes and the dot, and for a class whenever it shares an end point or a listed character with the other atom;
-  // a character matched by neither the source nor ALPHA is not compared. A group or a quantified atom inside an alternative
-  // is not judged here; slowRegex times it.
-  const ALPHA = (() => { const a = ['\t', '\n', '\r', '\u2028', '\u2029', '\u00e9', '\u00df', '\u4e2d', '\u00a0']; for (let c = 0x20; c < 0x7f; c++) a.push(String.fromCharCode(c)); return a; })();
+  // Atoms are compared by the characters they match among ALPHA (every code unit U+0000 to U+00FF, which covers \0, \cX and
+  // octal escapes, plus the line terminators U+2028 and U+2029 and U+4E2D) and every character the regex source writes: a
+  // literal, an escaped character (\ü), or a \uXXXX, \u{...} or \xXX escape, decoded. That is exact for literals, escapes
+  // and the dot, and for a class whenever it shares an end point or a listed character with the other atom; a character
+  // matched by neither the source nor ALPHA is not compared. A group or a quantified atom inside an alternative is not
+  // judged here; slowRegex times it.
+  const ALPHA = (() => { const a = []; for (let c = 0; c < 0x100; c++) a.push(String.fromCharCode(c)); a.push('\u2028', '\u2029', '\u4e2d'); return a; })();
   const skipClass = (src, i, to) => { i++; if (src[i] === '^') i++; if (src[i] === ']') i++; while (i < to && src[i] !== ']') { if (src[i] === '\\') i++; i++; } return i; };
   // ALPHA plus every character src writes as a literal, with \uXXXX, \u{...} and \xXX decoded (UTF-16 code units, as the
   // regex engine reads a pattern without the u flag). Built once per overlapRepeat call.
@@ -255,7 +256,7 @@
       if (src[i] !== '\\') { a.add(src[i]); continue; }
       const rest = src.slice(i + 1, i + 12), m = /^u\{([0-9a-fA-F]{1,6})\}/.exec(rest) || /^u([0-9a-fA-F]{4})/.exec(rest) || /^x([0-9a-fA-F]{2})/.exec(rest);
       if (m) { const cp = parseInt(m[1], 16); if (cp <= 0x10ffff) for (const u of String.fromCodePoint(cp)) a.add(u); i += m[0].length; }
-      else i++;
+      else { if (i + 1 < src.length) a.add(src[i + 1]); i++; }
     }
     return [...a];
   }
@@ -322,14 +323,18 @@
       }
       if (c !== ')' || !open.length) continue;
       const b = open.pop(), n = src[i + 1];
-      let repeated = n === '*' || n === '+';
+      // ub: how many times the group can repeat (Infinity: without bound), or 0 when it is not repeated.
+      let ub = n === '*' || n === '+' ? Infinity : 0;
       if (n === '{') {
         const m = /^\{(\d+)(,(\d*))?\}/.exec(src.slice(i + 1, i + 25));
         // {n,} is unbounded; {n} and {n,m} count by their upper bound.
-        if (m) repeated = (m[2] !== undefined && m[3] === '') || Number(m[2] === undefined ? m[1] : m[3]) >= GUARD.BOUNDED_MIN;
+        if (m) ub = m[2] !== undefined && m[3] === '' ? Infinity : Number(m[2] === undefined ? m[1] : m[3]);
       }
-      if (!repeated) continue;
+      if (!ub) continue;
       const alts = alternatives(src, b, i);
+      // k alternatives that overlap give up to k^ub paths, so a bounded repeat is judged when ub * log2(k) reaches BOUNDED_MIN
+      // (k counts as at least 2, which keeps the plain cut-off for a lone alternative that can match '').
+      if (ub * Math.log2(Math.max(2, alts.length)) < GUARD.BOUNDED_MIN) continue;
       if (!alpha) alpha = alphaOf(src);
       for (let x = 0; x < alts.length; x++) {
         if (canBeEmpty(src, alts[x], flags, alpha)) return true;
@@ -364,9 +369,10 @@
   //   retries), so a load pause does not spend it: the term it reaches past that is refused. A wall-clock stop at
   //   4 × APPLY_MS bounds the worst wait; past it the remaining terms are refused with the same copy.
   // Once per filter change, never per line, per flush or per row. Not a linear engine (P16).
-  // BOUNDED_MIN: a group repeated {n} or {n,m} times with overlapping alternatives is refused from an upper bound of 16, since
-  // Fib(30) is already about 1.3M paths ((a|aa){40}z took 41 s on 40 a's). Legit bounded repeats (\d{1,3}, (ab|cd){2,20}) have
-  // no overlapping alternatives and are untouched.
+  // BOUNDED_MIN: a group repeated {n} or {n,m} times with overlapping alternatives is refused when ub * log2(k) >= 16, that is
+  // when k^ub >= 2^16 paths (ub: the upper bound, k: the number of alternatives). Two alternatives keep a cut-off of 16, three
+  // start at 11, four at 8: (a|aa){40}z took 41 s on 40 a's, (\w|\d|[0-9a-f]){15}x 8.7 s on 17 digits. Legit bounded repeats
+  // (\d{1,3}, (ab|cd){2,20}) have no overlapping alternatives and are untouched.
   const GUARD = Object.freeze({ BOUNDED_MIN: 16, LINE_MS: 20, MEAN_US: 5, TOTAL_MS: 2000, STEP_MS: 8, SAMPLE: 256, MIN_LEN: 1024, START: 32,
     TICK_MS: 2, NOISE_MS: 0.02, GAP_MS: 0.25, RETRIES: 2, MEAN_BUDGET_MS: 30, APPLY_MS: 100, MAX_CALLS: 100000 });
   const SYNTH = 'D/BluetoothGatt( 1234): onClientConnectionState() status=0 clientIf=7 device=DE:AD:BE:EF:00:42 mtu 517 handle 0x002a '
