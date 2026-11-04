@@ -503,6 +503,9 @@ const deviceInfo = { android: { id: '', name: '' }, ios: { id: '', name: '' } };
 // the drain asks s.query.gate(m) for the line's level index (-1: hidden by something other than the level filter), counts
 // it, and keeps the line when s.query.lvOk says its level is shown: Live follows its own query also while File is shown.
 const NO_MODES = Object.freeze({ case: false, regex: false });
+// The regex guard's clock (ALV.query.slowRegex). A binding of its own so tests can give the guard a real clock while the
+// drain's flush budget keeps reading performance.now.
+let guardClock = () => performance.now();
 for (const s of [liveSession, fileSession]) {
   s.filter = s.query = ALV.query.build('', NO_MODES, deviceInfo).q;
   s.queryText = '';
@@ -1061,11 +1064,7 @@ function handleFile(file) {
       }
 
       document.getElementById('loadingText').textContent = `Rendering ${countOf(msgs.length)}…`;
-      discardBacklog(fileSession);
-      resetLines(fileSession, msgs);
-      fileSession.query = null;   // not filtered yet: rendered below, or by selectSession if the user switched away meanwhile
-      if (file.name) fileSession.name = file.name;   // the SESSIONS row shows it
-      shellSync();
+      loadParsedFile(file.name, msgs);
       setTimeout(() => { if (gen !== fileLoadGen || cur !== fileSession) return; applyFilters(); showOnly('logWrapper'); updateExportVisibility(); }, 50);
     } catch(err) {
       fileError(file, err.message);
@@ -1074,6 +1073,25 @@ function handleFile(file) {
   };
   reader.readAsText(file);
 }
+// A parsed file becomes the File session's lines. The File session keeps its query (P7a, spec IA: each session has its
+// own), so a regex in it is timed on the new lines first (ALV.query.slowRegex): one too slow for this file is dropped,
+// the file opens unfiltered, and a toast says why. The level counts wait for the render (query null: stale until then).
+function loadParsedFile(name, msgs) {
+  discardBacklog(fileSession);
+  resetLines(fileSession, msgs);
+  fileSession.query = null;   // not filtered yet: rendered by the caller, or by selectSession if the user switched away meanwhile
+  if (name) fileSession.name = name;   // the SESSIONS row shows it
+  const slow = ALV.query.slowRegex(fileSession.filter, msgs, guardClock);
+  if (slow) {
+    fileSession.filter = ALV.query.build('', fileSession.queryOpts, deviceInfo).q;
+    fileSession.queryText = '';
+    if (queryBar && queryBar.restore) queryBar.restore(fileSession);
+    // slow.cause, not slow.reason: the next step here is about the file, not the bar.
+    ALV.ui.toast({ kind: 'info', title: `Filter cleared on ${name || 'this file'}`, desc: `${slow.cause}. Showing all lines. Make the regex more specific to filter this file.` });
+  }
+  shellSync();
+}
+
 // A file the viewer cannot read: an error toast (it stays until dismissed) that says what happened and what to do
 // next, in the spec's invalid-file copy (Drop overlay), in place of the legacy alert.
 function fileError(file, why) {
@@ -1964,13 +1982,21 @@ function updateExportVisibility() {
 // Each session has its own query (P7a). setQuery applies `text` under the Aa / .* modes `opts` ({ case, regex }) to the
 // session on screen and to no other. It compiles `text` (assets/js/query.js); an invalid query changes nothing and returns
 // the error ({ start, end, msg }), so the last valid filter stays applied. When the compiled filter differs from the
-// session's, it becomes the session's filter and the session is refiltered at once. The text and modes are kept on the
+// session's, it is timed on the session's lines first (ALV.query.slowRegex): a regex that would freeze the viewer is
+// refused like an invalid one. Otherwise it becomes the session's filter and the session is refiltered at once. The text
+// and modes are kept on the
 // session on every success, also when the filter is the same (a trailing space), so the bar shows them on return.
 function setQuery(text, opts) {
   const s = cur, o = Object.freeze({ case: !!(opts && opts.case), regex: !!(opts && opts.regex) });
   const r = ALV.query.build(text, o, deviceInfo);
   if (r.error) return r.error;
-  if (r.q.key !== s.filter.key) { s.filter = r.q; applyFilters(); }
+  if (r.q.key !== s.filter.key) {
+    // Only here, on a filter change: never per line, per flush or per row. A query with no regex term costs nothing.
+    const slow = ALV.query.slowRegex(r.q, s.all, guardClock);
+    if (slow) return slow;
+    s.filter = r.q;
+    applyFilters();
+  }
   s.queryText = text; s.queryOpts = o;
   return null;
 }

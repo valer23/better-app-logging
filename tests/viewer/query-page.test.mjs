@@ -15,6 +15,9 @@ const frame = (i, o = {}) => JSON.stringify({ type: 'log', ts: `2026 Oct 14 15:5
 function boot() {
   const doc = stickyDocument();
   const { api, run } = loadLegacy(['handleWsMsg', 'flushBatch', 'clearLogs', 'handleFile', 'selectSession', 'togglePause'], { document: doc });
+  // The regex guard times real regexes on a real clock; the drain's flush budget keeps the sandbox's frozen performance.now.
+  run('globalThis').__realNow = () => performance.now();
+  run('guardClock = () => __realNow()');
   let n = 0;
   return {
     api, run, doc,
@@ -291,4 +294,62 @@ test('a file load leaves the File session stale (query null) until it renders, a
   assert.deepEqual([v.run('shellState().stale'), v.run('fileSession.filter === __f')], [true, true]);
   v.run('applyFilters()');
   assert.deepEqual([v.run('shellState().stale'), v.run('fileSession.query === __f'), v.run('fileSession.filtered.length')], [false, true, 1]);
+});
+
+test('a regex the guard refuses changes nothing: setQuery returns the error, and the session\'s filter, text and filtered list stay', () => {
+  const v = boot();
+  v.send(60); v.api.flushBatch();
+  v.bar('tag:bt');
+  v.run('__f = cur.filter; __filtered = cur.filtered');
+  const err = v.run("setQuery('/(.*){2}z/', {})");   // cubic: refused on any lines (the probe extrapolates to 1 024 chars)
+  assert.match(err.msg, /^Invalid regex: It would take about [\d\u2009]+ ms on one of these lines and can freeze the viewer\. Make it more specific, for example with fewer \.\* or a \^ anchor\. The last valid filter is still applied\.$/);
+  assert.deepEqual([v.run('cur.filter === __f'), v.run('cur.queryText'), v.run('cur.filtered === __filtered')], [true, 'tag:bt', true]);
+  v.bar('/(.*){2}z/');
+  // The sticky test document's getAttribute is a stub, its classList is real (tests/viewer/_load.mjs); querybar.test covers aria-invalid.
+  assert.deepEqual([v.doc.getElementById('queryError').hidden, v.doc.getElementById('queryBox').classList.contains('invalid')], [false, true]);
+  assert.match(v.doc.getElementById('queryErrorText').textContent, /^Invalid regex: It would take about /);
+});
+
+test('the guard runs only when the compiled filter changes: a trailing space costs no probe', () => {
+  const v = boot();
+  v.send(30); v.api.flushBatch();
+  v.run('__probes = 0; __sr = ALV.query.slowRegex; ALV.query = Object.assign({}, ALV.query, { slowRegex: (...a) => { __probes++; return __sr(...a); } })');
+  v.bar('/line \\d/');
+  v.bar('/line \\d/  ');
+  v.bar('tag:bt');
+  assert.equal(v.run('__probes'), 2, 'the regex filter and the tag filter: the trailing space compiles to the same key');
+  assert.equal(v.run('cur.queryText'), 'tag:bt');
+});
+
+test('a file whose lines make the File session\'s regex too slow opens unfiltered, with a toast', () => {
+  const v = boot();
+  v.api.selectSession(v.run('fileSession'));
+  v.run(`resetLines(fileSession, Array.from({ length: 10 }, (_, i) => (${JSON.stringify(fileLine())}))); applyFilters()`);
+  // Quadratic in a word run: fine on short words, too slow on 8 000-character ones. A real clock on a shared machine: up
+  // to 3 applies, so a refusal that does not repeat (the machine, not the regex) cannot fail the test.
+  for (let i = 0; i < 3 && v.run('fileSession.queryText') !== '/\\w+@\\w+/'; i++) v.bar('/\\w+@\\w+/');
+  assert.equal(v.run('fileSession.queryText'), '/\\w+@\\w+/', 'accepted on short lines');
+  const big = JSON.stringify(Array.from({ length: 50 }, () => fileLine({ msg: 'a'.repeat(8000) })));
+  v.run(`__toasts = []; ALV.ui.toast = s => { __toasts.push(s); return { id: 0, dismiss() {} }; }; loadParsedFile('big.txt', ${big})`);
+  assert.deepEqual([v.run('fileSession.queryText'), v.run('fileSession.filter.key') === v.run("ALV.query.build('', {}, deviceInfo).q.key")], ['', true]);
+  // As JSON: the array is the sandbox realm's, and a strict deepEqual compares prototypes across realms.
+  assert.equal(v.run('JSON.stringify(__toasts.map(t => [t.kind, t.title]))'), JSON.stringify([['info', 'Filter cleared on big.txt']]));
+  assert.match(v.run('__toasts[0].desc'), /^It (would take|takes) about .+\. Showing all lines\. Make the regex more specific to filter this file\.$/);
+});
+
+test('the bar shows the cleared query after a file load drops the File session\'s regex', { todo: 'Task 4: queryBar.restore' }, () => {
+  const v = boot();
+  v.api.selectSession(v.run('fileSession'));
+  v.run(`resetLines(fileSession, Array.from({ length: 10 }, (_, i) => (${JSON.stringify(fileLine())}))); applyFilters()`);
+  // Quadratic in a word run: fine on short words, too slow on 8 000-character ones. A real clock on a shared machine: up
+  // to 3 applies, so a refusal that does not repeat (the machine, not the regex) cannot fail the test.
+  for (let i = 0; i < 3 && v.run('fileSession.queryText') !== '/\\w+@\\w+/'; i++) v.bar('/\\w+@\\w+/');
+  assert.equal(v.run('fileSession.queryText'), '/\\w+@\\w+/', 'accepted on short lines');
+  const big = JSON.stringify(Array.from({ length: 50 }, () => fileLine({ msg: 'a'.repeat(8000) })));
+  v.run(`__toasts = []; ALV.ui.toast = s => { __toasts.push(s); return { id: 0, dismiss() {} }; }; loadParsedFile('big.txt', ${big})`);
+  assert.deepEqual([v.run('fileSession.queryText'), v.run('fileSession.filter.key') === v.run("ALV.query.build('', {}, deviceInfo).q.key")], ['', true]);
+  // As JSON: the array is the sandbox realm's, and a strict deepEqual compares prototypes across realms.
+  assert.equal(v.run('JSON.stringify(__toasts.map(t => [t.kind, t.title]))'), JSON.stringify([['info', 'Filter cleared on big.txt']]));
+  assert.match(v.run('__toasts[0].desc'), /^It (would take|takes) about .+\. Showing all lines\. Make the regex more specific to filter this file\.$/);
+  assert.equal(v.doc.getElementById('queryInput').value, '', 'the bar shows the cleared query');
 });
