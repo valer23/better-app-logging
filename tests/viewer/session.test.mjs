@@ -236,7 +236,7 @@ test('each session renders into its own tbody: the legacy script looks #tbody up
 test('dev-bench.js offers the behind, switch and refilter scenarios and reports their checks', () => {
   const src = read(path.join(ASSETS, 'js', 'dev-bench.js'));
   assert.match(src, /\['follow', 'read', 'paused', 'behind', 'switch', 'refilter'\]/);
-  for (const key of ['liveRefilters', 'liveQueryKept', 'fileQueryKept', 'liveKeptFiltering', 'liveCountsOk', 'guardMs',
+  for (const key of ['liveRefilters', 'liveQueryKept', 'fileQueryKept', 'liveKeptFiltering', 'liveCountsOk', 'fileChanges', 'fileSetErrors', 'guardMs',
     'liveKeyKeptAfterRefusals', 'barText']) assert.ok(src.includes(key), `P7a result key ${key}`);
   for (const key of ['maxLiveRows', 'fileRowsMutated', 'fileHasLiveLines', 'switchLiveMsMax', 'switchFileMsMax',
     'liveRowsAfterReturn', 'liveTailOk', 'restoreOk']) assert.ok(src.includes(key), `result key ${key}`);

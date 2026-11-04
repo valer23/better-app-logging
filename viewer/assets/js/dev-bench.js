@@ -181,7 +181,10 @@
   // (a line still in pendingBatch is not filtered yet); the check waits until Live has flushed a later one, so a loaded machine
   // that lags the drain cannot read as "stopped filtering". On main the stale drain stops filtering: no such line.
   const flushedSeq = () => { const a = liveSession.all; return a.length ? a[a.length - 1].seq : -1; };
-  const sw = { k: -1, phase: 0, liveKey0: null, fileKey: null, liveMs: [], fileMs: [], setMs: [], seqAway: 0, liveKept: true, fileKept: true, keptFiltering: true, tailOk: true };
+  // fileChanges: the cycles whose apply really changed File's filter (fileQueryKept alone cannot say: it compares with the key read
+  // after the apply). fileSetErrors: every refusal of one (the guard, on a loaded machine); such a cycle measured a switch with no change.
+  const sw = { k: -1, phase: 0, liveKey0: null, fileKey: null, liveMs: [], fileMs: [], setMs: [], seqAway: 0, liveKept: true, fileKept: true, keptFiltering: true, tailOk: true,
+    fileChanges: 0, fileSetErrors: [] };
   function switchTick(elapsed) {
     const t = document.getElementById('logTable');
     if (sw.liveKey0 === null) {
@@ -192,10 +195,12 @@
     if (k < 0 || k > 4) return;
     if (k !== sw.k) {                                  // change File's filter
       sw.k = k; sw.phase = 0;
-      const t0 = performance.now();
-      applyText(FILE_QUERIES[k % 3], {});
+      const keyBefore = keyOf(fileSession), t0 = performance.now();
+      const err = applyText(FILE_QUERIES[k % 3], {});
       sw.setMs.push(performance.now() - t0);
       sw.fileKey = keyOf(fileSession);
+      if (err) sw.fileSetErrors.push(`${FILE_QUERIES[k % 3]}: ${err.msg || err}`);
+      else if (sw.fileKey !== keyBefore) sw.fileChanges++;
       sw.seqAway = flushedSeq();
     } else if (sw.phase === 0 && at >= 1000 && flushedSeq() > sw.seqAway) {   // to Live, once a later line was flushed into it
       sw.phase = 1;
@@ -222,7 +227,7 @@
     const want = gate ? ALV.counts.recount(ALV.counts.create(), s.all, gate).lvl : null;
     return {
       cycles: sw.liveMs.length, switchLiveMsMax: max(sw.liveMs), switchLiveMsMed: med(sw.liveMs), switchFileMsMax: max(sw.fileMs),
-      fileSetQueryMsMax: max(sw.setMs), liveRefilters, liveQueryKept: sw.liveKept, fileQueryKept: sw.fileKept,
+      fileSetQueryMsMax: max(sw.setMs), fileChanges: sw.fileChanges, fileSetErrors: sw.fileSetErrors, liveRefilters, liveQueryKept: sw.liveKept, fileQueryKept: sw.fileKept,
       liveKeptFiltering: sw.keptFiltering, liveTailOk: sw.tailOk,
       liveCountsOk: want ? want.every((n, i) => n === s.counts.lvl[i]) : null,   // null on main (no per-session query)
     };

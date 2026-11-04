@@ -245,9 +245,17 @@ function runBench(search, before = null) {
 }
 
 test('dev-bench scenario=switch: Live keeps its query while File\'s filter changes five times; no Live refilter; the documented fields', () => {
-  const r = runBench('?bench=2000&scenario=switch&secs=14&cap=3000&q=tag%3Ao');
+  // The guard runs on a real clock: a refusal of File's regex on a loaded machine (the machine, not the regex) costs a cycle's
+  // change, so retry up to 3 times, logging each retry; a run with no refusal must change File's filter in all five cycles.
+  let r = null;
+  for (let i = 0; i < 3 && !(r && r.fileSetErrors.length === 0); i++) {
+    r = runBench('?bench=2000&scenario=switch&secs=14&cap=3000&q=tag%3Ao');
+    if (r.fileSetErrors.length) console.log(`switch smoke: run ${i + 1} had File's filter refused (the machine, not the regex): ${Array.from(r.fileSetErrors).join(' | ')}`);
+  }
   assert.equal(r.scenario, 'switch');
   assert.deepEqual([r.cycles, r.liveRefilters, r.liveQueryKept, r.fileQueryKept, r.liveKeptFiltering, r.liveCountsOk], [5, 0, true, true, true, true]);
+  // fileQueryKept compares with the key read after the apply, so an apply that did nothing passes it: only a changed key shows the premise held.
+  assert.deepEqual([r.fileChanges, Array.from(r.fileSetErrors)], [5, []], 'File\'s filter changed in every cycle, none refused');
   for (const f of ['switchLiveMsMax', 'switchLiveMsMed', 'switchFileMsMax', 'fileSetQueryMsMax', 'maxLiveRows', 'liveTailOk']) assert.ok(f in r, f);
 });
 
@@ -315,6 +323,30 @@ test('setQuery changes only the shown session: a filter on File leaves Live\'s q
   v.run('__refilters = 0; __rf = refilterSession; refilterSession = s => { if (s === liveSession) __refilters++; return __rf(s); }');
   v.api.selectSession(v.run('liveSession'));
   assert.equal(v.run('__refilters'), 0, 'Live\'s own query did not change: no refilter on the switch');
+});
+
+test('D16: a device toggle while File is shown rewrites File\'s query, not Live\'s (sidebar row, status-bar button and device chip alike)', () => {
+  const v = boot();
+  v.send(30); v.api.flushBatch();
+  v.bar('tag:bt');
+  v.run('__liveF = liveSession.filter; __liveFiltered = liveSession.filtered');
+  v.run(`resetLines(fileSession, [${JSON.stringify(fileLine({ tag: 'kernel' }))}, ${JSON.stringify(fileLine({ platform: 'android' }))}]); fileSession.query = null`);
+  v.api.selectSession(v.run('fileSession'));
+  const fileKey0 = v.run('fileSession.filter.key');
+  v.run("togglePlatform('ios')");   // what a SESSIONS device row and the status bar's device button call
+  assert.equal(v.run('fileSession.queryText'), 'dev:android', 'File\'s own text gains the dev: token');
+  assert.notEqual(v.run('fileSession.filter.key'), fileKey0, 'File refiltered');
+  assert.deepEqual([v.run('shellState().enabled.has("ios")'), v.run('shellState().enabled.has("android")')], [false, true], 'the shown (File) session\'s devices');
+  assert.deepEqual([v.run('liveSession.filter === __liveF'), v.run('liveSession.queryText'), v.run('liveSession.filtered === __liveFiltered')], [true, 'tag:bt', true],
+    'Live: same filter object, same text, same list: nothing rewrote it behind the File view');
+  assert.equal(v.doc.getElementById('queryInput').value, 'dev:android', 'the bar shows File\'s text');
+  // The device chip's click handler is queryBar.toggleDevice(p) (querybar.js): the same rewrite. iOS back on: no dev: token.
+  v.run("queryBar.toggleDevice('ios')");
+  assert.equal(v.run('fileSession.queryText'), '', 'File\'s dev: token is gone');
+  assert.equal(v.run("queryBar.toggleDevice('android'), fileSession.queryText"), 'dev:ios', 'a chip toggle changes File again');
+  assert.deepEqual([v.run('liveSession.filter === __liveF'), v.run('liveSession.queryText')], [true, 'tag:bt']);
+  v.api.selectSession(v.run('liveSession'));
+  assert.deepEqual([v.run('shellState().enabled.size'), v.doc.getElementById('queryInput').value], [2, 'tag:bt'], 'back on Live: both platforms, its own text');
 });
 
 test('a background live session keeps filtering and counting its new lines with its own query while File is shown', () => {
