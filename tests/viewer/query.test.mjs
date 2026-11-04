@@ -455,7 +455,9 @@ test('pid: a number or a numeric string is the line\'s pid; an empty or blank pi
 const S1_MSG = 'Invalid regex: Repeated alternatives that overlap, such as (a|aa)+, can freeze the viewer. The last valid filter is still applied.';
 
 test('S1: a group repeated without bound whose alternatives overlap or can be empty is refused at compile time', () => {
-  for (const re of ['(a|aa)+z', '(\\w|\\d)+z', '(.|\\s)*z', '(a|a)+', '(x|x?)+y', '(a|)+b', '(?:ab|a)*c', '(a|b|ab){2,}c']) {
+  for (const re of ['(a|aa)+z', '(\\w|\\d)+z', '(.|\\s)*z', '(a|a)+', '(x|x?)+y', '(a|)+b', '(?:ab|a)*c', '(a|b|ab){2,}c',
+    // line terminators are atoms too: \n and \r overlap \s, and one multi-line live message (a stack trace) would freeze the drain
+    '(\\n|\\s)+x', '(\\s|\\r)*x', '(\\u2028|\\s)+x', '(\\u2029|\\s)+x']) {
     const r = Q.build(`/${re}/`, {}, {});
     assert.equal(r.q, null, re);
     assert.deepEqual([r.error.msg, r.error.start, r.error.end], [S1_MSG, 0, re.length + 2], re);

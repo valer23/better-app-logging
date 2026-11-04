@@ -240,9 +240,9 @@
   // (2) polynomial backtracking (\s.*.*.*z, \w+\w+z, (.*){2}z, a.*a.*z): its cost depends on the lines, so slowRegex below
   //     times it on the session's own lines when a filter is applied (the page injects the clock). A leading .* is not
   //     among them: compile drops it from the regex a line is tested with (below), so .*.*.*z runs as z.
-  // Atoms are compared by the characters of ALPHA they match (exact for literals, escapes, classes and the dot). A group or
+  // Atoms are compared by the characters of ALPHA they match (exact for literals, escapes, classes and the dot; the line terminators are in ALPHA, so \n and \s overlap). A group or
   // a quantified atom inside an alternative is not judged here; slowRegex times it.
-  const ALPHA = (() => { const a = ['\t', '\u00e9', '\u00df', '\u4e2d', '\u00a0']; for (let c = 0x20; c < 0x7f; c++) a.push(String.fromCharCode(c)); return a; })();
+  const ALPHA = (() => { const a = ['\t', '\n', '\r', '\u2028', '\u2029', '\u00e9', '\u00df', '\u4e2d', '\u00a0']; for (let c = 0x20; c < 0x7f; c++) a.push(String.fromCharCode(c)); return a; })();
   const skipClass = (src, i, to) => { i++; if (src[i] === '^') i++; if (src[i] === ']') i++; while (i < to && src[i] !== ']') { if (src[i] === '\\') i++; i++; } return i; };
   // The atom at src[i]: { end, set, opt, q } (set: the ALPHA characters it matches; opt: it can match ''; q: it has a
   // quantifier), or null for a group, an anchor or anything not judged here.
