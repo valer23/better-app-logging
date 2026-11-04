@@ -62,11 +62,16 @@
     let refused = null;             // sig() of the edit apply() was last refused for (basis skips it)
     const opts = () => ({ case: mc, regex: rx });
     const sig = (text, c, r) => `${text}\u0000${c}${r}`;
-    function showError(msg, of = null) {
+    // `passive`: the error is restored by a session switch, not raised by an edit. It shows (red box, aria-invalid, the line's text) but
+    // the line is not an alert while it is restored, so a screen reader announces nothing on a switch (D8: the SESSIONS row's
+    // aria-current and the field's value carry it; the field's aria-describedby still reads the line on focus). role="alert" is set
+    // again before the text of the next error raised by typing or applying is written.
+    function showError(msg, of = null, passive = false) {
       shownErr = msg || null;
       shownSig = msg ? of : null;
       box.classList.toggle('invalid', !!msg);
       setAttr(input, 'aria-invalid', msg ? 'true' : null);
+      if (msg) setAttr($('queryError'), 'role', passive ? null : 'alert');
       setText($('queryErrorText'), msg || '');
       setHidden($('queryError'), !msg);
     }
@@ -92,14 +97,19 @@
     // Writes `text` into the bar and applies it at once, under the modes `o` (the ones the text was read under, else the ones now on).
     function rewrite(text, o = opts()) { mc = o.case; rx = o.regex; input.value = text; return apply(); }
     // What a chip, row or tile fix rewrites: the bar's text when it compiles and the page did not refuse it (the regex guard), else the shown
-    // session's applied text (cur.queryText; the invalid or refused edit is dropped, so the fix always applies).
+    // session's applied text (cur.queryText; the invalid or refused edit is dropped, so the fix always applies). An edit the page
+    // refused (it compiles; only the guard, which build cannot see, said no) is never rebuilt, not even from the applied text under the modes
+    // now on: a refused mode flip would come back as the same text under the same modes, setQuery would refuse it again and the chip would do
+    // nothing. It rewrites the applied text under the modes it was applied under, and rewrite() puts Aa and .* back to them.
     // The text and the modes it compiles under travel together, and the rewrite is applied under those modes: the bar's text with the modes now on, else the
     // applied text with the modes now on when it compiles under them, else the applied text with the modes it was applied under (cur.queryOpts) (.* turned on over `a(`
     // fails, the literal filter stays, and a chip on that literal must not be compiled as a regex).
     function basis() {
       const d = state().devices, s = state().cur;
       const o = opts();
-      if (sig(input.value, mc, rx) !== refused && Q.build(input.value, o, d).q) return { text: input.value, o };
+      const ok = Q.build(input.value, o, d).q;
+      if (sig(input.value, mc, rx) === refused && ok) return { text: s.queryText, o: s.queryOpts };   // refused by the page, not by a parse error
+      if (ok) return { text: input.value, o };
       if (Q.build(s.queryText, o, d).q) return { text: s.queryText, o };
       return { text: s.queryText, o: s.queryOpts };
     }
@@ -267,7 +277,7 @@
         else if (r.q.key !== s.filter.key) { const id = ++pending; win.setTimeout(() => { if (id === pending) apply(); }, DEBOUNCE_MS); }
       }
       refused = err ? sig(input.value, mc, rx) : null;
-      showError(err, refused);
+      showError(err, refused, true);   // passive: a switch announces nothing
     }
     // The page changed `s`'s applied query itself (the file-load guard): its draft goes, and the bar shows it if it is on screen.
     function restore(s) {

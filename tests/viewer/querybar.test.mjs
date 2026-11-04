@@ -8,7 +8,8 @@ import { pageScriptSrcs } from './_load.mjs';
 import { fakePage, mount, texts } from './_fake.mjs';
 
 const T = ' ';
-// refuse: a text the fake setQuery refuses as the page's regex guard would (it compiles, but is "too slow").
+// refuse: a text the fake setQuery refuses as the page's regex guard would (it compiles, but is "too slow"), or a function
+// (text, opts) → boolean for a guard that looks at the modes too (the page's slowRegex only runs under regex mode).
 function barPage({ refuse = null } = {}) {
   const p = fakePage({ files: ['dom.js', 'keys.js', 'ui.js', 'shell.js', 'live.js', 'query.js', 'querybar.js'] });
   mount(p, 'filterbar');
@@ -28,7 +29,7 @@ function barPage({ refuse = null } = {}) {
   const actions = {
     setQuery(text, opts) {
       calls.push(['setQuery', text, { ...opts }]);
-      if (text === refuse) return { start: 0, end: text.length, msg: 'Invalid regex: It would take about 99 ms on one of these lines and can freeze the viewer. The last valid filter is still applied.' };
+      if (typeof refuse === 'function' ? refuse(text, opts) : text === refuse) return { start: 0, end: text.length, msg: 'Invalid regex: It would take about 99 ms on one of these lines and can freeze the viewer. The last valid filter is still applied.' };
       const s = st.cur, o = Object.freeze({ case: !!opts.case, regex: !!opts.regex });
       const r = Q.build(text, o, devices);
       if (r.error) return r.error;
@@ -557,6 +558,61 @@ test('a chip on a refused text rewrites the session\'s applied text, not the ref
   $('levelChips').children[0].click();   // Verbose off
   assert.match(live.queryText, /^level:\S+ tag:bt$/, 'rewritten over the applied text');
   assert.equal(live.filter.levels, 62);
+});
+
+test('a chip after the page refused a mode flip rewrites the applied text under its applied modes, never the refused edit again (R2 #2)', () => {
+  const { p, $, type, calls, live } = barPage({ refuse: (text, o) => o.regex && text === 'a.b.c' });
+  type('a.b.c'); p.advance(100);   // applied as a literal: .* is off
+  assert.deepEqual([live.queryText, live.queryOpts.regex], ['a.b.c', false]);
+  $('queryRegexBtn').click();      // the guard refuses this text under regex mode
+  assert.equal($('queryError').hidden, false, 'refused: the alert line shows');
+  calls.length = 0;
+  $('levelChips').children[0].click();   // Verbose off
+  const sets = calls.filter(c => c[0] === 'setQuery');
+  assert.equal(sets.length, 1);
+  assert.deepEqual(sets[0][2], { case: false, regex: false }, 'applied under the modes it was applied under, not the refused ones');
+  assert.equal(sets[0][1], 'level:D+ a.b.c');
+  assert.deepEqual([live.queryText, live.queryOpts.regex, live.filter.levels], ['level:D+ a.b.c', false, 62], 'the chip applied');
+  assert.deepEqual([$('queryInput').value, $('queryRegexBtn').getAttribute('aria-pressed'), $('queryError').hidden], ['level:D+ a.b.c', 'false', true], 'the bar shows what was applied');
+});
+
+test('a switch back to a draft with an error shows the red box, aria-invalid and the text, but not as an alert; a fresh error is an alert again (R2 #3, D8)', () => {
+  const { p, $, st, bar, type, live, file } = barPage();
+  const role = () => $('queryError').getAttribute('role');
+  $('queryError').setAttribute('role', 'alert');   // as the page ships it
+  type('tag:bt'); p.advance(100);
+  type('tag:bt tg:x'); p.advance(100);
+  assert.deepEqual([$('queryError').hidden, role()], [false, 'alert'], 'an error raised by typing is announced');
+  st.cur = file; bar.sync();
+  assert.equal($('queryError').hidden, true);
+  st.cur = live; bar.sync();
+  assert.deepEqual([$('queryBox').className, $('queryInput').getAttribute('aria-invalid'), $('queryError').hidden, $('queryErrorText').textContent],
+    ['query invalid', 'true', false, "Unknown field 'tg'. Did you mean tag:?"], 'the error is shown again');
+  assert.equal(role(), null, 'the switch does not make the line an alert: nothing is announced on a switch');
+  st.cur = file; bar.sync();
+  st.cur = live; bar.sync();
+  assert.equal(role(), null, 'and again on the next switch back');
+  type('tag:bt tg:y'); p.advance(100);   // a fresh error from typing
+  assert.equal(role(), 'alert', 'a new error shown from typing is an alert');
+  assert.equal($('queryErrorText').textContent, "Unknown field 'tg'. Did you mean tag:?");
+});
+
+test('a refusal by the page is restored on a switch without the alert role, as a parse error is (R2 #3)', () => {
+  const { p, $, st, bar, type, live, file } = barPage({ refuse: '/slow/' });
+  const role = () => $('queryError').getAttribute('role');
+  $('queryError').setAttribute('role', 'alert');
+  type('tag:bt'); p.advance(100);
+  type('/slow/'); p.advance(100);   // refused by the page: kept with its error
+  assert.equal(role(), 'alert');
+  st.cur = file; bar.sync();
+  st.cur = live; bar.sync();
+  assert.deepEqual([$('queryError').hidden, $('queryInput').getAttribute('aria-invalid'), role()], [false, 'true', null]);
+  assert.match($('queryErrorText').textContent, /^Invalid regex: It would take about/);
+  // a draft cut by a switch before its error showed: the error is computed on return, and is not an alert either
+  type('tag:bt tg:x'); p.advance(50);
+  st.cur = file; bar.sync();
+  st.cur = live; bar.sync();
+  assert.deepEqual([$('queryError').hidden, role()], [false, null]);
 });
 
 test('restore(s) drops the session\'s draft and shows its applied query (the page\'s file-load guard)', () => {
