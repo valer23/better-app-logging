@@ -36,7 +36,8 @@ test('create: live and file sessions share one shape (same keys, same order) wit
   const live = S.create('live', 'Live session'), file = S.create('file', 'trace.log');
   assert.deepEqual(Object.keys(live), Object.keys(file));
   assert.deepEqual(Object.keys(live), ['id', 'kind', 'name', 'all', 'filtered', 'renderedEnd', 'renderFrom',
-    'domStale', 'follow', 'sel', 'query', 'counts', 'scroll', 'discarded', 'overflowed', 'seqFloor', 'dropped',
+    'domStale', 'follow', 'sel', 'query', 'filter', 'queryText', 'queryOpts', 'counts', 'scroll', 'discarded', 'overflowed',
+    'seqFloor', 'dropped',
     'markers', 'gaps', 'tbody']);
   assert.equal(live.counts, null, 'the page gives each session its counts (ALV.counts.create)');
   assert.equal(live.follow, true);
@@ -232,9 +233,11 @@ test('each session renders into its own tbody: the legacy script looks #tbody up
   assert.equal(legacy().split("getElementById('tbody')").length - 1, 1);
 });
 
-test('dev-bench.js offers the behind scenario and reports its checks', () => {
+test('dev-bench.js offers the behind, switch and refilter scenarios and reports their checks', () => {
   const src = read(path.join(ASSETS, 'js', 'dev-bench.js'));
-  assert.match(src, /\['follow', 'read', 'paused', 'behind'\]/);
+  assert.match(src, /\['follow', 'read', 'paused', 'behind', 'switch', 'refilter'\]/);
+  for (const key of ['liveRefilters', 'liveQueryKept', 'fileQueryKept', 'liveKeptFiltering', 'liveCountsOk', 'fileChanges', 'fileSetErrors', 'guardMs',
+    'liveKeyKeptAfterRefusals', 'barText']) assert.ok(src.includes(key), `P7a result key ${key}`);
   for (const key of ['maxLiveRows', 'fileRowsMutated', 'fileHasLiveLines', 'switchLiveMsMax', 'switchFileMsMax',
     'liveRowsAfterReturn', 'liveTailOk', 'restoreOk']) assert.ok(src.includes(key), `result key ${key}`);
 });
@@ -265,4 +268,17 @@ test('the render paths gate on offscreen(s), which also covers a session that is
   for (const name of ['flushBatch', 'renderLiveTail', 'extendReadingWindow', 'dropTrimmedRows', 'prependOlderRows']) {
     assert.match(fnSource(name), /offscreen\(/, `${name} calls offscreen(`);
   }
+});
+
+test('create(): query and filter start null, queryText empty, queryOpts null, in a fixed key order; reset() and discard() leave them', () => {
+  const s = S.create('live', 'Live session');
+  assert.deepEqual([s.query, s.filter, s.queryText, s.queryOpts], [null, null, '', null]);
+  const keys = Object.keys(s);
+  const at = keys.indexOf('query');
+  assert.deepEqual(keys.slice(at, at + 5), ['query', 'filter', 'queryText', 'queryOpts', 'counts']);
+  assert.deepEqual(Object.keys(S.create('file', 'File')), keys, 'every session has the same hidden class');
+  const f = { key: 'x' };
+  s.query = s.filter = f; s.queryText = 'tag:x'; s.queryOpts = { case: true, regex: false };
+  S.reset(s, []); S.discard(s);
+  assert.deepEqual([s.query === f, s.filter === f, s.queryText], [true, true, 'tag:x']);
 });

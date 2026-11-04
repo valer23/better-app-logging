@@ -38,28 +38,28 @@ test('add, remove and recount: tags and apps count every line, an empty app is n
 function model() {
   const s = S.create('live', 'Live session');
   s.counts = C.create();
-  let q = Q.build('', {}, {}).q;
-  let stale = false;   // s.query !== filterGen: the session was away while the query changed
+  let q = Q.build('', {}, {}).q;   // the query `filtered` and the level counts follow (s.query; P7a: per session)
+  let applied = q;                 // the session's applied query (s.filter); stale exactly while applied !== q
   let seq = 0;
   return {
     s,
     get q() { return q; },
-    get stale() { return stale; },
+    get stale() { return applied !== q; },
     append(lines) {
       for (const m of lines) {
         m.seq = seq++;
         s.all.push(m);
         C.add(s.counts, m);
-        if (!stale) { const k = q.gate(m); if (k >= 0) { s.counts.lvl[k]++; if (q.lvOk[k]) s.filtered.push(m); } }
+        { const k = q.gate(m); if (k >= 0) { s.counts.lvl[k]++; if (q.lvOk[k]) s.filtered.push(m); } }
       }
     },
     trim(max, dropAll) {
-      S.trim(s, max, 0.1, dropAll, seq, (all, a, b) => C.remove(s.counts, all, a, b, stale ? null : q.gate));
+      S.trim(s, max, 0.1, dropAll, seq, (all, a, b) => C.remove(s.counts, all, a, b, q.gate));
     },
     clear() { S.reset(s, []); C.recount(s.counts, [], null); },
-    query(text, away) { q = Q.build(text, {}, {}).q; if (away) stale = true; else this.refilter(); },
+    query(text, away) { applied = Q.build(text, {}, {}).q; if (!away) this.refilter(); },
     refilter() {
-      stale = false;
+      q = applied;
       const lv = s.counts.lvl;
       lv.fill(0);
       const out = [];
@@ -90,11 +90,10 @@ test('incremental counts equal a full recount after 2 000 seeded sequences of ap
       else if (op === 8) { const a = r(2) === 0; away[a]++; mdl.query(QUERIES[r(QUERIES.length)], a); }
       else if (mdl.stale) mdl.refilter();
       if (mdl.stale) staleSteps++;
-      const want = C.recount(C.create(), mdl.s.all, mdl.stale ? null : mdl.q.gate);
-      const got = plain(mdl.s.counts);
-      if (mdl.stale) got.lvl = [0, 0, 0, 0, 0, 0];   // a stale session's level counts wait for its refilter
-      assert.deepEqual(got, plain(want), `sequence ${n}, step ${step}, op ${op}`);
-      if (!mdl.stale) assert.deepEqual(Array.from(mdl.s.filtered), Array.from(mdl.s.all).filter(m => { const k = mdl.q.gate(m); return k >= 0 && mdl.q.lvOk[k]; }), `sequence ${n}, step ${step}, op ${op}: filtered`);
+      // P7a: no stale exemption. A stale session keeps its counts and filtered list exact for the query it follows.
+      const want = C.recount(C.create(), mdl.s.all, mdl.q.gate);
+      assert.deepEqual(plain(mdl.s.counts), plain(want), `sequence ${n}, step ${step}, op ${op}`);
+      assert.deepEqual(Array.from(mdl.s.filtered), Array.from(mdl.s.all).filter(m => { const k = mdl.q.gate(m); return k >= 0 && mdl.q.lvOk[k]; }), `sequence ${n}, step ${step}, op ${op}: filtered`);
     }
   }
   // Every op, both values of `away`, both platforms, stale steps and a real discard each happened many times.

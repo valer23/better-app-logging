@@ -196,18 +196,17 @@ test('the retention cap trims the live session while the file session is shown, 
   assert.equal(v.run('fileSession.discarded'), 0);
 });
 
-test('a filter change while the file session is shown leaves live stale; showing live refilters it', () => {
+test('a filter change while the file session is shown applies to File only: Live keeps its query and keeps filtering; showing Live refilters nothing', () => {
   const v = boot();
   v.send(4); v.api.flushBatch();
   v.go('toFile');
   v.run('setQuery(\'"line 1"\')');
   v.send(10, 4); v.api.flushBatch();
-  assert.equal(v.run('liveSession.filtered.length'), 4, 'not filtered while stale');
-  assert.notEqual(v.run('liveSession.query'), v.run('filterGen'));
-  assert.equal(v.run('fileSession.query'), v.run('filterGen'));
+  assert.equal(v.run('liveSession.filtered.length'), 14, 'Live has no filter of its own: every line passes, also while File is shown');
+  assert.equal(v.run('liveSession.query === liveSession.filter'), true, 'Live is not stale');
+  assert.equal(v.run('fileSession.queryText'), '"line 1"');
   v.go('toLive');
-  assert.equal(v.run('liveSession.query'), v.run('filterGen'));
-  assert.deepEqual([...v.run('liveSession.filtered.map(m => m.msg)')], ['line 1', 'line 10', 'line 11', 'line 12', 'line 13']);
+  assert.deepEqual([v.run('liveSession.queryText'), v.run('liveSession.filtered.length')], ['', 14]);
 });
 
 test('a switch does not reset the live selection or Follow; a file session never follows', () => {
@@ -265,7 +264,8 @@ test('Clear on File empties only the file session, and a second file can be load
 test('offscreen gate: a live flush with another session shown keeps the DOM untouched and marks it stale', () => {
   const v = boot();
   v.doc.hidden = false;
-  v.run("cur = ALV.session.create('file', 'f'); cur.tbody = document.getElementById('x')");
+  // P7a: every session has a query (the page sets one at boot); this one copies File's, so shellState can read cur.filter.
+  v.run("cur = ALV.session.create('file', 'f'); cur.tbody = document.getElementById('x'); cur.filter = cur.query = fileSession.filter; cur.queryOpts = fileSession.queryOpts");
   v.send(3); v.api.flushBatch();
   assert.equal(v.run('liveSession.domStale'), true);
   assert.equal(v.run('liveSession.renderedEnd'), 3);
@@ -285,7 +285,7 @@ test('offscreen gate: dropTrimmedRows on an off-screen followed session defers t
   v.doc.hidden = false;
   v.send(3); v.api.flushBatch();
   v.run("liveSession.tbody = { rows: [{ _message: { seq: 0 } }, { _message: { seq: 1 } }, { _message: { seq: 2 } }] }");
-  v.run("cur = ALV.session.create('file', 'f'); cur.tbody = document.getElementById('x')");
+  v.run("cur = ALV.session.create('file', 'f'); cur.tbody = document.getElementById('x'); cur.filter = cur.query = fileSession.filter; cur.queryOpts = fileSession.queryOpts");
   v.run('dropTrimmedRows(liveSession, 2)');
   assert.equal(v.run('liveSession.domStale'), true);
   assert.equal(v.run('liveSession.tbody.rows.length'), 3, 'rows untouched');
@@ -330,7 +330,7 @@ test('switching to a file session whose lines are not filtered yet shows no "no 
   v.go('toLive');                         // away before the 50 ms render: the file session stays unfiltered
   v.go('toFile');                         // selectSession's shellSync() runs before restoreView refilters it
   assert.deepEqual([tile(), said()], ['', []], 'stale: not a no-match state');
-  assert.equal(v.run('fileSession.query === filterGen'), true, 'restoreView refiltered it');
+  assert.equal(v.run('fileSession.query === fileSession.filter'), true, 'restoreView refiltered it');
   assert.equal(v.run('fileSession.filtered.length'), 4);
 });
 
@@ -415,21 +415,35 @@ test('Clear on Live while a file is being read does not cancel the load', () => 
   assert.equal(v.get('fileAll').length, 4);
 });
 
-// Change 5: following Live comes back pinned to the newest line, also after the filter changed on File.
+// Change 5: following Live comes back pinned to the newest line, also after its filter changed while it was away.
 // More than PAGE lines, so a render from the head (a refilter's first page) and the re-pinned tail differ.
+// P7a: a filter change on File no longer reaches Live. Live goes stale the one way left: its dev:<name> filter is
+// recompiled while File is shown (recompileDevNames). dev:pixel names the iPhone (plats 2), then both devices (plats 3):
+// another key, so Live is stale, and every (iOS) line passes either way. __liveRefilters counts Live's refilters from
+// here on, so each test can assert that restoreView's stale branch ran once.
 function followedLiveBehindAFilterChange(v, { sel = -1 } = {}) {
   v.doc.hidden = false;
+  // Through the bar, so the bar's text is Live's (its sync recompiles dev: names from it until Task 4, from Live's
+  // queryText after), and before any line: applied on 1 200 shown lines it would render Live and request a rAF.
+  v.run("deviceInfo.ios = { id: '0000', name: 'Pixel phone' }");
+  v.doc.getElementById('queryInput').value = 'dev:pixel';
+  v.run('queryBar.apply()');
+  assert.equal(v.run('liveSession.filter.plats'), 2, 'dev:pixel names the iPhone');
   v.send(1200); v.api.flushBatch();
   if (sel >= 0) v.run(`liveSession.sel = liveSession.all[${sel}]`);   // Follow stays on (Jump to latest keeps the selection)
   v.go('toFile');
   v.run("setQuery('line')");
+  v.run("deviceInfo.android = { id: 'R5CT', name: 'Pixel 8 Pro' }; recompileDevNames()");
+  assert.deepEqual([v.run('liveSession.filter.plats'), v.run('liveSession.query !== liveSession.filter')], [3, true], 'Live is stale: dev:pixel names both devices now');
   v.send(10, 1200); v.api.flushBatch();
+  v.run('globalThis.__liveRefilters = 0; { const rf = refilterSession; refilterSession = s => { if (s === liveSession) __liveRefilters++; return rf(s); }; }');
 }
 
-test('Live followed behind a filter change on File comes back with its window at the newest line', () => {
+test('Live followed behind a filter change comes back with its window at the newest line', () => {
   const v = boot();
   followedLiveBehindAFilterChange(v);
   v.go('toLive');
+  assert.deepEqual([v.run('__liveRefilters'), v.run('liveSession.query === liveSession.filter')], [1, true], 'restoreView\'s stale branch refiltered Live once');
   assert.equal(v.run('liveSession.filtered.length'), 1210);
   assert.equal(v.run('liveSession.renderedEnd'), 1210);
   assert.equal(v.run('liveSession.follow'), true);
@@ -443,6 +457,7 @@ test('Live followed with a selection behind a filter change: no selection-centre
   v.run('{ const real = buildRow; buildRow = (...a) => (__built++, real(...a)); }');
   v.run('__built = 0');
   v.go('toLive');
+  assert.deepEqual([v.run('__liveRefilters'), v.run('liveSession.query === liveSession.filter')], [1, true], 'restoreView\'s stale branch refiltered Live once');
   assert.equal(v.run('__raf.length'), 0, 'a rAF would centre the selected row and leave the tail unpinned');
   assert.equal(v.run('__built'), 300, 'only the pinned FOLLOW_DOM_CAP tail is built, not a throwaway page around the selection');
   assert.equal(v.run('liveSession.renderedEnd'), 1210);
@@ -456,6 +471,7 @@ test('Live reading (Follow off) behind a filter change still renders around its 
   v.run('liveSession.follow = false');
   v.run('__raf.length = 0');
   v.go('toLive');
+  assert.deepEqual([v.run('__liveRefilters'), v.run('liveSession.query === liveSession.filter')], [1, true], 'restoreView\'s stale branch refiltered Live once');
   assert.equal(v.run('__raf.length'), 1, 'the reader is brought back to the selected row');
   assert.equal(v.run('liveSession.renderedEnd') < 1210, true);
 });
@@ -868,7 +884,7 @@ test('empty states: Clear on Live says "Waiting for new lines…" until a line a
   v.run("resetFilter('all')");
   assert.deepEqual([field.value, v.run('shellState().enabled.size'), v.run('shellState().levels')], ['', 2, 6]);
   assert.equal(v.run('shellState().query'), false);
-  assert.equal(v.run('liveSession.query === filterGen'), true, 'refiltered');
+  assert.equal(v.run('liveSession.query === liveSession.filter'), true, 'refiltered');
 });
 
 test('a file the viewer cannot read raises an error toast that names it, not an alert', () => {

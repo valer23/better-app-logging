@@ -15,6 +15,9 @@ const frame = (i, o = {}) => JSON.stringify({ type: 'log', ts: `2026 Oct 14 15:5
 function boot() {
   const doc = stickyDocument();
   const { api, run } = loadLegacy(['handleWsMsg', 'flushBatch', 'clearLogs', 'handleFile', 'selectSession', 'togglePause'], { document: doc });
+  // The regex guard times real regexes on a real clock; the drain's flush budget keeps the sandbox's frozen performance.now.
+  run('globalThis').__realNow = () => performance.now();
+  run('guardClock = () => __realNow()');
   let n = 0;
   return {
     api, run, doc,
@@ -24,10 +27,10 @@ function boot() {
     // The session's counts, and a full recount of its lines under the active query (null levels while it is stale).
     counts(s = 'liveSession') {
       const plain = c => ({ lvl: [...c.lvl], tags: Array.from(c.tags).map(([k, v]) => `${k}=${v}`).sort(), apps: Array.from(c.apps).map(([k, v]) => `${k}=${v}`).sort() });
-      const stale = run(`${s}.query !== filterGen`);
+      // The counts follow the query `filtered` was built with (P7a): s.query, shown or not; null (a file before its first
+      // refilter) counts no level. No stale exemption: a session's counts are always exact for its own query.
       const got = plain(run(`${s}.counts`));
-      const want = plain(run(`ALV.counts.recount(ALV.counts.create(), ${s}.all, ${stale} ? null : activeQuery.gate)`));
-      if (stale) got.lvl = want.lvl;
+      const want = plain(run(`ALV.counts.recount(ALV.counts.create(), ${s}.all, ${s}.query === null ? null : ${s}.query.gate)`));
       return [got, want];
     },
   };
@@ -36,13 +39,21 @@ function boot() {
 test('setQuery refilters only when the compiled filter changed, and an invalid query changes nothing', () => {
   const v = boot();
   v.send(30); v.api.flushBatch();
+  // P7a: no filterGen; the shown session's filter key says whether a call applied a new filter, and it is never stale after one.
+  const key = () => v.run('cur.filter.key'), fresh = () => v.run('cur.query === cur.filter');
+  const key0 = key();
   assert.equal(v.run('setQuery(\'"line 1"\')'), null);
-  assert.equal(v.run('filterGen'), 1);
+  const key1 = key();
+  assert.notEqual(key1, key0);
+  assert.equal(fresh(), true);
   assert.deepEqual(v.run('liveSession.filtered.map(m => m.msg)').join(','), 'line 1,line 10,line 11,line 12,line 13,line 14,line 15,line 16,line 17,line 18,line 19');
   v.run('setQuery(\'"line 1"  \')');
-  assert.equal(v.run('filterGen'), 1, 'the same filter compiles to the same key: no refilter');
+  assert.equal(key(), key1, 'the same filter compiles to the same key: no refilter');
+  assert.equal(fresh(), true);
   v.run('setQuery(\'/line 1/\', { regex: true })');
-  assert.equal(v.run('filterGen'), 2);
+  const key2 = key();
+  assert.notEqual(key2, key1);
+  assert.equal(fresh(), true);
   v.run('setQuery(\'/line 1/ -level:V\')');
   assert.equal(v.run('liveSession.filtered.length'), 9, 'line 1 and 10-19 without the VERBOSE ones (12, 18)');
   assert.equal(v.run('setQuery("tag:bt")'), null);
@@ -50,7 +61,7 @@ test('setQuery refilters only when the compiled filter changed, and an invalid q
   assert.equal(v.run("liveSession.filtered.filter(m => m.lvl === 'VERBOSE').length"), 3);
   assert.match(v.run('setQuery("tg:bt").msg'), /^Unknown field 'tg'/);
   assert.match(v.run('setQuery("line (2", { regex: true }).msg'), /^Invalid regex: /);
-  assert.deepEqual([v.run('filterGen'), v.run('liveSession.filtered.length')], [4, 8], 'an invalid query changes nothing');
+  assert.deepEqual([key() === v.run("ALV.query.build('tag:bt', {}, deviceInfo).q.key"), v.run('liveSession.filtered.length'), fresh()], [true, 8, true], 'an invalid query changes nothing');
 });
 
 test('an invalid edit in the bar never blocks a level chip, a sidebar row or a tile fix: each rewrites the last valid text and applies', () => {
@@ -77,27 +88,29 @@ test('a dev:<name> query follows deviceInfo (q.usesDevNames): a device picked or
   v.send(4, 'android'); v.send(4, 'ios'); v.api.flushBatch();
   v.run("deviceInfo.android = { id: 'R5CT', name: 'Pixel 8 Pro' }");
   v.bar('dev:pixel');
-  assert.deepEqual([v.run('activeQuery.usesDevNames'), v.run('activeQuery.plats'), v.run('liveSession.filtered.length')], [true, 1, 4]);
+  assert.deepEqual([v.run('liveSession.filter.usesDevNames'), v.run('liveSession.filter.plats'), v.run('liveSession.filtered.length')], [true, 1, 4]);
   v.run("deviceInfo.android = { id: 'R9XY', name: 'Galaxy S24' }; shellSync()");   // the device picker (the shell tick does the same)
-  assert.deepEqual([v.run('activeQuery.plats'), v.run('liveSession.filtered.length')], [0, 0], 'dev:pixel names no device now');
+  assert.deepEqual([v.run('liveSession.filter.plats'), v.run('liveSession.filtered.length')], [0, 0], 'dev:pixel names no device now');
   v.run("deviceInfo.ios = { id: '0000', name: 'Pixel phone' }; shellSync()");
-  assert.deepEqual([v.run('activeQuery.plats'), v.run('liveSession.filtered.length')], [2, 4]);
+  assert.deepEqual([v.run('liveSession.filter.plats'), v.run('liveSession.filtered.length')], [2, 4]);
   v.bar('dev:ios');
-  const gen = v.run('filterGen');
+  v.run('__f = liveSession.filter');
   v.run("deviceInfo.ios = { id: '', name: '' }; shellSync()");
-  assert.equal(v.run('filterGen'), gen, 'no device name in the query: nothing recompiles');
+  assert.equal(v.run('liveSession.filter === __f'), true, 'no device name in the query: nothing recompiles');
 });
 
 test('counts equal a full recount after a seeded sequence of frames, flushes, trims, a resume after overflow, Clear, filter and level changes and a session switch', () => {
   const v = boot();
   v.run('MAX_RETAINED = 120');
+  const fl = i => ({ ts: '', pid: 1, tid: 0, tag: TAGS[i % 4], app: i % 3 ? '' : 'com.x', lvl: LV[i % 6], msg: `line ${i}`, platform: i % 2 ? 'ios' : 'android' });
+  v.run(`resetLines(fileSession, ${JSON.stringify(Array.from({ length: 40 }, (_, i) => fl(i)))}); fileSession.query = null`);
   const r = rng(5);
   const ran = new Array(12).fill(0);   // a generator that skips ops would pass vacuously, so every op is tallied and asserted below
-  const seen = { liveLines: 0, staleTrims: 0, staleFlushes: 0, clears: 0, resumes: 0, fileSteps: 0 };
+  const seen = { liveLines: 0, awayFlushes: 0, awayTrims: 0, fileFilterChanges: 0, clears: 0, resumes: 0, fileSteps: 0 };
   for (let step = 0; step < 3000; step++) {
     const op = r(12);
     ran[op]++;
-    const staleBefore = v.run('liveSession.query !== filterGen'), discardedBefore = v.run('liveSession.discarded'), lenBefore = v.run('liveSession.all.length');
+    const awayBefore = v.run('cur !== liveSession'), fileFilterBefore = v.run('fileSession.filter'), discardedBefore = v.run('liveSession.discarded'), lenBefore = v.run('liveSession.all.length');
     if (op < 5) v.send(1 + r(60), r(2) ? 'ios' : 'android');
     else if (op === 5) v.api.flushBatch();
     else if (op === 6) v.bar([['', 'tag:bt', 'tag:kernel', 'tag:x'][r(4)], ['', '"line 1"', '2'][r(3)]].join(' '));   // typed text, applied (the level and dev: tokens go with it)
@@ -112,20 +125,34 @@ test('counts equal a full recount after a seeded sequence of frames, flushes, tr
     }
     if (v.run('liveSession.all.length') > 0) seen.liveLines++;
     if (v.run('cur') !== v.run('liveSession')) seen.fileSteps++;
-    if (staleBefore && v.run('liveSession.all.length') > lenBefore) seen.staleFlushes++;
-    if (staleBefore && v.run('liveSession.discarded') > discardedBefore) seen.staleTrims++;
-    const [got, want] = v.counts();
-    assert.deepEqual(got, want, `step ${step}, op ${op}`);
+    if (awayBefore && v.run('liveSession.all.length') > lenBefore) seen.awayFlushes++;
+    if (awayBefore && v.run('liveSession.discarded') > discardedBefore) seen.awayTrims++;
+    assert.equal(v.run('liveSession.query === liveSession.filter'), true, `step ${step}: Live is never stale`);
+    if (v.run('fileSession.filter') !== fileFilterBefore && v.run('liveSession.all.length') > 0) seen.fileFilterChanges++;
+    for (const s of ['liveSession', 'fileSession']) {
+      const [got, want] = v.counts(s);
+      assert.deepEqual(got, want, `step ${step}, op ${op}: ${s} counts`);
+      // filtered equals a full refilter of all under the query it follows (in order, same objects); null: not filtered yet
+      assert.equal(v.run(`(() => { const s = ${s}; if (s.query === null) return true;
+        const w = s.all.filter(m => { const k = s.query.gate(m); return k >= 0 && s.query.lvOk[k]; });
+        return w.length === s.filtered.length && w.every((m, i) => m === s.filtered[i]); })()`), true, `step ${step}, op ${op}: ${s} filtered`);
+    }
   }
   v.api.selectSession(v.run('liveSession'));
   v.api.flushBatch();
-  const [got, want] = v.counts();
-  assert.deepEqual(got, want, 'back on Live, refiltered');
+  for (const s of ['liveSession', 'fileSession']) {
+    const [got, want] = v.counts(s);
+    assert.deepEqual(got, want, `back on Live, refiltered: ${s} counts`);
+    assert.equal(v.run(`(() => { const s = ${s}; if (s.query === null) return true;
+      const w = s.all.filter(m => { const k = s.query.gate(m); return k >= 0 && s.query.lvOk[k]; });
+      return w.length === s.filtered.length && w.every((m, i) => m === s.filtered[i]); })()`), true, `back on Live: ${s} filtered`);
+  }
   assert.ok(v.run('liveSession.discarded') > 0, 'the sequence trimmed');
   for (let op = 0; op < 12; op++) assert.ok(ran[op] >= 150, `op ${op} ran ${ran[op]} times`);
   assert.ok(seen.liveLines >= 1000, `the live session held lines at ${seen.liveLines} steps`);
-  assert.ok(seen.staleFlushes >= 5, `lines ingested while the live session was stale: ${seen.staleFlushes}`);
-  assert.ok(seen.staleTrims >= 20, `a trim dropped lines while the live session was stale: ${seen.staleTrims}`);
+  assert.ok(seen.awayFlushes >= 5, `lines ingested while the live session was away: ${seen.awayFlushes}`);
+  assert.ok(seen.awayTrims >= 20, `a trim dropped lines while the live session was away: ${seen.awayTrims}`);
+  assert.ok(seen.fileFilterChanges >= 50, `File's filter changed while Live held lines at ${seen.fileFilterChanges} steps`);
   assert.ok(seen.clears >= 20, `Clear ran ${seen.clears} times`);
   assert.ok(seen.resumes >= 100, `Resume after a backlog overflow ran ${seen.resumes} times`);
   assert.ok(seen.fileSteps >= 500, `a file session was on screen at ${seen.fileSteps} steps`);
@@ -152,10 +179,10 @@ test('dev-bench applies &q (with &case and &re) and &cap before the run and repo
     return v;
   };
   const v = bench('?bench=2000&q=level%3AI%2B%20tag%3Ao%20%22bench%22&case=1&cap=100000');
-  assert.equal(v.run('activeQuery.key'), v.run(`ALV.query.build('level:I+ tag:o "bench"', { case: true }, deviceInfo).q.key`));
+  assert.equal(v.run('liveSession.filter.key'), v.run(`ALV.query.build('level:I+ tag:o "bench"', { case: true }, deviceInfo).q.key`));
   assert.equal(v.run('MAX_RETAINED'), 100000);
   const bad = bench('?bench=2000&q=%2Ftime(%2F&scenario=paused&cap=7');
-  assert.equal(bad.run('filterGen'), 0, 'the invalid query left the filter alone');
+  assert.equal(bad.run('liveSession.filter.key'), bad.run("ALV.query.build('', {}, deviceInfo).q.key"), 'the invalid query left the filter alone');
   assert.equal(bad.run('MAX_RETAINED'), 50000, 'the paused scenario sets its own cap after &cap');
   assert.match(read(path.join(ASSETS, 'js', 'dev-bench.js')), /\bquery, queryError, cap: MAX_RETAINED,/, 'the result reports them');
 });
@@ -165,9 +192,10 @@ test('the no-match tile\'s tag causes come from the tag counts: NOT tag:x on eve
   v.send(8); v.api.flushBatch();             // tags bt_stack, BluetoothGatt, chatty, kernel, twice each
   const causes = text => { v.run(`setQuery(${JSON.stringify(text)})`); return [v.run('shellState().notTag'), v.run('shellState().tag')]; };
   assert.deepEqual(causes('tag:zzz'), ['', 'zzz'], 'no retained line matches tag:zzz');
-  assert.deepEqual(causes('tag:zzz tag:kernel'), ['', ''], 'kernel lines exist: the tag is not why nothing shows');
+  assert.deepEqual(causes('tag:zzz tag:kernel level:none'), ['', ''], 'kernel lines exist: the tag is not why nothing shows (the levels are)');
+  assert.deepEqual(causes('tag:zzz tag:yyy'), ['', 'zzz'], 'no retained line carries either positive tag: the first is named');
   assert.deepEqual(causes('tag:kernel level:none'), ['', ''], 'the levels are the cause');
-  v.run("liveSession.all.forEach(m => { m.tag = 'chatty'; }); ALV.counts.recount(liveSession.counts, liveSession.all, activeQuery.gate)");
+  v.run("liveSession.all.forEach(m => { m.tag = 'chatty'; }); ALV.counts.recount(liveSession.counts, liveSession.all, liveSession.query.gate)");
   assert.deepEqual(causes('-tag:chatty'), ['chatty', ''], 'every retained line carries it');
   assert.deepEqual(causes('-tag:kernel x'), ['', ''], 'lines without kernel exist');
   assert.deepEqual(causes('-tag:chat'), ['chat', '']);
@@ -199,6 +227,63 @@ test('dev-bench read scenario: readPhaseP50Ms and readPhaseP95Ms count only the 
   assert.deepEqual([r.query, r.queryError, r.cap], [null, null, 500000], 'the result reports the query and the cap');
 });
 
+// Loads dev-bench.js with `search`, a scripted clock that also advances with real time (the guard measures real costs),
+// and the bench's tick captured; ticks every 10 ms of scripted time until the result is set.
+function runBench(search, before = null) {
+  const v = boot();
+  const g = v.run('globalThis');
+  g.URLSearchParams = URLSearchParams;
+  const real = () => performance.now(), base = real(), clock = { t: 0 };
+  let tick = null;
+  g.performance = { now: () => clock.t + (real() - base) };
+  g.setInterval = fn => { tick = fn; return 1; };
+  v.run(`location.search = ${JSON.stringify(search)}`);
+  v.run(read(path.join(ASSETS, 'js', 'dev-bench.js')));
+  if (before) before(v);
+  for (clock.t = 10; clock.t <= 30000 && !v.run('window.__benchResult'); clock.t += 10) tick();
+  return v.run('window.__benchResult');
+}
+
+test('dev-bench scenario=switch: Live keeps its query while File\'s filter changes five times; no Live refilter; the documented fields', () => {
+  // The guard runs on a real clock: a refusal of File's regex on a loaded machine (the machine, not the regex) costs a cycle's
+  // change, so retry up to 3 times, logging each retry; a run with no refusal must change File's filter in all five cycles.
+  let r = null;
+  for (let i = 0; i < 3 && !(r && r.fileSetErrors.length === 0); i++) {
+    r = runBench('?bench=2000&scenario=switch&secs=14&cap=3000&q=tag%3Ao');
+    if (r.fileSetErrors.length) console.log(`switch smoke: run ${i + 1} had File's filter refused (the machine, not the regex): ${Array.from(r.fileSetErrors).join(' | ')}`);
+  }
+  assert.equal(r.scenario, 'switch');
+  assert.deepEqual([r.cycles, r.liveRefilters, r.liveQueryKept, r.fileQueryKept, r.liveKeptFiltering, r.liveCountsOk], [5, 0, true, true, true, true]);
+  // fileQueryKept compares with the key read after the apply, so an apply that did nothing passes it: only a changed key shows the premise held.
+  assert.deepEqual([r.fileChanges, Array.from(r.fileSetErrors)], [5, []], 'File\'s filter changed in every cycle, none refused');
+  for (const f of ['switchLiveMsMax', 'switchLiveMsMed', 'switchFileMsMax', 'fileSetQueryMsMax', 'maxLiveRows', 'liveTailOk']) assert.ok(f in r, f);
+});
+
+test('dev-bench scenario=refilter: one entry per query with ms, guardMs, error and kept; &slow=1 adds the refused ones', () => {
+  // The guard runs on a real clock: up to 3 runs, so a refusal of an accepted query that does not repeat (the machine,
+  // not the regex) cannot fail the test.
+  let r = null;
+  for (let i = 0; i < 3 && !(r && r.refilter.slice(0, 7).every(x => x.error === null)); i++) {
+    r = runBench('?bench=2000&scenario=refilter&secs=17&cap=3000&slow=1');
+    for (const x of r.refilter.slice(0, 7)) if (x.error !== null) console.log(`refilter smoke: run ${i + 1} refused an accepted query (the machine, not the regex): ${x.q} -> ${x.error}`);
+  }
+  // Array.from: a test-realm array (r.refilter.map would build one in the sandbox realm, which a strict deepEqual rejects).
+  assert.deepEqual(Array.from(r.refilter, x => [x.q, x.re]), [['level:I+ tag:o "bench"', false], ['level:I+ tag:o -zzzz', false],
+    ['/bench line \\d+ x+$/', false], ['/time ?out/', false], ['', false], ['error timeout disconnect', true], ['/bench\\w*/ /line\\s+\\d+/ /x+$/', false],
+    ['/\\s.*.*.*z/', false], ['/(.*){2}z/', false], ['/\\w+\\w+z/', false]]);
+  for (const x of r.refilter.slice(0, 7)) assert.deepEqual([x.error, typeof x.ms, typeof x.guardMs, typeof x.nsPerLine], [null, 'number', 'number', 'number'], x.q);
+  assert.equal(r.refilter[5].guardMs, 0, 'plain words under .* have no quantifier: not timed');
+  for (const x of r.refilter.slice(7)) assert.match(x.error, /^Invalid regex: It /, x.q);
+  assert.equal(r.liveKeyKeptAfterRefusals, true);
+});
+
+test('dev-bench: readPhase* are null when the read switch never happens, and &q lands in the query bar', () => {
+  const rd = runBench('?bench=2000&scenario=read&secs=5', v => v.run('liveSession.follow = false'));   // already reading: no switch
+  assert.deepEqual([rd.readPhaseP50Ms, rd.readPhaseP95Ms, rd.readPhaseFlushes], [null, null, null]);
+  const r = runBench('?bench=2000&scenario=follow&secs=5&q=tag%3Ao');
+  assert.equal(r.barText, 'tag:o');
+});
+
 test('a {type:"dropped"} frame runs shellSync but writes no visible number: the 250 ms interval owns them (F11)', () => {
   const v = boot();
   v.send(10); v.api.flushBatch();
@@ -221,4 +306,185 @@ test('a session switch shows the shown session\'s numbers at once (selectSession
   assert.equal(count.textContent, '0 of 0 lines');
   v.api.selectSession(v.run('liveSession'));
   assert.equal(count.textContent, '10 of 10 lines');
+});
+
+const fileLine = o => ({ ts: '', pid: 1, tid: 0, tag: 'x', app: '', lvl: 'INFO', msg: 'f', platform: 'ios', ...o });
+
+test('setQuery changes only the shown session: a filter on File leaves Live\'s query, text and filtered list alone, and switching back refilters nothing', () => {
+  const v = boot();
+  v.send(30); v.api.flushBatch();
+  v.bar('tag:bt');
+  v.run('__liveF = liveSession.filter; __liveFiltered = liveSession.filtered');
+  v.run(`resetLines(fileSession, [${JSON.stringify(fileLine({ tag: 'kernel' }))}]); fileSession.query = null`);
+  v.api.selectSession(v.run('fileSession'));
+  v.bar('level:E');
+  assert.equal(v.run('fileSession.queryText'), 'level:E');
+  assert.deepEqual([v.run('liveSession.filter === __liveF'), v.run('liveSession.queryText'), v.run('liveSession.filtered === __liveFiltered')], [true, 'tag:bt', true]);
+  v.run('__refilters = 0; __rf = refilterSession; refilterSession = s => { if (s === liveSession) __refilters++; return __rf(s); }');
+  v.api.selectSession(v.run('liveSession'));
+  assert.equal(v.run('__refilters'), 0, 'Live\'s own query did not change: no refilter on the switch');
+});
+
+test('D16: a device toggle while File is shown rewrites File\'s query, not Live\'s (sidebar row, status-bar button and device chip alike)', () => {
+  const v = boot();
+  v.send(30); v.api.flushBatch();
+  v.bar('tag:bt');
+  v.run('__liveF = liveSession.filter; __liveFiltered = liveSession.filtered');
+  v.run(`resetLines(fileSession, [${JSON.stringify(fileLine({ tag: 'kernel' }))}, ${JSON.stringify(fileLine({ platform: 'android' }))}]); fileSession.query = null`);
+  v.api.selectSession(v.run('fileSession'));
+  const fileKey0 = v.run('fileSession.filter.key');
+  v.run("togglePlatform('ios')");   // what a SESSIONS device row and the status bar's device button call
+  assert.equal(v.run('fileSession.queryText'), 'dev:android', 'File\'s own text gains the dev: token');
+  assert.notEqual(v.run('fileSession.filter.key'), fileKey0, 'File refiltered');
+  assert.deepEqual([v.run('shellState().enabled.has("ios")'), v.run('shellState().enabled.has("android")')], [false, true], 'the shown (File) session\'s devices');
+  assert.deepEqual([v.run('liveSession.filter === __liveF'), v.run('liveSession.queryText'), v.run('liveSession.filtered === __liveFiltered')], [true, 'tag:bt', true],
+    'Live: same filter object, same text, same list: nothing rewrote it behind the File view');
+  assert.equal(v.doc.getElementById('queryInput').value, 'dev:android', 'the bar shows File\'s text');
+  // The device chip's click handler is queryBar.toggleDevice(p) (querybar.js): the same rewrite. iOS back on: no dev: token.
+  v.run("queryBar.toggleDevice('ios')");
+  assert.equal(v.run('fileSession.queryText'), '', 'File\'s dev: token is gone');
+  assert.equal(v.run("queryBar.toggleDevice('android'), fileSession.queryText"), 'dev:ios', 'a chip toggle changes File again');
+  assert.deepEqual([v.run('liveSession.filter === __liveF'), v.run('liveSession.queryText')], [true, 'tag:bt']);
+  v.api.selectSession(v.run('liveSession'));
+  assert.deepEqual([v.run('shellState().enabled.size'), v.doc.getElementById('queryInput').value], [2, 'tag:bt'], 'back on Live: both platforms, its own text');
+});
+
+test('a background live session keeps filtering and counting its new lines with its own query while File is shown', () => {
+  const v = boot();
+  v.run('MAX_RETAINED = 100');
+  v.bar('tag:bt');
+  v.run(`resetLines(fileSession, [${JSON.stringify(fileLine())}]); fileSession.query = null`);
+  v.api.selectSession(v.run('fileSession'));
+  v.bar('level:E');
+  for (let k = 0; k < 6; k++) {
+    const before = v.run('liveSession.filtered.length'), dropped = v.run('liveSession.discarded');
+    v.send(40); v.api.flushBatch();
+    assert.ok(v.run('liveSession.filtered.length') > before || v.run('liveSession.discarded') > dropped, `round ${k}: Live's filtered list grows (or a trim made room)`);
+    assert.equal(v.run("liveSession.filtered.every(m => m.tag.toLowerCase().includes('bt'))"), true, 'filtered with Live\'s own query, not File\'s');
+    const [got, want] = v.counts('liveSession');
+    assert.deepEqual(got, want, `round ${k}: counts equal a recount under liveSession.query`);
+  }
+  assert.ok(v.run('liveSession.discarded') > 0, 'the trims ran (MAX_RETAINED 100)');
+});
+
+test('a file load leaves the File session stale (query null) until it renders, and keeps the File session\'s query', () => {
+  const v = boot();
+  v.api.selectSession(v.run('fileSession'));
+  v.bar('level:W+');
+  v.run('__f = fileSession.filter');
+  v.run(`discardBacklog(fileSession); resetLines(fileSession, [${JSON.stringify(fileLine({ lvl: 'WARN' }))}, ${JSON.stringify(fileLine())}]); fileSession.query = null`);
+  assert.deepEqual([v.run('shellState().stale'), v.run('fileSession.filter === __f')], [true, true]);
+  v.run('applyFilters()');
+  assert.deepEqual([v.run('shellState().stale'), v.run('fileSession.query === __f'), v.run('fileSession.filtered.length')], [false, true, 1]);
+});
+
+test('a regex the guard refuses changes nothing: setQuery returns the error, and the session\'s filter, text and filtered list stay', () => {
+  const v = boot();
+  v.send(60); v.api.flushBatch();
+  v.bar('tag:bt');
+  v.run('__f = cur.filter; __filtered = cur.filtered');
+  const err = v.run("setQuery('/(.*){2}z/', {})");   // cubic: refused on any lines (the probe extrapolates to 1 024 chars)
+  assert.match(err.msg, /^Invalid regex: It would take about [\d\u2009]+ ms on one of these lines and can freeze the viewer\. Make it more specific, for example with fewer \.\* or a \^ anchor\. The last valid filter is still applied\.$/);
+  assert.deepEqual([v.run('cur.filter === __f'), v.run('cur.queryText'), v.run('cur.filtered === __filtered')], [true, 'tag:bt', true]);
+  v.bar('/(.*){2}z/');
+  // The sticky test document's getAttribute is a stub, its classList is real (tests/viewer/_load.mjs); querybar.test covers aria-invalid.
+  assert.deepEqual([v.doc.getElementById('queryError').hidden, v.doc.getElementById('queryBox').classList.contains('invalid')], [false, true]);
+  assert.match(v.doc.getElementById('queryErrorText').textContent, /^Invalid regex: It would take about /);
+});
+
+test('the guard runs only when the compiled filter changes: a trailing space costs no probe', () => {
+  const v = boot();
+  v.send(30); v.api.flushBatch();
+  v.run('__probes = 0; __sr = ALV.query.slowRegex; ALV.query = Object.assign({}, ALV.query, { slowRegex: (...a) => { __probes++; return __sr(...a); } })');
+  v.bar('/line \\d/');
+  v.bar('/line \\d/  ');
+  v.bar('tag:bt');
+  assert.equal(v.run('__probes'), 2, 'the regex filter and the tag filter: the trailing space compiles to the same key');
+  assert.equal(v.run('cur.queryText'), 'tag:bt');
+});
+
+test('a file whose lines make the File session\'s regex too slow opens unfiltered, with a toast', () => {
+  const v = boot();
+  v.api.selectSession(v.run('fileSession'));
+  v.run(`resetLines(fileSession, Array.from({ length: 10 }, (_, i) => (${JSON.stringify(fileLine())}))); applyFilters()`);
+  // Quadratic in a word run: fine on short words, too slow on 8 000-character ones. A real clock on a shared machine: up
+  // to 3 applies, so a refusal that does not repeat (the machine, not the regex) cannot fail the test.
+  for (let i = 0; i < 3 && v.run('fileSession.queryText') !== '/\\w+@\\w+/'; i++) {
+    // A retry here is logged, never hidden: a refusal that only passes on attempt 2 or 3 is the machine or a regression, and the log says which.
+    if (i > 0) console.log(`# real clock: /\\w+@\\w+/ refused on short lines (${v.doc.getElementById('queryErrorText').textContent}); retry ${i}`);
+    v.bar('/\\w+@\\w+/');
+  }
+  assert.equal(v.run('fileSession.queryText'), '/\\w+@\\w+/', 'accepted on short lines');
+  const big = JSON.stringify(Array.from({ length: 50 }, () => fileLine({ msg: 'a'.repeat(8000) })));
+  v.run(`__toasts = []; ALV.ui.toast = s => { __toasts.push(s); return { id: 0, dismiss() {} }; }; loadParsedFile('big.txt', ${big})`);
+  assert.deepEqual([v.run('fileSession.queryText'), v.run('fileSession.filter.key') === v.run("ALV.query.build('', {}, deviceInfo).q.key")], ['', true]);
+  // As JSON: the array is the sandbox realm's, and a strict deepEqual compares prototypes across realms.
+  assert.equal(v.run('JSON.stringify(__toasts.map(t => [t.kind, t.title]))'), JSON.stringify([['info', 'Filter cleared on big.txt']]));
+  assert.match(v.run('__toasts[0].desc'), /^It (would take|takes) about .+\. Showing all lines\. Make the regex more specific to filter this file\.$/);
+});
+
+test('the bar shows the cleared query after a file load drops the File session\'s regex', () => {
+  const v = boot();
+  v.api.selectSession(v.run('fileSession'));
+  v.run(`resetLines(fileSession, Array.from({ length: 10 }, (_, i) => (${JSON.stringify(fileLine())}))); applyFilters()`);
+  // Quadratic in a word run: fine on short words, too slow on 8 000-character ones. A real clock on a shared machine: up
+  // to 3 applies, so a refusal that does not repeat (the machine, not the regex) cannot fail the test.
+  for (let i = 0; i < 3 && v.run('fileSession.queryText') !== '/\\w+@\\w+/'; i++) {
+    // A retry here is logged, never hidden: a refusal that only passes on attempt 2 or 3 is the machine or a regression, and the log says which.
+    if (i > 0) console.log(`# real clock: /\\w+@\\w+/ refused on short lines (${v.doc.getElementById('queryErrorText').textContent}); retry ${i}`);
+    v.bar('/\\w+@\\w+/');
+  }
+  assert.equal(v.run('fileSession.queryText'), '/\\w+@\\w+/', 'accepted on short lines');
+  const big = JSON.stringify(Array.from({ length: 50 }, () => fileLine({ msg: 'a'.repeat(8000) })));
+  v.run(`__toasts = []; ALV.ui.toast = s => { __toasts.push(s); return { id: 0, dismiss() {} }; }; loadParsedFile('big.txt', ${big})`);
+  assert.deepEqual([v.run('fileSession.queryText'), v.run('fileSession.filter.key') === v.run("ALV.query.build('', {}, deviceInfo).q.key")], ['', true]);
+  // As JSON: the array is the sandbox realm's, and a strict deepEqual compares prototypes across realms.
+  assert.equal(v.run('JSON.stringify(__toasts.map(t => [t.kind, t.title]))'), JSON.stringify([['info', 'Filter cleared on big.txt']]));
+  assert.match(v.run('__toasts[0].desc'), /^It (would take|takes) about .+\. Showing all lines\. Make the regex more specific to filter this file\.$/);
+  assert.equal(v.doc.getElementById('queryInput').value, '', 'the bar shows the cleared query');
+});
+
+test('dev:<name> on a background session: the recompile makes it stale, it refilters once when shown; back to its old key is not stale', () => {
+  const v = boot();
+  v.send(4, 'android'); v.send(4, 'ios'); v.api.flushBatch();
+  v.run("deviceInfo.android = { id: 'R5CT', name: 'Pixel 8 Pro' }");
+  v.bar('dev:pixel');
+  v.run(`resetLines(fileSession, [${JSON.stringify(fileLine())}]); fileSession.query = null`);
+  v.api.selectSession(v.run('fileSession'));
+  v.run("deviceInfo.android = { id: 'R9XY', name: 'Galaxy' }; recompileDevNames()");
+  assert.equal(v.run('liveSession.query !== liveSession.filter'), true, 'Live is stale: dev:pixel names no device now');
+  const before = v.run('liveSession.filtered.length');
+  v.send(4, 'android'); v.api.flushBatch();
+  assert.equal(v.run('liveSession.filtered.length'), before + 4, 'until shown, Live follows the query its lines follow');
+  v.run("deviceInfo.android = { id: 'R5CT', name: 'Pixel 8 Pro' }; recompileDevNames()");
+  assert.equal(v.run('liveSession.query === liveSession.filter'), true, 'back to the key its lines follow: that query again, not stale');
+  v.run("deviceInfo.android = { id: 'R9XY', name: 'Galaxy' }; recompileDevNames()");
+  v.run('__n = 0; __rf = refilterSession; refilterSession = s => { __n++; return __rf(s); }');
+  v.api.selectSession(v.run('liveSession'));
+  assert.deepEqual([v.run('__n'), v.run('liveSession.filtered.length')], [1, 0]);
+});
+
+const countTagCause = v => v.run('__tc = 0; __t = ALV.query.tagCause; ALV.query = Object.assign({}, ALV.query, { tagCause: (...a) => { __tc++; return __t(...a); } })');
+
+test('F7: one shellState() computes the tag causes once for notTag and tag; a new state object computes them again', () => {
+  const v = boot();
+  v.send(12); v.api.flushBatch();
+  v.bar('tag:zzz');
+  countTagCause(v);
+  v.run('__st = shellState(); __st.notTag; __st.tag; __st.notTag');
+  assert.equal(v.run('__tc'), 1);
+  assert.equal(v.run('__st.tag'), 'zzz');
+  v.run('shellState().tag');
+  assert.equal(v.run('__tc'), 2);
+});
+
+test('F7 stale guard: while the shown session is stale (a file loaded, not rendered) the causes are empty and tagCause is never asked', () => {
+  const v = boot();
+  v.api.selectSession(v.run('fileSession'));
+  v.bar('tag:zzz');
+  v.run(`resetLines(fileSession, [${JSON.stringify(fileLine({ tag: 'kernel' }))}]); fileSession.query = null`);
+  countTagCause(v);
+  assert.deepEqual([v.run('shellState().notTag'), v.run('shellState().tag'), v.run('__tc')], ['', '', 0]);
+  v.run('applyFilters()');
+  assert.deepEqual([v.run('shellState().tag'), v.run('__tc')], ['zzz', 1], 'from the File session\'s own counts once it is current');
 });

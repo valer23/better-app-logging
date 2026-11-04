@@ -50,6 +50,7 @@ the PR body says which part landed. P16 requires every box ticked, except rows b
 - [ ] **Loading "Parsing… / Rendering N lines…"** → Toolbar progress "Reading pixel-crash-0412.logcat… 41%" and a progressively filling grid _(P11)_
 - [ ] **New** → Markers, saved presets, detail drawer, bug report, command palette, global marker key, automatic crash markers, session names, highlight rules, timestamp formats _(P7–P15)_
 - [ ] **New: Increase contrast, Reduce motion (On / Off overrides)** → Settings → Appearance writes `data-contrast` and `data-motion`; the Reduce motion overrides and the `forced-colors` pass land in P16 _(P14, P16)_
+- [ ] **New: per-session query (spec IA :307)** → each session keeps its own text, Aa / .* modes, chips and filtered list; a File filter does not touch Live; slow regexes are refused in the "Invalid regex: …" frame _(P7a)_
 - [ ] **New: evidence bundle (⇧⌘E)** → optional follow-up `feat/viewer-evidence-bundle`, after P12; its Export menu items stay hidden until then. Not part of the P16 gate unless that PR has landed. _(feat/viewer-evidence-bundle, optional)_
 
 ## In-flight behaviour that must survive

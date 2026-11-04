@@ -466,8 +466,8 @@ const LEVEL_CHAR = {VERBOSE:'V',DEBUG:'D',INFO:'I',WARN:'W',ERROR:'E',ASSERT:'F'
 // "12 345 lines", "1 line": thin-space grouping (shellPure.num), as every number in the UI.
 const countOf = n => `${ALV.shellPure.num(n)} ${n === 1 ? 'line' : 'lines'}`;
 const { rowClass, timeOf } = ALV.gridPure;   // the row's class and its time cell (assets/js/grid.js)
-// The platforms the applied query shows, as the sets the sidebar rows and the status bar read (shellState().enabled),
-// by activeQuery.plats (bit 1 Android, bit 2 iOS). Shared and never changed.
+// The platforms the shown session's query shows, as the sets the sidebar rows and the status bar read (shellState().enabled),
+// by cur.filter.plats (bit 1 Android, bit 2 iOS). Shared and never changed.
 const PLAT_SETS = [new Set(), new Set(['android']), new Set(['ios']), new Set(['android', 'ios'])];
 // How many levels a level mask shows (shellState().levels), by mask.
 const LEVEL_BITS = Array.from({ length: 64 }, (_, m) => [0, 1, 2, 3, 4, 5].filter(k => m & (1 << k)).length);
@@ -483,7 +483,6 @@ liveSession.tbody = document.getElementById('tbody');   // the shown session's t
 fileSession.tbody = document.createElement('tbody');
 liveSession.counts = ALV.counts.create();   // the level, tag and app counts (assets/js/counts.js), kept by the drain
 fileSession.counts = ALV.counts.create();
-let filterGen = 0;   // bumped by setQuery() when the filter changed; a session whose `query` differs is refiltered when shown
 // A session's DOM work is skipped while it is off screen: hidden window, or another session shown.
 function offscreen(s) { return s !== cur || document.hidden; }
 let wsAndroid = null, wsIos = null;
@@ -497,10 +496,21 @@ let queryBar = null;   // the query region (ALV.createQueryBar, assets/js/queryb
 const wsLines = { android: 0, ios: 0 };
 const liveStatus = { android: { state: 'disconnected', text: 'Disconnected' }, ios: { state: 'disconnected', text: 'Disconnected' } };
 const deviceInfo = { android: { id: '', name: '' }, ios: { id: '', name: '' } };
-// The compiled query (assets/js/query.js) that every session's `filtered` follows; setQuery() replaces it. Per line, the drain
-// asks activeQuery.gate(m) for the line's level index (-1: hidden by something other than the level filter), counts it, and
-// keeps the line when activeQuery.lvOk says its level is shown.
-let activeQuery = ALV.query.build('', {}, deviceInfo).q;
+// Each session has its own query (spec IA: "Each session has its own buffer, query, scroll position and selection"; P7a).
+// s.filter is the compiled query (assets/js/query.js) the session applies: setQuery() (on `cur`) and recompileDevNames()
+// replace it. s.query is the one its `filtered` list and level counts were built with: refilterSession() sets it to s.filter,
+// a file load to null. A session is stale exactly while s.query !== s.filter (restoreView refilters it when shown). Per line,
+// the drain asks s.query.gate(m) for the line's level index (-1: hidden by something other than the level filter), counts
+// it, and keeps the line when s.query.lvOk says its level is shown: Live follows its own query also while File is shown.
+const NO_MODES = Object.freeze({ case: false, regex: false });
+// The regex guard's clock (ALV.query.slowRegex). A binding of its own so tests can give the guard a real clock while the
+// drain's flush budget keeps reading performance.now.
+let guardClock = () => performance.now();
+for (const s of [liveSession, fileSession]) {
+  s.filter = s.query = ALV.query.build('', NO_MODES, deviceInfo).q;
+  s.queryText = '';
+  s.queryOpts = NO_MODES;
+}
 let iosDriverMissing = false;
 let androidLive = false, iosLive = false;
 // Per platform, while its socket is open: the bridge reported the phone gone (setNoDevice). Reset when a socket opens.
@@ -666,8 +676,9 @@ function togglePlatform(plat) { queryBar.toggleDevice(plat); }
 // the others stay detached with their rows, so switching back brings back the same window, its
 // selection and (through the saved anchor row) its scroll position. The live session keeps ingesting
 // while detached: following, its DOM work is skipped (domStale) and the tail is rebuilt on return;
-// reading, its window stays frozen and the lines below it are counted. A session whose `query` lags
-// filterGen (the filter changed while it was away) is refiltered when shown. Nothing is discarded.
+// reading, its window stays frozen and the lines below it are counted. A session whose `query` lags its own
+// `filter` (a file loaded, or a dev: name resolved anew, while it was away) is refiltered when shown; a filter
+// change on another session never makes it stale (P7a). Nothing is discarded.
 function selectSession(next) {
   const prev = cur, t = document.getElementById('logTable');
   if (next !== prev) {
@@ -710,7 +721,7 @@ function saveScroll(s, t) {
 
 // Puts `s` back on screen once selectSession has attached its tbody.
 function restoreView(s, t) {
-  if (s.query !== filterGen) {              // the filter changed while `s` was away (or a file was just loaded)
+  if (s.query !== s.filter) {               // `s` lags its own query: a file loaded, or a dev: name resolved anew, while away
     if (s.follow) {                         // pinned to the newest lines: refilter, then rebuild just the tail.
       refilterSession(s);                   // (applyFilters would build a page around the selection, throw it away
       updateStats();                        // and queue a rAF that centres the selection, unpinning the tail)
@@ -929,6 +940,10 @@ document.getElementById('logTable').addEventListener('click', e => {
 // fires (it would act on the page behind the sheet: scroll it with End and Home, pause it with Space, open a menu over it).
 ALV.keys.setModalCheck(() => !!document.querySelector('.modal-overlay.visible'));
 
+// No tag cause (tagCauses below). Declared before the shell, the grid and the query bar are created, so none of them can
+// reach it in its temporal dead zone while it is built.
+const NO_TAG_CAUSE = Object.freeze({ notTag: '', tag: '' });
+
 // ── App shell (assets/js/shell.js): the sidebar and the window drag bands ──
 // The shell reads the page only through shellState() and acts only through these functions.
 shell = ALV.createShell({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, keys: ALV.keys, prefs: ALV.prefs, state: shellState,
@@ -939,38 +954,38 @@ liveUi = ALV.createLive({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, 
 grid = ALV.createGrid({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, keys: ALV.keys, prefs: ALV.prefs, shell, state: shellState,
   actions: { jumpToEnd, jumpToOldest, togglePause, toggleAutoScroll, updateNewerPill, resetFilter } });
 queryBar = ALV.createQueryBar({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, keys: ALV.keys, shell, state: shellState,
-  actions: { setQuery, sync: shellSync } });
+  actions: { setQuery, recompile: recompileDevNames, sync: shellSync } });
 function shellState() {
+  let causes = null;   // tagCauses() at most once per state object (F7): the tile reads notTag, then tag, on each flush
   return {
     cur, sessions: [liveSession, fileSession],
     live: { android: androidLive, ios: iosLive }, status: liveStatus, devices: deviceInfo, driverMissing: iosDriverMissing, noDevice,
-    lines: wsLines, dropped: liveSession.dropped, enabled: PLAT_SETS[activeQuery.plats], paused: livePaused, buffered: pendingBatch.length,
+    lines: wsLines, dropped: liveSession.dropped, enabled: PLAT_SETS[cur.filter.plats], paused: livePaused, buffered: pendingBatch.length,
     maxRetained: MAX_RETAINED,   // the status bar's Following tooltip (Retained text)
     // The stream keys (grid.js) fire only while the grid shows (a legacy modal over it blocks every key: setModalCheck).
     // A getter: it is read only when End or Home is pressed, never by the per-flush and tick callers of shellState().
     get gridShown() { return document.getElementById('logWrapper').classList.contains('visible'); },
-    // The applied query (the query bar's chips read it back).
-    filter: activeQuery,
+    // The shown session's applied query (the query bar's chips read it back; P7a: each session has its own).
+    filter: cur.filter,
     // The grid's empty states (grid.js): no line since a Clear on Live, the query's levels shown, its tag causes (getters:
     // read by the tile on each flush, they answer at once while lines match), and whether anything but the level and
     // device chips filters (the no-match tile then names no chip cause).
     // stale: the shown session's filtered list lags the filter (a file just opened, before its render): no tile yet.
-    stale: cur.query !== filterGen,
-    cleared: liveClearedSeq === nextSeq, levels: LEVEL_BITS[activeQuery.levels],
-    get notTag() { return tagCauses().notTag; },
-    get tag() { return tagCauses().tag; },
-    query: !activeQuery.chipsOnly,
+    stale: cur.query !== cur.filter,
+    cleared: liveClearedSeq === nextSeq, levels: LEVEL_BITS[cur.filter.levels],
+    get notTag() { return (causes || (causes = tagCauses())).notTag; },
+    get tag() { return (causes || (causes = tagCauses())).tag; },
+    query: !cur.filter.chipsOnly,
   };
 }
 function shellSync() { if (shell) shell.sync(); if (liveUi) liveUi.sync(); if (grid) grid.sync(); if (queryBar) queryBar.sync(); }
 // The no-match tile's tag causes (spec "Log grid"; ALV.query.tagCause): a negated tag every retained line of the shown
 // session carries, or a tag none carries, from its tag counts (O(distinct tags), no scan of the lines). Only while it has
-// lines, none passes and its filtered list is current; otherwise none.
-const NO_TAG_CAUSE = Object.freeze({ notTag: '', tag: '' });
+// lines, none passes and its filtered list is current; otherwise none (NO_TAG_CAUSE, declared above the shell).
 function tagCauses() {
   const s = cur;
-  if (s.filtered.length || !s.all.length || s.query !== filterGen) return NO_TAG_CAUSE;
-  return ALV.query.tagCause(activeQuery, v => ALV.counts.tagHits(s.counts, v), s.all.length);
+  if (s.filtered.length || !s.all.length || s.query !== s.filter) return NO_TAG_CAUSE;
+  return ALV.query.tagCause(s.filter, v => ALV.counts.tagHits(s.counts, v), s.all.length);
 }
 // "Open log file…" (the SESSIONS row and ⌘O): the file session, then the picker. The picker is the
 // dropzone's file input, so a picked file loads exactly like a dropped one (handleFile).
@@ -1053,11 +1068,7 @@ function handleFile(file) {
       }
 
       document.getElementById('loadingText').textContent = `Rendering ${countOf(msgs.length)}…`;
-      discardBacklog(fileSession);
-      resetLines(fileSession, msgs);
-      fileSession.query = -1;   // not filtered yet: rendered below, or by selectSession if the user switched away meanwhile
-      if (file.name) fileSession.name = file.name;   // the SESSIONS row shows it
-      shellSync();
+      loadParsedFile(file.name, msgs);
       setTimeout(() => { if (gen !== fileLoadGen || cur !== fileSession) return; applyFilters(); showOnly('logWrapper'); updateExportVisibility(); }, 50);
     } catch(err) {
       fileError(file, err.message);
@@ -1066,6 +1077,25 @@ function handleFile(file) {
   };
   reader.readAsText(file);
 }
+// A parsed file becomes the File session's lines. The File session keeps its query (P7a, spec IA: each session has its
+// own), so a regex in it is timed on the new lines first (ALV.query.slowRegex): one too slow for this file is dropped,
+// the file opens unfiltered, and a toast says why. The level counts wait for the render (query null: stale until then).
+function loadParsedFile(name, msgs) {
+  discardBacklog(fileSession);
+  resetLines(fileSession, msgs);
+  fileSession.query = null;   // not filtered yet: rendered by the caller, or by selectSession if the user switched away meanwhile
+  if (name) fileSession.name = name;   // the SESSIONS row shows it
+  const slow = ALV.query.slowRegex(fileSession.filter, msgs, guardClock);
+  if (slow) {
+    fileSession.filter = ALV.query.build('', fileSession.queryOpts, deviceInfo).q;
+    fileSession.queryText = '';
+    if (queryBar) queryBar.restore(fileSession);
+    // slow.cause, not slow.reason: the next step here is about the file, not the bar.
+    ALV.ui.toast({ kind: 'info', title: `Filter cleared on ${name || 'this file'}`, desc: `${slow.cause}. Showing all lines. Make the regex more specific to filter this file.` });
+  }
+  shellSync();
+}
+
 // A file the viewer cannot read: an error toast (it stays until dismissed) that says what happened and what to do
 // next, in the spec's invalid-file copy (Drop overlay), in place of the legacy alert.
 function fileError(file, why) {
@@ -1526,9 +1556,9 @@ function flushBatch() {
   }
 
   const batch = pendingBatch; pendingBatch = [];    // O(1) swap, no splice
-  // While another session is shown and the filter changed (stale query), new lines skip the filter and the level
-  // counts: `filtered` stops growing until restoreView refilters the live session (which recounts the levels).
-  const q = s.query === filterGen ? activeQuery : null;   // compiled once per filter change, not per flush or row
+  // The query this session's `filtered` list and level counts follow (null: none yet, a file just loaded), shown or not
+  // (P7a: each session has its own). A filter change on another session never reaches it, so `filtered` keeps growing.
+  const q = s.query;   // compiled once per filter change, not per flush or row
   const gate = q === null ? null : q.gate, lvOk = q === null ? null : q.lvOk;
   const counts = s.counts, lv = counts.lvl, countLine = ALV.counts.add;
   const all = s.all, filtered = s.filtered;         // trims splice in place, so both stay valid for the chunk
@@ -1746,7 +1776,7 @@ function clearLogs() {
 }
 
 // Every reset of a session's lines (Clear, a file load) goes through here, so its counts are rebuilt with them: the tag and
-// app maps now, the level counts on its next refilter (a file load sets its `query` stale; Clear leaves no line to count).
+// app maps now, the level counts on its next refilter (a file load sets its `query` to null; Clear leaves no line to count).
 function resetLines(s, lines) {
   ALV.session.reset(s, lines);
   ALV.counts.recount(s.counts, lines, null);
@@ -1759,9 +1789,9 @@ function resetLines(s, lines) {
 // dropAll: drop every live line (resume after a backlog overflow).
 function trimRetained(s, dropAll = false) {
   if (!dropAll && !(s.all.length > MAX_RETAINED)) return;   // fast path; NaN/Infinity = no cap
-  // The dropped run leaves the counts first; a stale session's level counts are rebuilt by its refilter instead.
+  // The dropped run leaves the counts first, under the query its level counts were built with (none yet: tags and apps only).
   const cutoff = ALV.session.trim(s, MAX_RETAINED, TRIM_FRACTION, dropAll, nextSeq,
-    (all, from, to) => ALV.counts.remove(s.counts, all, from, to, s.query === filterGen ? activeQuery.gate : null));
+    (all, from, to) => ALV.counts.remove(s.counts, all, from, to, s.query === null ? null : s.query.gate));
   if (cutoff < 0) return;
   dropTrimmedRows(s, cutoff);
   if (s === cur) updateStats();
@@ -1953,25 +1983,51 @@ function updateExportVisibility() {
 }
 
 // ── Filtering ──
-// The query every session follows (P6): setQuery compiles `text` (assets/js/query.js) and, when the compiled filter differs
-// from the active one, makes it active, bumps filterGen and refilters the session on screen; the others are refiltered
-// when they are shown again (restoreView compares their `query` with filterGen). An invalid query changes nothing: the
-// last valid filter stays applied, and the error ({ start, end, msg }) is returned. opts: { case, regex }.
+// Each session has its own query (P7a). setQuery applies `text` under the Aa / .* modes `opts` ({ case, regex }) to the
+// session on screen and to no other. It compiles `text` (assets/js/query.js); an invalid query changes nothing and returns
+// the error ({ start, end, msg }), so the last valid filter stays applied. When the compiled filter differs from the
+// session's, it is timed on the session's lines first (ALV.query.slowRegex): a regex that would freeze the viewer is
+// refused like an invalid one. Otherwise it becomes the session's filter and the session is refiltered at once. The text
+// and modes are kept on the
+// session on every success, also when the filter is the same (a trailing space), so the bar shows them on return.
 function setQuery(text, opts) {
-  const r = ALV.query.build(text, opts || {}, deviceInfo);
+  const s = cur, o = Object.freeze({ case: !!(opts && opts.case), regex: !!(opts && opts.regex) });
+  const r = ALV.query.build(text, o, deviceInfo);
   if (r.error) return r.error;
-  if (r.q.key !== activeQuery.key) { activeQuery = r.q; filterGen++; applyFilters(); }
+  if (r.q.key !== s.filter.key) {
+    // Only here, on a filter change: never per line, per flush or per row. A query with no regex term costs nothing.
+    const slow = ALV.query.slowRegex(r.q, s.all, guardClock);
+    if (slow) return slow;
+    s.filter = r.q;
+    applyFilters();
+  }
+  s.queryText = text; s.queryOpts = o;
   return null;
+}
+// A dev:<name> token (dev:pixel) is resolved against the devices known when it compiled (q.usesDevNames). On the shell's
+// tick the query bar calls this: each session whose filter names a device is compiled again from its own text and modes.
+// A new filter replaces the old one: the shown session is refiltered now, another goes stale and is refiltered when shown
+// (restoreView). A filter equal to the one its lines already follow is that query again (not stale: nothing to do).
+function recompileDevNames() {
+  for (const s of [liveSession, fileSession]) {
+    if (!s.filter.usesDevNames) continue;
+    const r = ALV.query.build(s.queryText, s.queryOpts, deviceInfo);
+    if (!r.q || r.q.key === s.filter.key) continue;
+    s.filter = s.query !== null && s.query.key === r.q.key ? s.query : r.q;
+    if (s === cur && s.query !== s.filter) applyFilters();
+  }
 }
 // The grid's empty-state fixes (spec "Log grid", no matches), as query rewrites (assets/js/querybar.js): 'levels' turns
 // every level back on, 'devices' shows both platforms, 'notTag' and 'tag' remove the token the tile names, 'all' (Reset
 // filter) empties the query.
 function resetFilter(what) { queryBar.fix(what); }
 
-// Rebuilds `s.filtered` and the level counts for the active query, in one pass; no DOM work.
+// Rebuilds `s.filtered` and the level counts for the session's own query, in one pass; no DOM work. The only place that
+// makes a session current (s.query = s.filter).
 function refilterSession(s) {
-  s.query = filterGen;
-  const all = s.all, gate = activeQuery.gate, lvOk = activeQuery.lvOk, lv = s.counts.lvl, out = [];
+  const q = s.filter;
+  s.query = q;
+  const all = s.all, gate = q.gate, lvOk = q.lvOk, lv = s.counts.lvl, out = [];
   lv.fill(0);
   for (let i = 0; i < all.length; i++) {
     const m = all[i], k = gate(m);
@@ -2031,7 +2087,7 @@ function statText(id, text) {
 }
 
 // Build a DocumentFragment of text + one <mark> for the message cell: the first hit of the query's first text term (`re`,
-// activeQuery.mark: non-global, so no lastIndex state), at most three nodes more than plain text.
+// the shown session's filter.mark: non-global, so no lastIndex state), at most three nodes more than plain text.
 // All log content reaches the DOM exclusively via textContent — no string
 // concatenation into innerHTML, so a hostile log line cannot inject markup.
 function buildMessageNodes(s, re) {
@@ -2094,7 +2150,7 @@ function buildRow(m, isNew) {
 
   const msgTd = document.createElement('td');
   msgTd.className = 'c-msg';
-  msgTd.appendChild(buildMessageNodes(m.msg, activeQuery.mark));
+  msgTd.appendChild(buildMessageNodes(m.msg, cur.filter.mark));
   tr.appendChild(msgTd);
 
   return tr;

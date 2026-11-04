@@ -14,7 +14,7 @@ const BENCH_BINDINGS = [
   'fileSession', 'selectSession', 'discardBacklog', 'resetLines', 'setQuery',
 ];
 // dev-bench.js assigns these top-level bindings, so none of them may be `const`.
-const BENCH_REASSIGNED = ['flushBatch', 'iosLive', 'MAX_RETAINED'];
+const BENCH_REASSIGNED = ['flushBatch', 'refilterSession', 'iosLive', 'MAX_RETAINED'];
 
 const { api, run } = loadLegacy([
   'setLogZoom',
@@ -213,15 +213,24 @@ test('togglePlatform hides and shows one platform\'s lines by rewriting the quer
   const doc = stickyDocument();
   const { run } = loadLegacy([], { document: doc });
   doc.getElementById('queryInput').value = 'level:W+';
+  // P7a: no filterGen. Each toggle must apply a new filter to the shown session: its key differs from the one before.
+  const keys = [run('liveSession.filter.key')];
   run('togglePlatform("ios")');
-  assert.deepEqual([doc.getElementById('queryInput').value, run('shellState().enabled.has("ios")'), run('shellState().enabled.has("android")'), run('filterGen')], ['dev:android level:W+', false, true, 1], 'a new chip token goes in front, away from the caret');
+  keys.push(run('liveSession.filter.key'));
+  assert.deepEqual([doc.getElementById('queryInput').value, run('shellState().enabled.has("ios")'), run('shellState().enabled.has("android")')], ['dev:android level:W+', false, true], 'a new chip token goes in front, away from the caret');
   run('togglePlatform("ios")');
-  assert.deepEqual([doc.getElementById('queryInput').value, run('shellState().enabled.size'), run('filterGen')], ['level:W+', 2, 2]);
+  keys.push(run('liveSession.filter.key'));
+  assert.deepEqual([doc.getElementById('queryInput').value, run('shellState().enabled.size')], ['level:W+', 2]);
   doc.getElementById('queryInput').value = 'tg:x';
   run('queryBar.apply()');
   run('togglePlatform("ios")');
-  assert.deepEqual([doc.getElementById('queryInput').value, doc.getElementById('queryError').hidden, run('shellState().enabled.size'), run('filterGen')], ['dev:android level:W+', true, 1, 3],
+  keys.push(run('liveSession.filter.key'));
+  assert.deepEqual([doc.getElementById('queryInput').value, doc.getElementById('queryError').hidden, run('shellState().enabled.size')], ['dev:android level:W+', true, 1],
     'an invalid edit in the bar is dropped: the sidebar row still toggles the platform (parity: platform toggles)');
+  // Three filter changes, as filterGen's 1, 2, 3 said: each key differs from the one before. The third state has the first
+  // one's text, so it has the first one's key: three distinct keys among the four, not four.
+  assert.deepEqual([keys[1] !== keys[0], keys[2] !== keys[1], keys[3] !== keys[2], keys[3] === keys[1], new Set(keys).size], [true, true, true, true, 3]);
+  assert.equal(run('liveSession.query === liveSession.filter'), true, 'each change refiltered Live at once');
 });
 
 const LOG = '{"type":"log","ts":"2026 Oct 14 15:53:43","pid":1,"tid":0,"lvl":"INFO","tag":"t","app":"","msg":"m"}';
@@ -325,7 +334,7 @@ test('shellState has the shape the shell reads: live, status, devices, driverMis
   assert.equal(st.devices, run('deviceInfo'));
   assert.equal(st.status, run('liveStatus'));
   assert.equal(st.enabled, run('PLAT_SETS[3]'), 'both platforms: the shared set');
-  assert.equal(st.filter, run('activeQuery'));
+  assert.equal(st.filter, run('cur.filter'));
   assert.deepEqual(JSON.parse(JSON.stringify(st.live)), { android: false, ios: false });
   assert.equal(st.driverMissing, false);
   run('androidLive = true; iosLive = true');

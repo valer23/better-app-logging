@@ -8,7 +8,9 @@ import { pageScriptSrcs } from './_load.mjs';
 import { fakePage, mount, texts } from './_fake.mjs';
 
 const T = ' ';
-function barPage() {
+// refuse: a text the fake setQuery refuses as the page's regex guard would (it compiles, but is "too slow"), or a function
+// (text, opts) → boolean for a guard that looks at the modes too (the page's slowRegex only runs under regex mode).
+function barPage({ refuse = null } = {}) {
   const p = fakePage({ files: ['dom.js', 'keys.js', 'ui.js', 'shell.js', 'live.js', 'query.js', 'querybar.js'] });
   mount(p, 'filterbar');
   p.byId.ovPopovers.appendChild(mount(p, 'tokenPop'));   // the "N filters" popover, in the popover layer as on the page
@@ -16,7 +18,10 @@ function barPage() {
   $('queryInput').value = '';
   const Q = p.ALV.query;
   const devices = { android: { id: 'R5CT', name: 'Pixel 8 Pro' }, ios: { id: '', name: '' } };
-  const st = { cur: { counts: { lvl: [0, 0, 0, 0, 0, 0] }, filtered: [], all: [] }, filter: Q.build('', {}, devices).q, devices, tag: '' };
+  const NO = Object.freeze({ case: false, regex: false });
+  const session = name => { const f = Q.build('', NO, devices).q; return { name, counts: { lvl: [0, 0, 0, 0, 0, 0] }, filtered: [], all: [], filter: f, query: f, queryText: '', queryOpts: NO }; };
+  const live = session('live'), file = session('file');
+  const st = { cur: live, get filter() { return st.cur.filter; }, get stale() { return st.cur.query !== st.cur.filter; }, devices, tag: '' };
   const calls = [];
   const ticks = [];
   const shell = { onTick: fn => ticks.push(fn), devices: () => ({ android: { name: 'Pixel 8 Pro' }, ios: { name: '' } }) };
@@ -24,17 +29,21 @@ function barPage() {
   const actions = {
     setQuery(text, opts) {
       calls.push(['setQuery', text, { ...opts }]);
-      const r = Q.build(text, opts, devices);
+      if (typeof refuse === 'function' ? refuse(text, opts) : text === refuse) return { start: 0, end: text.length, msg: 'Invalid regex: It would take about 99 ms on one of these lines and can freeze the viewer. The last valid filter is still applied.' };
+      const s = st.cur, o = Object.freeze({ case: !!opts.case, regex: !!opts.regex });
+      const r = Q.build(text, o, devices);
       if (r.error) return r.error;
-      if (r.q.key !== st.filter.key) st.filter = r.q;
+      if (r.q.key !== s.filter.key) s.filter = s.query = r.q;
+      s.queryText = text; s.queryOpts = o;
       return null;
     },
+    recompile() { calls.push(['recompile']); },
     sync() { calls.push(['sync']); bar.sync(); },
   };
   bar = p.ALV.createQueryBar({ doc: p.doc, win: p.win, dom: p.dom, ui: p.ui, keys: p.keys, shell, state: () => st, actions });
   const type = text => { $('queryInput').value = text; $('queryInput').fire('input'); };
   const pressed = group => $(group).children.map(b => b.getAttribute('aria-pressed') === 'true');
-  return { p, $, st, calls, bar, type, pressed, ticks, Q };
+  return { p, $, st, calls, bar, type, pressed, ticks, Q, live, file };
 }
 
 test('querybar.js loads after grid.js; it builds six level chips (badge, name, count) and a chip per platform, all pressed', () => {
@@ -101,7 +110,8 @@ test('level chips write one level token and read their pressed state back; devic
   $('deviceChips').children[0].click();
   assert.equal($('queryInput').value, 'dev:none tag:x');
   assert.equal(st.filter.plats, 0);
-  assert.ok(calls.at(-1)[0] === 'sync', 'the sidebar rows and the status bar sync after each change');
+  // P7a: each sync also asks the page to recompile dev: names (syncChips → actions.recompile), after the 'sync' entry.
+  assert.equal(calls.filter(c => c[0] !== 'recompile').at(-1)[0], 'sync', 'the sidebar rows and the status bar sync after each change');
   // An invalid edit in the bar is dropped: a chip rewrites the last applied text, so it always applies.
   type('tg:x');
   p.advance(100);
@@ -113,17 +123,16 @@ test('level chips write one level token and read their pressed state back; devic
   assert.deepEqual([$('queryInput').value, $('queryError').hidden, st.filter.levels, st.filter.plats], ['level:D+ dev:ios tag:x', true, 62, 2]);
 });
 
-test('a dev: name resolves against the devices known now: when they change, the filter follows on the next sync', () => {
-  const { p, st, bar, type } = barPage();
+test('a dev: name resolves against the devices known now: a sync asks the page to recompile (every session), never setQuery', () => {
+  const { p, st, bar, type, calls } = barPage();
   type('dev:pixel');
   p.advance(100);
   assert.equal(st.filter.plats, 1, 'the Pixel is the Android device');
+  calls.length = 0;
   st.devices.android = { id: 'R9XY', name: 'Galaxy S24' };   // the Pixel unplugged, a Galaxy in its place
   bar.sync();
-  assert.equal(st.filter.plats, 0, 'dev:pixel names no device now: nothing shows');
-  const key = st.filter.key;
-  bar.sync();
-  assert.equal(st.filter.key, key, 'devices unchanged: the same filter');
+  assert.deepEqual(calls.filter(c => c[0] === 'recompile' || c[0] === 'setQuery').map(c => c[0]), ['recompile'],
+    'the page recompiles every session (recompileDevNames); query-page covers what that does');
 });
 
 test('the last valid filter keeps the modes it compiled under: toggling Aa or .* while the text is invalid, then a sync, leaves it alone', () => {
@@ -166,7 +175,8 @@ test('numbers: chip counts and "N of M lines" on the 250 ms interval, written on
   const count = $('filterCount');
   let text = count.textContent;
   Object.defineProperty(count, 'textContent', { get: () => text, set(v) { writes++; text = v; } });
-  st.cur = { counts: { lvl: [12950, 0, 1, 0, 0, 0] }, filtered: new Array(13), all: new Array(48310) };
+  // P7a: st.cur is a session (filter, query, queryText, queryOpts): change its numbers, not the object.
+  Object.assign(st.cur, { counts: { lvl: [12950, 0, 1, 0, 0, 0] }, filtered: new Array(13), all: new Array(48310) });
   p.advance(249);
   assert.equal(writes, 0, 'not before the interval');
   p.advance(1);
@@ -196,15 +206,15 @@ test('numbers: chip counts and "N of M lines" on the 250 ms interval, written on
 test('numbers: while the shown session is stale (a file before its first refilter) its counts are unknown: nothing is written, not 0', () => {
   const { p, $, st } = barPage();
   const count = () => texts($('levelChips').children[0].children[2]);
-  st.cur = { counts: { lvl: [5, 0, 0, 0, 0, 0] }, filtered: new Array(5), all: new Array(5) };
+  Object.assign(st.cur, { counts: { lvl: [5, 0, 0, 0, 0, 0] }, filtered: new Array(5), all: new Array(5) });
   p.advance(250);
   assert.deepEqual([count(), $('filterCount').textContent], ['5', '5 of 5 lines']);
-  st.cur = { counts: { lvl: [0, 0, 0, 0, 0, 0] }, filtered: [], all: new Array(9) };
-  st.stale = true;
+  // P7a: stale is a getter (cur.query !== cur.filter); a file before its first refilter has query null, as on the page.
+  Object.assign(st.cur, { counts: { lvl: [0, 0, 0, 0, 0, 0] }, filtered: [], all: new Array(9), query: null });
   p.advance(250);
   $('levelChips').children[0].fire('focus');
   assert.deepEqual([count(), $('filterCount').textContent, $('levelChips').children[0].getAttribute('aria-label')], ['5', '5 of 5 lines', 'Verbose, 5 lines'], 'kept until the refilter');
-  st.stale = false;
+  st.cur.query = st.cur.filter;   // refiltered: no longer stale
   st.cur.counts.lvl[0] = 9;
   st.cur.filtered = new Array(9);
   p.advance(250);
@@ -213,7 +223,7 @@ test('numbers: while the shown session is stale (a file before its first refilte
 
 test('a filter change announces the result count (at most once per 5 s); an unchanged or invalid query announces nothing', () => {
   const { p, $, st, type } = barPage();
-  st.cur = { counts: { lvl: [0, 0, 0, 0, 0, 0] }, filtered: new Array(5), all: new Array(9) };
+  Object.assign(st.cur, { counts: { lvl: [0, 0, 0, 0, 0, 0] }, filtered: new Array(5), all: new Array(9) });   // P7a: st.cur is a session
   type('a');
   p.advance(100);
   assert.equal($('announcer').textContent, '5 of 9 lines');
@@ -424,15 +434,15 @@ test('a toggle turned on over text that is still valid under it is kept by a chi
 
 test('a filter change that leaves the no-match tile up announces no count of its own: the tile\'s cause is the announcement and the count must not displace it (F5)', () => {
   const { p, $, st, type } = barPage();
-  st.cur = { counts: { lvl: [0, 0, 0, 0, 0, 0] }, filtered: [], all: new Array(9) };
+  Object.assign(st.cur, { counts: { lvl: [0, 0, 0, 0, 0, 0] }, filtered: [], all: new Array(9) });   // P7a: st.cur is a session
   type('a');
   p.advance(100);
   assert.equal($('announcer').textContent, '', 'no "0 of 9 lines": grid.js says "No lines match this filter" and its cause');
-  st.cur = { counts: { lvl: [0, 0, 0, 0, 0, 0] }, filtered: new Array(4), all: new Array(9) };
+  Object.assign(st.cur, { counts: { lvl: [0, 0, 0, 0, 0, 0] }, filtered: new Array(4), all: new Array(9) });
   type('ab');
   p.advance(100);
   assert.equal($('announcer').textContent, '4 of 9 lines', 'lines match again: the count is announced');
-  st.cur = { counts: { lvl: [0, 0, 0, 0, 0, 0] }, filtered: [], all: [] };
+  Object.assign(st.cur, { counts: { lvl: [0, 0, 0, 0, 0, 0] }, filtered: [], all: [] });
   p.advance(6000);
   type('abc');
   p.advance(100);
@@ -451,24 +461,203 @@ test('a sync (the shell\'s, a dropped frame\'s) writes no number: the 250 ms int
   assert.equal(writes, 0, 'shellSync runs at WS-frame rate: it leaves the numbers to the interval');
   p.advance(250);
   assert.deepEqual([writes, text], [1, '3 of 9 lines']);
-  st.cur = { counts: { lvl: [2, 0, 0, 0, 0, 0] }, filtered: new Array(2), all: new Array(9) };
+  Object.assign(st.cur, { counts: { lvl: [2, 0, 0, 0, 0, 0] }, filtered: new Array(2), all: new Array(9) });   // P7a: st.cur is a session
   type('a');
   p.advance(100);
   assert.deepEqual([writes, text], [2, '2 of 9 lines'], 'a filter change shows its result at once, not on the next tick');
 });
 
 test('sync() writes the numbers at once only when the shown session changed (selectSession stays untouched; sync notices the switch)', () => {
-  const { $, st, bar } = barPage();
+  const { $, st, bar, file } = barPage();
   const count = $('filterCount');
   let writes = 0;
   let text = count.textContent;
   Object.defineProperty(count, 'textContent', { get: () => text, set(v) { writes++; text = v; } });
   bar.sync();
   assert.equal(writes, 0, 'same cur: no number');
-  const other = { counts: { lvl: [4, 0, 0, 0, 0, 0] }, filtered: new Array(4), all: new Array(7) };
-  st.cur = other;
+  Object.assign(file, { counts: { lvl: [4, 0, 0, 0, 0, 0] }, filtered: new Array(4), all: new Array(7) });   // P7a: a session with its own query
+  st.cur = file;
   bar.sync();
   assert.deepEqual([writes, text], [1, '4 of 7 lines'], 'another cur: its numbers at once');
   bar.sync();
   assert.equal(writes, 1, 'and only once for that switch');
+});
+
+test('per session: a switch shows the other session\'s applied text, Aa and .* modes and token chips; switching back restores the first', () => {
+  const { p, $, st, bar, type, live, file } = barPage();
+  type('tag:bt "x y"'); p.advance(100);
+  $('queryCaseBtn').click();
+  st.cur = file; bar.sync();
+  assert.deepEqual([$('queryInput').value, $('queryCaseBtn').getAttribute('aria-pressed'), $('queryRegexBtn').getAttribute('aria-pressed')], ['', 'false', 'false']);
+  type('level:E'); p.advance(100);
+  $('queryRegexBtn').click();
+  assert.deepEqual([file.queryText, file.queryOpts.regex, live.queryText, live.queryOpts.case], ['level:E', true, 'tag:bt "x y"', true]);
+  st.cur = live; bar.sync();
+  assert.deepEqual([$('queryInput').value, $('queryCaseBtn').getAttribute('aria-pressed'), $('queryRegexBtn').getAttribute('aria-pressed')], ['tag:bt "x y"', 'true', 'false']);
+  assert.equal($('tokenMoreText').textContent, '2 filters', 'the token chips are Live\'s again');
+});
+
+test('a debounce armed for one session never applies to the other; a valid edit cut by a switch applies to its own session on return', () => {
+  const { p, $, st, bar, type, live, file, calls } = barPage();
+  type('tag:bt');
+  p.advance(50);
+  st.cur = file; bar.sync();
+  p.advance(200);
+  assert.deepEqual([file.queryText, live.queryText, $('queryInput').value], ['', '', ''], 'the timer armed on Live applied to neither');
+  st.cur = live; bar.sync();
+  assert.equal($('queryInput').value, 'tag:bt', 'the draft comes back');
+  p.advance(100);
+  assert.equal(live.queryText, 'tag:bt', 'and applies to Live after the usual quiet');
+  assert.equal(calls.filter(c => c[0] === 'setQuery').length, 1);
+});
+
+test('an invalid draft stays with its session: it comes back with its error line, and nothing applies', () => {
+  const { p, $, st, bar, type, live, file } = barPage();
+  type('tag:bt'); p.advance(100);
+  type('tag:bt tg:x'); p.advance(100);
+  st.cur = file; bar.sync();
+  assert.deepEqual([$('queryInput').value, $('queryError').hidden, $('queryInput').getAttribute('aria-invalid')], ['', true, null]);
+  st.cur = live; bar.sync();
+  assert.deepEqual([$('queryInput').value, $('queryError').hidden, $('queryErrorText').textContent], ['tag:bt tg:x', false, "Unknown field 'tg'. Did you mean tag:?"]);
+  p.advance(300);
+  assert.equal(live.queryText, 'tag:bt', 'the last valid filter is still applied');
+});
+
+test('a draft keeps only the error of its own text: an edit fixed inside the debounce comes back valid and applies', () => {
+  const { p, $, st, bar, type, live, file } = barPage();
+  type('tag:bt'); p.advance(100);
+  type('tag:bt tg:x'); p.advance(100);   // applied and refused: the error line shows
+  assert.equal($('queryError').hidden, false);
+  type('tag:bt tag:x'); p.advance(50);   // fixed, still inside the debounce
+  st.cur = file; bar.sync();
+  st.cur = live; bar.sync();
+  assert.deepEqual([$('queryInput').value, $('queryError').hidden, $('queryInput').getAttribute('aria-invalid')], ['tag:bt tag:x', true, null],
+    'the draft comes back without the stale error');
+  p.advance(100);
+  assert.equal(live.queryText, 'tag:bt tag:x', 'and applies to Live after the usual quiet');
+});
+
+test('a draft switched away before its error showed comes back with the error at once, and nothing applies', () => {
+  const { p, $, st, bar, type, live, file } = barPage();
+  type('tag:bt'); p.advance(100);
+  type('tag:bt tg:x'); p.advance(50);    // switched before the debounce applied it
+  st.cur = file; bar.sync();
+  st.cur = live; bar.sync();
+  assert.deepEqual([$('queryInput').value, $('queryError').hidden, $('queryErrorText').textContent], ['tag:bt tg:x', false, "Unknown field 'tg'. Did you mean tag:?"]);
+  p.advance(300);
+  assert.equal(live.queryText, 'tag:bt', 'the last valid filter is still applied');
+  $('levelChips').children[0].click();   // and a chip rewrites the applied text, not the invalid draft
+  assert.match(live.queryText, /^level:\S+ tag:bt$/);
+});
+
+test('a chip on a refused text rewrites the session\'s applied text, not the refused one', () => {
+  const { p, $, type, live } = barPage({ refuse: '/slow/' });
+  type('tag:bt'); p.advance(100);
+  type('/slow/'); p.advance(100);
+  assert.equal($('queryError').hidden, false, 'refused: the alert line shows');
+  $('levelChips').children[0].click();   // Verbose off
+  assert.match(live.queryText, /^level:\S+ tag:bt$/, 'rewritten over the applied text');
+  assert.equal(live.filter.levels, 62);
+});
+
+test('a chip after the page refused a mode flip rewrites the applied text under its applied modes, never the refused edit again (R2 #2)', () => {
+  const { p, $, type, calls, live } = barPage({ refuse: (text, o) => o.regex && text === 'a.b.c' });
+  type('a.b.c'); p.advance(100);   // applied as a literal: .* is off
+  assert.deepEqual([live.queryText, live.queryOpts.regex], ['a.b.c', false]);
+  $('queryRegexBtn').click();      // the guard refuses this text under regex mode
+  assert.equal($('queryError').hidden, false, 'refused: the alert line shows');
+  calls.length = 0;
+  $('levelChips').children[0].click();   // Verbose off
+  const sets = calls.filter(c => c[0] === 'setQuery');
+  assert.equal(sets.length, 1);
+  assert.deepEqual(sets[0][2], { case: false, regex: false }, 'applied under the modes it was applied under, not the refused ones');
+  assert.equal(sets[0][1], 'level:D+ a.b.c');
+  assert.deepEqual([live.queryText, live.queryOpts.regex, live.filter.levels], ['level:D+ a.b.c', false, 62], 'the chip applied');
+  assert.deepEqual([$('queryInput').value, $('queryRegexBtn').getAttribute('aria-pressed'), $('queryError').hidden], ['level:D+ a.b.c', 'false', true], 'the bar shows what was applied');
+});
+
+// Records the role of #queryError at every write of its text and every unhide, so a test can prove what the line was when a screen reader would
+// have seen the write (a live region announces what is written into it, or unhidden, while it has role="alert").
+function watchAlert($) {
+  // Clearing writes ('') are not logged: an empty write into a hidden line announces nothing.
+  const line = $('queryError'), text = $('queryErrorText'), log = [];
+  let t = text.textContent, h = line.hidden;
+  Object.defineProperty(text, 'textContent', { get: () => t, set(v) { t = v; if (v) log.push(['text', line.getAttribute('role'), v]); } });
+  Object.defineProperty(line, 'hidden', { get: () => h, set(v) { if (h && !v) log.push(['unhide', line.getAttribute('role')]); h = v; } });
+  return log;
+}
+
+test('a switch back to a draft with an error shows the red box, aria-invalid and the text, but not as an alert; a fresh error is an alert again (R2 #3, D8)', () => {
+  const { p, $, st, bar, type, live, file } = barPage();
+  const role = () => $('queryError').getAttribute('role');
+  $('queryError').setAttribute('role', 'alert');   // as the page ships it
+  type('tag:bt'); p.advance(100);
+  type('tag:bt tg:x'); p.advance(100);
+  assert.deepEqual([$('queryError').hidden, role()], [false, 'alert'], 'an error raised by typing is announced');
+  const log = watchAlert($);
+  log.length = 0;
+  st.cur = file; bar.sync();
+  assert.equal($('queryError').hidden, true);
+  st.cur = live; bar.sync();
+  assert.deepEqual([$('queryBox').className, $('queryInput').getAttribute('aria-invalid'), $('queryError').hidden, $('queryErrorText').textContent],
+    ['query invalid', 'true', false, "Unknown field 'tg'. Did you mean tag:?"], 'the error is shown again');
+  assert.equal(role(), null, 'the switch does not make the line an alert: nothing is announced on a switch');
+  st.cur = file; bar.sync();
+  st.cur = live; bar.sync();
+  assert.equal(role(), null, 'and again on the next switch back');
+  assert.ok(log.some(e => e[0] === 'text' && e[2]) && log.some(e => e[0] === 'unhide'), 'the switch did write the text and unhide the line');
+  assert.deepEqual(log.filter(e => e[1] !== null), [], 'every write and unhide during the switches happened while the line had no role');
+  log.length = 0;
+  type('tag:bt tga:y'); p.advance(100);   // a fresh error from typing (a different text: setText skips an unchanged one)
+  assert.equal(role(), 'alert', 'a new error shown from typing is an alert');
+  assert.ok(log.some(e => e[0] === 'text' && e[2].startsWith("Unknown field 'tga'")), 'the fresh error wrote its text');
+  assert.deepEqual(log.filter(e => e[1] !== 'alert'), [], 'and every write and unhide for it happened while the line was an alert');
+  assert.match($('queryErrorText').textContent, /^Unknown field 'tga'/);
+});
+
+test('a refusal by the page is restored on a switch without the alert role, as a parse error is (R2 #3)', () => {
+  const { p, $, st, bar, type, live, file } = barPage({ refuse: '/slow/' });
+  const role = () => $('queryError').getAttribute('role');
+  $('queryError').setAttribute('role', 'alert');
+  type('tag:bt'); p.advance(100);
+  type('/slow/'); p.advance(100);   // refused by the page: kept with its error
+  assert.equal(role(), 'alert');
+  const log = watchAlert($);
+  st.cur = file; bar.sync();
+  st.cur = live; bar.sync();
+  assert.deepEqual([$('queryError').hidden, $('queryInput').getAttribute('aria-invalid'), role()], [false, 'true', null]);
+  assert.match($('queryErrorText').textContent, /^Invalid regex: It would take about/);
+  assert.ok(log.some(e => e[0] === 'text' && e[2]) && log.some(e => e[0] === 'unhide'), 'the switch did write the text and unhide the line');
+  assert.deepEqual(log.filter(e => e[1] !== null), [], 'every write and unhide happened while the line had no role');
+  // a draft cut by a switch before its error showed: the error is computed on return, and is not an alert either
+  type('tag:bt tg:x'); p.advance(50);
+  log.length = 0;
+  st.cur = file; bar.sync();
+  st.cur = live; bar.sync();
+  assert.deepEqual([$('queryError').hidden, role()], [false, null]);
+  assert.ok(log.some(e => e[0] === 'text' && e[2]), 'the computed error was written');
+  assert.deepEqual(log.filter(e => e[1] !== null), [], 'with no role on the line at any write');
+});
+
+test('restore(s) drops the session\'s draft and shows its applied query (the page\'s file-load guard)', () => {
+  const { p, $, bar, type, live } = barPage();
+  type('tag:bt'); p.advance(100);
+  type('tag:bt tg:'); p.advance(100);
+  live.queryText = ''; live.filter = live.query = barPage().st.cur.filter;   // what the page's guard does: an empty query
+  bar.restore(live);
+  assert.deepEqual([$('queryInput').value, $('queryError').hidden], ['', true]);
+});
+
+test('set(text, opts) writes the bar and applies at once, returning the error or null (dev-bench &q; P7b presets)', () => {
+  const { $, bar, live } = barPage();
+  assert.equal(bar.set('tag:bt', { case: true }), null);
+  assert.deepEqual([$('queryInput').value, live.queryText, live.queryOpts.case, $('queryCaseBtn').getAttribute('aria-pressed')], ['tag:bt', 'tag:bt', true, 'true']);
+  assert.match(bar.set('tg:x').msg, /^Unknown field/);
+});
+
+test('the shell tick asks the page to recompile dev: names (every session), not setQuery', () => {
+  const { calls, ticks } = barPage();
+  calls.length = 0;   // the constructor's own syncChips() already asked once
+  ticks.forEach(fn => fn());
+  assert.deepEqual(calls.filter(c => c[0] === 'recompile' || c[0] === 'setQuery').map(c => c[0]), ['recompile']);
 });
