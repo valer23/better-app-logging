@@ -298,6 +298,12 @@
     for (let i = from; i < to;) { const x = atom(i); if (!x || !x.opt) return false; i = x.end; }
     return true;
   }
+  // The alternative starts with something ambiguous() cannot compare: a group, an anchor (atomAt is null), \b or \B (zero width), or an
+  // atom that matches no character of the alphabet.
+  function unjudged(atom, src, [from]) {
+    const x = atom(from);
+    return !x || x.set.size === 0 || (src[from] === '\\' && (src[from + 1] === 'b' || src[from + 1] === 'B'));
+  }
   // Atom by atom, every pair shares a character and one alternative runs out first: the repeat can split a run two ways.
   function ambiguous(atom, a, b) {
     for (let i = a[0], j = b[0]; ;) {
@@ -375,6 +381,10 @@
         if (canBeEmpty(atom, alts[x])) part[x] = true;
         for (let y = x + 1; y < alts.length; y++) if (ambiguous(atom, alts[x], alts[y])) part[x] = part[y] = true;
       }
+      // Once an overlap is found, an alternative ambiguous() cannot judge joins too: its first atom is a group, an anchor or
+      // \b / \B (atomAt is null or matches no character, or the escape is zero width), so no pair is ever flagged for it, yet it can
+      // match at the same position as the others ((a|aa|(?:a)|(?:aa)){7}z ran 5.8 s on 'a'x200).
+      if (part.includes(true)) for (let x = 0; x < alts.length; x++) if (!part[x] && unjudged(atom, src, alts[x])) part[x] = true;
       const k = part.filter(Boolean).length;
       if (!k) continue;
       r.sum += ub * Math.log2(Math.max(2, k));

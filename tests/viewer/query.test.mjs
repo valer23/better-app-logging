@@ -590,6 +590,20 @@ test('S1 (task 2d): only the overlapping alternatives count against the bounded 
   }
 });
 
+test('S1 (task 2d review): an alternative led by a group or a zero-width escape counts once an overlap is found', () => {
+  // ambiguous() cannot judge an alternative whose first atom is a group (atomAt is null) or \b / \B (zero width), so it never flags it.
+  // Left uncounted, (a|aa|(?:a)|(?:aa)|(a)|(aa)){7}z ran 5.8 s on 'a'x200 and (a|aa|\Ba|\Baa){7}z 232 ms, both refused before the
+  // overlapping-only count. With an overlap found elsewhere in the group, every such alternative joins k.
+  for (const re of ['(a|aa|(?:a)|(?:aa)|(a)|(aa)){7}z', '(a|aa|\\Ba|\\Baa){7}z', '(a|aa|^a|^aa){7}z']) {
+    assert.equal(Q.overlapRepeat(re, ''), true, re);
+    const r = Q.build(`/${re}/`, {}, {});
+    assert.equal(r.q, null, re);
+    assert.deepEqual([r.error.msg, r.error.start, r.error.end], [S1_MSG, 0, re.length + 2], re);
+  }
+  // With no overlap found, an unjudged alternative adds nothing (slowRegex times a group inside an alternative).
+  for (const re of ['((?:ab)|(?:cd)|ef|gh){4}z', '(\\Bab|cd|ef|gh){4}z']) assert.equal(Q.overlapRepeat(re, ''), false, re);
+});
+
 test('S1 passes common log regexes', () => {
   // Not \d{1,3}(\.\d{1,3}){3}: nestedQuantifier (unchanged) already refuses a quantified group that holds a quantifier,
   // before S1 runs. S1 neither widens nor narrows that rule, so the unrolled dotted quad stands in for it.
