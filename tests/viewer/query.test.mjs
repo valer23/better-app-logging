@@ -1040,6 +1040,25 @@ test('slowRegex: a prefix that is cheap does not let the next step run into a cl
   }
 });
 
+// R1b: a timing under NOISE_MS is an upper bound (a 1 ms clock reads about 0.0196 ms for any cheap regex), so the growth after it is
+// unknown: the worst-line probe reads it as degree 4, as the projection does. Read as degree 1, a 2 ms cliff at 1 024 chars was
+// predicted at 4 ms on 2 048, under STEP_MS, and that step ran into the slow part (0.5 to 2.5 s on '\s.*.*z' and a 5 887-char line).
+test('slowRegex: after a timing under NOISE_MS the worst-line probe predicts degree 4: the longest line, cheap to 900 chars then cubic, never runs 2 x the cliff prefix (any clock step)', () => {
+  for (const step of STEPS) {
+    const lines = msgs(100, 100);
+    lines[0] = { msg: 'D'.repeat(6000) };                       // the longest line: 3 ns a char to 900 chars, then cubic in what follows
+    let most = 0;
+    const c = fakeClock(s => {
+      if (s[0] !== 'D') return 1e-6 * s.length;
+      most = Math.max(most, s.length);
+      return 3e-6 * s.length + 1e-6 * Math.max(0, s.length - 900) ** 3;   // 0.0015 ms at 512 chars, 1.9 ms at 1 024, 1.5 s at 2 048
+    }, 'f+', { step });
+    const err = Q.slowRegex(qOf(c.re), lines, c.now);
+    assert.match(err && err.cause || '', /ms on one of these lines/, `step ${step}: ${JSON.stringify(err)}`);
+    assert.ok(most < 2048, `step ${step}: the longest prefix of that line run was ${most} chars (2 048 costs 1.5 s)`);
+  }
+});
+
 test('slowRegex: the 4 x APPLY_MS wall stop fires inside one term: the first timing that reads past it ends the probe', () => {
   let t = 0, calls = 0, afterJump = 0, jumped = false;
   const lin = { source: 'x+', test(s) { t += 1e-6 * s.length; calls++; if (jumped) afterJump++; return false; } };
@@ -1200,4 +1219,32 @@ test('slowRegex on a real clock: a cliff line behind more than 3 longer distinct
 
 test('slowRegex on a real clock: a cliff just past a power-of-two prefix (500 chars, then 1 500 spaces) does not run into a step 64 times larger: refused, the guard under 600 ms', () => {
   refusedUnder600('a cliff past a 512-char prefix', '\\s{2}.*.*z', [{ msg: blobOf(3000) }, { msg: 'dump:' + blobOf(495) + ' '.repeat(1500) + 'end' }, ...normalLines(100)]);
+});
+
+// R1b: the same cliff on a real regex and a real clock: '\s.*.*z' on 'dump:' + 879 base64 chars + 5 000 spaces (5 887 chars, the
+// longest line) is cheap to 879 chars, 2-5 ms at 1 024 and 0.5-2.5 s at 2 048. HEAD before R1b ran the 2 048 step on every clock.
+// Refused, the guard under 600 ms, and no single call over 25 ms; up to 3 attempts on a loaded machine, each retry logged.
+test('slowRegex on a real clock: a cliff past a cheap prefix on a 5 887-char longest line is refused before the step that runs into it: no call over 25 ms, the guard under 600 ms (any clock step)', () => {
+  const lines = [{ msg: 'dump:' + blobOf(879) + ' '.repeat(5000) + 'end' }, ...normalLines(100)];
+  const clockOf = step => (step ? () => Math.floor(performance.now() / step) * step : () => performance.now());
+  for (const step of [0, 0.005, 0.1, 1]) {
+    let err = null, ms = Infinity, worst = Infinity, at = 0;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const q = Q.build('/\\s.*.*z/', {}, {}).q, real = q.regexes[0].re;
+      worst = 0;
+      q.regexes = [{ ...q.regexes[0], re: { source: real.source, flags: real.flags, test(s) {
+        const t0 = performance.now(), v = real.test(s), d = performance.now() - t0;
+        if (d > worst) { worst = d; at = s.length; }
+        return v;
+      } } }];
+      const now = clockOf(step), t0 = performance.now();
+      err = Q.slowRegex(q, lines, now);
+      ms = performance.now() - t0;
+      console.log(`# real clock, step ${step} ms: \\s.*.*z on a 5 887-char cliff line ${err ? 'refused' : 'accepted'} in ${ms.toFixed(0)} ms, costliest call ${worst.toFixed(1)} ms on ${at} chars (attempt ${attempt})`);
+      if (err && ms < 600 && worst <= 25) break;
+    }
+    assert.ok(err, `step ${step}: refused`);
+    assert.ok(ms < 600, `step ${step}: the guard took ${ms.toFixed(0)} ms`);
+    assert.ok(worst <= 25, `step ${step}: the costliest call took ${worst.toFixed(1)} ms on ${at} chars`);
+  }
 });

@@ -416,8 +416,8 @@
   //   bound passes MEAN_US and TOTAL_MS, after whole passes). A slow or borderline regex is timed as long as before.
   // - Worst line: the session's longest line, repeated to at least MIN_LEN chars, timed on prefixes doubling from START (8
   //   chars; the first doubling is predicted as degree 4). It accepts early once even a degree-4 growth from there stays under
-  //   LINE_MS. Otherwise it reads the degree from each doubling (1 below NOISE_MS, at most 4), never runs a step it predicts
-  //   over STEP_MS, and extrapolates to the full length: over LINE_MS is refused.
+  //   LINE_MS. Otherwise it reads the degree from each doubling (at most 4; 4 after a timing under NOISE_MS, whose growth is
+  //   unknown), never runs a step it predicts over STEP_MS, and extrapolates to the full length: over LINE_MS is refused.
   // - Mean: SAMPLE evenly spaced lines, timed call by call. It stops at TICK_MS of timed calls, or as soon as the running
   //   mean is over MEAN_US (after TICK_MS), or the probe's own time is over MEAN_BUDGET_MS. Over MEAN_US a line is
   //   refused (what the drain can afford at 27k lines/s). The mean times this session's lines over TOTAL_MS is refused:
@@ -452,7 +452,10 @@
   const QUANT = /[*+?{]/;   // a quantifier (a (?: group or an escaped \* is timed too: harmless)
   const group = n => String(Math.max(0, Math.round(n))).replace(/\B(?=(\d{3})+(?!\d))/g, '\u2009');   // as shellPure.num
   const msgOf = m => (m == null || m.msg == null ? '' : String(m.msg));
-  const degree = (t1, t2, l1, l2) => (t1 < GUARD.NOISE_MS ? 1 : Math.min(4, Math.max(1, Math.log2(t2 / t1) / Math.log2(l2 / l1))));
+  // The degree of the growth from t1 on l1 chars to t2 on l2, between 1 and 4. Under NOISE_MS, t1 is the clock's floor or an upper
+  // bound (hiOf), not a cost, so the growth from it is unknown: 4. Read as 1, a cliff past a cheap prefix ('\s.*.*z' on 'dump:' + 879
+  // base64 chars + 5 000 spaces: 2 ms on 1 024 chars) was predicted at 4 ms on the next doubling, which ran into the slow part (0.5-2.5 s).
+  const degree = (t1, t2, l1, l2) => (t1 < GUARD.NOISE_MS ? 4 : Math.min(4, Math.max(1, Math.log2(t2 / t1) / Math.log2(l2 / l1))));
   // The clock's step in ms (the smaller of its first two moves), or 0 when it never moves in MAX_CALLS reads.
   function clockStep(now) {
     let a = now(), step = 0;
@@ -485,8 +488,9 @@
   }
   // The most `n` calls that read `t` in all can have cost, ms a call: the clock reads are floored, so a run of calls timed read to
   // read costs under what it read plus one step, and each run left out of `t` (a retry) breaks that run, one more step each.
-  // A timing whose bound is under NOISE_MS a call has its answer already: every use of a cost under NOISE_MS reads it as cheap
-  // (degree 1, a next step far under STEP_MS), and an early accept from the bound is sound, as the bound is never under the cost.
+  // A timing whose bound is under NOISE_MS a call has its answer already: the growth after a cost under NOISE_MS is read as unknown
+  // (degree 4: the next doubling is predicted at 16 x, at most 0.32 ms, far under STEP_MS, so it runs whatever the exact cost), and
+  // an early accept from the bound is sound, as the bound is never under the cost. The bound only accepts early less often.
   // So it stops there and counts at that bound, however few clock steps it ran: a coarse clock never waits four steps for a cheap
   // regex (WebKit's 1 ms clock spent about 35 ms a term on whole steps, and refused five linear terms on APPLY_MS).
   const hiOf = (t, n, at, clk) => (t + clk.step * (1 + (at.extra || 0))) / n;
@@ -563,7 +567,7 @@
       const all = live.map((x, i) => i), cont = all.filter(i => live[i].length > len), top = cont.reduce((m, i) => Math.max(m, live[i].length), 0);
       const look = rr => {
         const here = worst(rr, all), sub = worst(rr, cont);
-        return { here, sub, d: prev && prev >= GUARD.NOISE_MS ? degree(prev, here, prevLen, len) : 4 };
+        return { here, sub, d: degree(prev, here, prevLen, len) };   // 4 at the first level (prev 0) and after one under NOISE_MS
       };
       let o = look(r);
       if (o.here > GUARD.LINE_MS) return o.here;
