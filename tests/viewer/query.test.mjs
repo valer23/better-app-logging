@@ -487,6 +487,42 @@ test('S1 (task 2b review): the bounded cut-off scales with the number of alterna
   }
 });
 
+test('S1 (task 2b review 2): literals outside Latin-1 are compared too (CJK, emoji, \\u escapes)', () => {
+  // ALPHA stops at U+00FF, so these are caught only by alphaOf(src). Without it each one is accepted; measured with it removed,
+  // (日|日日)+z on 日x32 ran past 3 s, (😀|😀😀)+z on 😀x32 2 023 ms, (€|€€){40}z is the bounded form.
+  for (const re of ['(日|日日)+z', '(😀|😀😀)+z', '(€|€€){40}z', '(\\u65e5|\\u65e5\\u65e5)+z', '(\\u20ac|\\u20ac\\u20ac){40}z']) {
+    const r = Q.build(`/${re}/`, {}, {});
+    assert.equal(r.q, null, re);
+    assert.deepEqual([r.error.msg, r.error.start, r.error.end], [S1_MSG, 0, re.length + 2], re);
+  }
+  assert.equal(Q.overlapRepeat('(日|日日)+', 'i'), true);
+  assert.equal(Q.overlapRepeat('(日|月)+', 'i'), false, 'different literals share nothing');
+});
+
+test('S1 (task 2b review 2): the bound of an enclosing repeat multiplies, so nesting cannot hide an overlap', () => {
+  // ((a|aa){8}){8}z ran 10 879 ms on 34 a's; (?:(a|aa){10}){3}z 589 ms on 28 a's. Each inner bound alone is under 16.
+  for (const re of ['((a|aa){8}){8}z', '(?:(a|aa){10}){3}z', '((a|aa){4}){4}z']) {
+    const r = Q.build(`/${re}/`, {}, {});
+    assert.equal(r.q, null, re);
+    assert.deepEqual([r.error.msg, r.error.start, r.error.end], [S1_MSG, 0, re.length + 2], re);
+  }
+  // A group that is not repeated, or an enclosing bound that is small, multiplies nothing in.
+  for (const re of ['((a|aa)b){2}z', '(?:(a|aa){2}){3}z', '((ab|cd){4}){4}z', '((a|aa)){2}z', '(?:(a|aa){3}x)+z']) assert.equal(Q.build(`/${re}/`, {}, {}).error, null, re);
+});
+
+test('S1 (task 2b review 2): a long alternation under a repeat builds in time (atoms are judged once, not per pair)', () => {
+  // 400 distinct CJK-led alternatives under +: 2 937 ms before atomAt was memoized per call. Best of 3, every attempt logged.
+  const re = '(?:' + Array.from({ length: 400 }, (_, i) => String.fromCodePoint(0x4e00 + i) + 'x' + i).join('|') + ')+z';
+  let best = Infinity;
+  for (let k = 0; k < 3 && best > 1500; k++) {
+    const t0 = performance.now(); const r = Q.build(`/${re}/`, {}, {}); const ms = performance.now() - t0;
+    assert.equal(r.error, null, 'distinct alternatives do not overlap');
+    console.log(`# 400 alternatives, attempt ${k + 1}: ${ms.toFixed(0)} ms`);
+    best = Math.min(best, ms);
+  }
+  assert.ok(best <= 1500, `built in ${best.toFixed(0)} ms`);
+});
+
 test('S1 (task 2b): legitimate bounded repeats and log regexes still build', () => {
   // Not \d{1,3}(?:x\d{1,3}){3}: nestedQuantifier (unchanged) refuses a quantified group that holds a quantifier, as it did before.
   for (const re of ['(a|b){40}z', '(ab|cd){2,20}x', '(a|aa){2,15}z', '(a|aa){15}z', '(a|a|a){10}z', '(a|a|a|a){7}z', 'gatt.*mtu', 'status=\\d+.*handle',

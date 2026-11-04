@@ -236,7 +236,8 @@
   // nestedQuantifier (above) refuses exponential nesting. Two more shapes freeze a WebKit or V8 regex on one long line:
   // (1) a group repeated without bound, or often enough (see BOUNDED_MIN), whose alternatives overlap (one is a prefix of another, atom by atom,
   //     under the term's own case flag) or can match '' ((a|aa)+, (\w|\d)+, (.|\s)*, (a|)+): exponential, so it is refused here,
-  //     before anything runs (one RegExp.test cannot be interrupted). {n} and {n,m} count by their upper bound; and
+  //     before anything runs (one RegExp.test cannot be interrupted). {n} and {n,m} count by their upper bound, multiplied by the bounds of the bounded repeats around the group
+  //     (((a|aa){8}){8} is (a|aa){64}); and
   // (2) polynomial backtracking (\s.*.*.*z, \w+\w+z, (.*){2}z, a.*a.*z): its cost depends on the lines, so slowRegex below
   //     times it on the session's own lines when a filter is applied (the page injects the clock). A leading .* is not
   //     among them: compile drops it from the regex a line is tested with (below), so .*.*.*z runs as z.
@@ -291,16 +292,16 @@
     out.push([s, to]);
     return out;
   }
-  // Every atom optional (or none): the alternative can match ''.
-  function canBeEmpty(src, [from, to], flags, alpha) {
-    for (let i = from; i < to;) { const x = atomAt(src, i, flags, alpha); if (!x || !x.opt) return false; i = x.end; }
+  // Every atom optional (or none): the alternative can match ''. `atom(i)` is the memoized atomAt of overlapRepeat.
+  function canBeEmpty(atom, [from, to]) {
+    for (let i = from; i < to;) { const x = atom(i); if (!x || !x.opt) return false; i = x.end; }
     return true;
   }
   // Atom by atom, every pair shares a character and one alternative runs out first: the repeat can split a run two ways.
-  function ambiguous(src, a, b, flags, alpha) {
+  function ambiguous(atom, a, b) {
     for (let i = a[0], j = b[0]; ;) {
       if (i >= a[1] || j >= b[1]) return true;
-      const x = atomAt(src, i, flags, alpha), y = atomAt(src, j, flags, alpha);
+      const x = atom(i), y = atom(j);
       if (!x || !y || x.q || y.q) return false;
       let share = false;
       for (const ch of x.set) if (y.set.has(ch)) { share = true; break; }
@@ -308,9 +309,10 @@
       i = x.end; j = y.end;
     }
   }
-  function overlapRepeat(src, flags) {
-    const open = [];
-    let alpha = null;
+  // Every group of src with its repeat bound (ub: how many times it can repeat, Infinity without bound, 0 when it is not
+  // repeated) and its enclosing group (up, -1 at the top), in the order they open. A group still open at the end has i = -1.
+  function groupsOf(src) {
+    const groups = [], open = [];
     for (let i = 0; i < src.length; i++) {
       const c = src[i];
       if (c === '\\') { i++; continue; }
@@ -318,27 +320,42 @@
       if (c === '(') {
         let b = i + 1;
         if (src[b] === '?') { const m = /^\?(?::|=|!|<=|<!|<[A-Za-z_$][\w$]*>)/.exec(src.slice(b, b + 40)); b += m ? m[0].length : 1; }
-        open.push(b);
+        open.push(groups.length);
+        groups.push({ b, i: -1, ub: 0, up: open.length > 1 ? open[open.length - 2] : -1 });
         continue;
       }
       if (c !== ')' || !open.length) continue;
-      const b = open.pop(), n = src[i + 1];
-      // ub: how many times the group can repeat (Infinity: without bound), or 0 when it is not repeated.
-      let ub = n === '*' || n === '+' ? Infinity : 0;
+      const g = groups[open.pop()], n = src[i + 1];
+      g.i = i;
+      g.ub = n === '*' || n === '+' ? Infinity : 0;
       if (n === '{') {
         const m = /^\{(\d+)(,(\d*))?\}/.exec(src.slice(i + 1, i + 25));
         // {n,} is unbounded; {n} and {n,m} count by their upper bound.
-        if (m) ub = m[2] !== undefined && m[3] === '' ? Infinity : Number(m[2] === undefined ? m[1] : m[3]);
+        if (m) g.ub = m[2] !== undefined && m[3] === '' ? Infinity : Number(m[2] === undefined ? m[1] : m[3]);
       }
-      if (!ub) continue;
-      const alts = alternatives(src, b, i);
+    }
+    return groups;
+  }
+  function overlapRepeat(src, flags) {
+    const groups = groupsOf(src);
+    let alpha = null;
+    const memo = new Map();
+    // Each atom is judged once per call: its start index fixes it (src, flags and alpha do not change between pairs).
+    const atom = i => { let x = memo.get(i); if (x === undefined) { x = atomAt(src, i, flags, alpha); memo.set(i, x); } return x; };
+    for (const g of groups) {
+      if (g.i < 0 || !g.ub) continue;
+      // The repeats around the group multiply its bound: ((a|aa){8}){8} is (a|aa){64}. An enclosing group repeated without
+      // bound adds nothing here (a bounded group inside (...)+ is judged by its own bound, as before).
+      let ub = g.ub;
+      if (ub !== Infinity) for (let p = g.up; p >= 0; p = groups[p].up) if (groups[p].ub > 1 && groups[p].ub !== Infinity) ub *= groups[p].ub;
+      const alts = alternatives(src, g.b, g.i);
       // k alternatives that overlap give up to k^ub paths, so a bounded repeat is judged when ub * log2(k) reaches BOUNDED_MIN
       // (k counts as at least 2, which keeps the plain cut-off for a lone alternative that can match '').
       if (ub * Math.log2(Math.max(2, alts.length)) < GUARD.BOUNDED_MIN) continue;
       if (!alpha) alpha = alphaOf(src);
       for (let x = 0; x < alts.length; x++) {
-        if (canBeEmpty(src, alts[x], flags, alpha)) return true;
-        for (let y = x + 1; y < alts.length; y++) if (ambiguous(src, alts[x], alts[y], flags, alpha)) return true;
+        if (canBeEmpty(atom, alts[x])) return true;
+        for (let y = x + 1; y < alts.length; y++) if (ambiguous(atom, alts[x], alts[y])) return true;
       }
     }
     return false;
