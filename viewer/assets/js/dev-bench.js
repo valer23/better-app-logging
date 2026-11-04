@@ -15,6 +15,8 @@
      cap     MAX_RETAINED for the run, so a 15 s run trims (the counts' trim path); paused sets its own 50 000.
      follow  Follow on (auto-scroll), the default.
      read    Follow off after 2 s with the table scrolled to the middle (frozen reading window, #54).
+             readPhaseP50Ms, readPhaseP95Ms and readPhaseFlushes cover only the flushes after the switch: the
+             overall p95 also samples the follow-mode second before it.
      paused  Pause on from the start, MAX_RETAINED lowered to 50 000 so the backlog overflows.
      behind  A 50 000-line file session is shown (scrolled to the middle, one line selected) while
              live streams into the detached live session (P2). Records how many rows of the file
@@ -57,6 +59,7 @@
   document.body.appendChild(out);
 
   let start = 0;
+  let readFrom = 0;     // scenario=read: when Follow went off (the reading phase's flushes start after it)
   const flushes = [];   // [startedAt, ms]
   const feeds = [];     // [startedAt, ms]
   let maxGap = 0, maxPending = 0, maxRows = 0, maxLiveRows = 0, sent = 0, carry = 0;
@@ -76,8 +79,9 @@
     if (start) requestAnimationFrame(frame);
   }
 
-  function pct(samples, p) {
-    const v = samples.filter(([t]) => t - start >= WARMUP_MS).map(([, ms]) => ms).sort((a, b) => a - b);
+  // The p-quantile of the samples that started at or after `from` (default: the end of the warm-up).
+  function pct(samples, p, from = start + WARMUP_MS) {
+    const v = samples.filter(([t]) => t >= from).map(([, ms]) => ms).sort((a, b) => a - b);
     if (!v.length) return 0;
     return +v[Math.min(v.length - 1, Math.floor(p * v.length))].toFixed(2);
   }
@@ -106,6 +110,7 @@
       toggleAutoScroll();
       const t = document.getElementById('logTable');
       t.scrollTop = Math.floor(t.scrollHeight / 2);
+      readFrom = performance.now();   // after the switch's own work: what follows is reading
     }
     if (elapsed >= secs * 1000) finish();
   }
@@ -155,6 +160,10 @@
       scenario, rate, burst, secs, sent, query, queryError, cap: MAX_RETAINED,
       flushes: flushes.length,
       flushP50Ms: pct(flushes, 0.5), flushP95Ms: pct(flushes, 0.95), flushMaxMs: pct(flushes, 1),
+      ...(scenario === 'read' ? {
+        readPhaseFlushes: readFrom ? flushes.filter(([t]) => t >= readFrom).length : 0,
+        readPhaseP50Ms: pct(flushes, 0.5, readFrom || Infinity), readPhaseP95Ms: pct(flushes, 0.95, readFrom || Infinity),
+      } : {}),
       feedP95Ms: pct(feeds, 0.95),
       maxRafGapMs: +maxGap.toFixed(1),
       maxPending, finalPending: pendingBatch.length,

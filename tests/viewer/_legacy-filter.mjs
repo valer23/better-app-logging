@@ -3,7 +3,8 @@
 // section); only their inputs changed: the fields they read from the page (the search, Tag and PID / App boxes, the
 // regex button) and the globals they use (searchCaseSensitive, searchRegexMode, enabledLevels, enabledPlatforms,
 // currentSearch, searchRegex) are built from `st` = { search, case, regex, tag, pid, levels, plats }. P6 deletes them
-// from the page; this copy stays as the record of what "the old filters" meant.
+// from the page; this copy stays as the record of what "the old filters" meant. fromLegacy (below) is the translation
+// P6a ran in the page (ALV.query.fromLegacy) until P6b's query bar replaced the controls.
 export function legacyFilter(st) {
   const fields = { tagFilter: { value: st.tag }, pidFilter: { value: st.pid }, searchRegexBtn: { classList: { add() {}, remove() {} } } };
   const document = { getElementById: id => fields[id] };
@@ -67,4 +68,30 @@ export function legacyFilter(st) {
   // refilterSession compiled the search once per pass, then filtered with makeFilter().
   const searchRegex = _compileSearchRegex(currentSearch);
   return makeFilter();
+}
+
+// The legacy filter bar as query text (P6a's ALV.query.fromLegacy, moved here unchanged when P6b deleted the controls):
+// the search box is one phrase (or one /regex/ in regex mode), the Tag box one tag: token, the PID / App box pid:N when it
+// is a number else app:, the level and platform toggles one level: and one dev: token. → text, or null when the
+// regex-mode search is not a valid regex. Q is ALV.query.
+export function fromLegacy(st, Q) {
+  const escQ = v => v.replace(/"|\\(?=["\\]|$)/g, '\\$&');   // query.js's escQ, as P6a shipped it (a quote, and a backslash before a quote, a backslash or the end)
+  const out = [];
+  let mask = 0;
+  for (const l of st.levels) if (Q.LV[l] >= 0) mask |= 1 << Q.LV[l];
+  const lt = Q.levelText(mask);
+  if (lt) out.push(lt);
+  const plats = new Set(st.plats);
+  const a = plats.has('android');
+  const i = plats.has('ios');
+  if (!a || !i) out.push(a ? 'dev:android' : i ? 'dev:ios' : 'dev:none');
+  if (st.tag) out.push(`tag:"${escQ(st.tag)}"`);
+  if (st.pid) out.push(/^\d+$/.test(st.pid) ? `pid:${st.pid}` : `app:"${escQ(st.pid)}"`);
+  if (st.search) {
+    if (st.regex) {
+      try { new RegExp(st.search); } catch (e) { return null; }
+      out.push(`/${st.search.replace(/\\[\s\S]|\//g, x => (x === '/' ? '\\/' : x))}/`);
+    } else out.push(`"${escQ(st.search)}"`);
+  }
+  return out.join(' ');
 }

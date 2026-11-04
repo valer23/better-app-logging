@@ -81,11 +81,12 @@
 
   // The grid's empty state (spec "Log grid", empty states), or null while it shows rows. e: { kind, all, shown,
   // stale (cur.filtered is out of date: the session's filter generation lags, as after a file open until its render),
-  // cleared (no line since a Clear), paused, levelsOff, devicesOff, tag (the tag filter), query (the search or PID /
-  // App field filters), waiting: [the names of the devices streaming], gone: [the names of the devices whose stream is
-  // open but whose phone the bridge reported gone (noDevice)] }. → { key, say, icon, spin, title, desc, fix, fixLabel,
-  // reset, skeleton }: key changes when anything shown changes, say (the announcement) only when the state or its
-  // cause does. fix is what the fix button resets: 'levels' | 'devices' | 'tag' | null. An empty file session shows
+  // cleared (no line since a Clear), paused, levelsOff, devicesOff, notTag (a negated tag every retained line carries),
+  // tag (a tag no retained line carries), query (anything but the level and device chips filters), waiting: [the names
+  // of the devices streaming], gone: [the names of the devices whose stream is open but whose phone the bridge reported
+  // gone (noDevice)] }. → { key, say, icon, spin, title, desc, fix, fixLabel, reset, skeleton }: key changes when
+  // anything shown changes, say (the announcement) only when the state or its cause does. fix is the query rewrite the
+  // fix button asks for: 'levels' | 'devices' | 'notTag' | 'tag' | null. An empty file session shows
   // the dropzone, and an empty live session with no open stream the device panel (refreshLiveView, #70): no tile.
   function emptyView(e) {
     const { num } = g.ALV.shellPure;
@@ -96,13 +97,14 @@
     if (e.all > 0) {
       const [cause, fix, fixLabel] = e.levelsOff ? ['All levels are turned off.', 'levels', 'Turn levels back on']
         : e.devicesOff ? ['Both devices are hidden.', 'devices', 'Show both devices']
-          : e.tag ? [`No retained line matches tag:${e.tag}.`, 'tag', `Remove tag:${e.tag}`]
-            // The search or PID / App field filters too: the chips are not the cause, and the spec's query causes
-            // (NOT tag, tag:x chips) are P6's, so the tile shows the count and Reset filter only.
-            : e.query ? ['', null, '']
-              : ['No retained line matches the level and device chips.', null, ''];
+          : e.notTag ? [`NOT tag:${e.notTag} hides every line here.`, 'notTag', `Remove NOT tag:${e.notTag}`]
+            : e.tag ? [`No retained line matches tag:${e.tag}.`, 'tag', `Remove tag:${e.tag}`]
+              // Something else filters too (text, app, pid, a tag that does match): the chips are not the cause, so the
+              // tile shows the count and Reset filter only.
+              : e.query ? ['', null, '']
+                : ['No retained line matches the level and device chips.', null, ''];
       const tail = cause ? ` ${cause}` : '';
-      const desc = `0 of ${num(e.all)} lines in view.${tail}`;
+      const desc = `0 of ${num(e.all)} ${e.all === 1 ? 'line' : 'lines'} in view.${tail}`;
       return { ...none, key: `match|${desc}`, say: `No lines match this filter.${tail}`, icon: 'search-x', spin: false,
         title: 'No lines match this filter', desc, fix, fixLabel, reset: true };
     }
@@ -132,7 +134,7 @@
   // clearArrival(tbody) }. Adds a resize separator on each RESIZABLE boundary of #headerRow, makes the scroller the
   // shortcut registry's grid root, binds the stream keys, keeps aria-rowcount current, shows the empty states and
   // keeps the arrival highlight's screenful. state() is the legacy shellState(); actions are legacy functions:
-  // jumpToEnd, jumpToOldest, togglePause, toggleAutoScroll, updateNewerPill, resetFilter(what).
+  // jumpToEnd, jumpToOldest, togglePause, toggleAutoScroll, updateNewerPill, resetFilter(what: emptyView's fix or 'all').
   function createGrid({ doc, win, dom, ui, keys, prefs, shell, state, actions }) {
     const { setAttr, setText, setHidden } = g.ALV.shellPure;   // shell.js loads first
     const $ = id => doc.getElementById(id);
@@ -146,9 +148,9 @@
     // line and Home / ⌘↑ go to the oldest retained line, from anywhere but a text field or a control that owns the
     // key; Space† pauses and F† toggles Follow while the grid has focus, on the live session only. ----
     const onLive = () => state().cur.kind === 'live';
-    // All four wait while the grid is hidden (the device cards, the dropzone, loading) or a legacy modal is over it:
-    // keys.setModal does not cover the setup guide or the stall modal, which leave focus on the table (Space and F
-    // would pause or flip Follow behind the sheet, unseen) and scroll with End and Home.
+    // `shown` covers only a hidden grid (the device cards, the dropzone, loading): all four wait then. A legacy modal
+    // (the setup guide, the stall modal) is not this check's job: it blocks every key in one place, the page's
+    // keys.setModalCheck, so Space and F never pause or flip Follow behind a sheet and End and Home never scroll it.
     const shown = () => !!state().gridShown;
     keys.register({ id: 'stream.latest', keys: ['End', 'Mod+ArrowDown'], when: shown, run: () => actions.jumpToEnd() });
     keys.register({ id: 'stream.oldest', keys: ['Home', 'Mod+ArrowUp'], when: shown, run: () => actions.jumpToOldest() });
@@ -256,7 +258,7 @@
       const waiting = open.filter(p => !st.noDevice[p]).map(name);
       const gone = open.filter(p => st.noDevice[p]).map(name);
       const v = emptyView({ kind: st.cur.kind, all: st.cur.all.length, shown: st.cur.filtered.length, stale: !!st.stale, cleared: st.cleared, paused: st.paused,
-        levelsOff: st.levels === 0, devicesOff: st.enabled.size === 0, tag: st.tag, query: !!st.query, waiting, gone });
+        levelsOff: st.levels === 0, devicesOff: st.enabled.size === 0, notTag: st.notTag, tag: st.tag, query: !!st.query, waiting, gone });
       const key = v ? v.key : '';
       if (key === emptyKey) return;
       emptyKey = key;

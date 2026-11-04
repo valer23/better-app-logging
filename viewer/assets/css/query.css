@@ -1,0 +1,56 @@
+/* The query region (roadmap P6b; spec "Query region", "Sizes"). @layer app, foundation tokens only (no hex). The bar,
+   the chips and the tokens are the foundation's .query, .chip, .lv-badge, .plat and .chip.token; this file lays the
+   region out. #filterbar is a size container: its tiers are content-box widths (32 px of padding), so the spec's
+   1 280 px and 860 px region widths are max-width: 1247px and 827px. */
+@layer app {
+  #filterbar { display: flex; flex-direction: column; gap: 4px; padding: 8px 16px; flex: none; border-bottom: 1px solid var(--hairline); container: queryregion / inline-size; }
+  .query .icon { flex: none; }
+  .query .q-mod { flex: none; font-family: var(--font-log); font-weight: 600; }
+  .query .kbd { flex: none; }
+  #queryClearBtn { flex: none; }
+  /* The invalid line (spec: 20 px, role="alert", error icon). */
+  .query-error { display: flex; align-items: center; gap: 6px; height: 20px; color: var(--err); font-size: var(--ui-fs-sm); }
+  .query-error[hidden] { display: none; }
+  /* The chip row: a 28 px content box plus 4 px above and below for the focus rings, which -4 px margins give back
+     (.app * is border-box: 28 + 4 + 4 = 36, so the row lays out at 28 px and its chips sit 4-5 px below the bar). The count and
+     Reset never leave the row: the chip area clips first, so it pads 4 px on every side (and gives it back with -4 px
+     margins) to keep its chips' 2 px rings, offset 2 px, inside its clip. */
+  .chip-row { display: flex; align-items: center; gap: 8px; height: 36px; margin-block: -4px; padding-block: 4px; }
+  .chip-area { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 8px; overflow: clip; padding: 4px; margin: -4px; }
+  .chip-group { display: flex; align-items: center; gap: 4px; flex: none; }
+  /* overflow: clip, not hidden: a hidden box is still a scroll container, so Tab-focusing a clipped control scrolls it (and the level
+     chips with it) and the scroll stays after focus leaves. Invariant: whatever the area cannot fit is taken from the device chips
+     first (their names ellipsize, down to the badge) and then from the token value (ellipsis); a token chip never shrinks below
+     --tok-floor (its 8 px padding, 2 px border, its 24 px x and 2ch of value), so its x, or the chevron of "N filters", always
+     lies inside the clip. The full token is the body's title. */
+  .chip-area { --tok-floor: calc(24px + 8px + 2px + 2ch); }
+  /* The device group takes the shrink first: flex-shrink 1000 against the token group's 1 (shrink is weighted by base size, so the
+     tokens give up about a thousandth of what the devices do), down to a floor that holds every chip's badge, padding, border and gap
+     (18 px + 6 px + the badge each, 4 px between the two): the chips never overflow the group onto the divider or the token chip. */
+  #deviceChips { flex: 0 1000 auto; min-width: calc(2 * (var(--badge) + 24px) + 4px); }
+  .chip.dev { min-width: calc(var(--badge) + 24px); }
+  .chip.dev .plat { flex: none; }
+  #tokenChips, #tokenOne { flex: 0 1 auto; min-width: var(--tok-floor); }
+  #tokenOne:empty { display: none; }
+  .chip.token { min-width: var(--tok-floor); }
+  .chip.token .v { min-width: 0; max-width: 24ch; overflow: hidden; text-overflow: ellipsis; }
+  .chip.token .chip-x { flex: none; }
+  #tokenMoreText { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  #tokenMore .icon { flex: none; }
+  .chip-group[hidden], .chip-row .divider-v[hidden] { display: none; }
+  .chip-dev-name { min-width: 0; max-width: 16ch; overflow: hidden; text-overflow: ellipsis; }
+  .chip[hidden] { display: none; }
+  /* A token chip: its body (puts the caret on the token) and its 24 px × (foundation .chip-x) are two buttons. */
+  .chip-body { display: inline-flex; align-items: center; gap: 4px; height: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: text; min-width: 0; overflow: hidden; }
+  #tokenMore { padding-right: 6px; }
+  /* A long list scrolls inside the panel (it is position: fixed, so nothing else would reach the last chips); the 8 px padding keeps the chips' focus rings inside the scrollport. */
+  .token-pop { max-width: min(480px, calc(100vw - 16px)); max-height: min(60vh, 480px); overflow: auto; padding: 8px; background: var(--raised); border: 1px solid var(--hairline); border-radius: 8px; box-shadow: var(--shadow-md); }
+  .token-pop[hidden] { display: none; }
+  .token-list { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
+  .token-list .chip.token { max-width: 100%; }
+  .token-list .chip.token .v { max-width: none; }
+  #filterCount { flex: none; color: var(--text-2); font-size: var(--ui-fs-sm); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  #queryResetBtn { flex: none; }
+  @container queryregion (max-width: 1247px) { .chip .lv-name { display: none; } }
+  @container queryregion (max-width: 827px) { .chip .count { display: none; } }
+}

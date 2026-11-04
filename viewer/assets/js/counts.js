@@ -26,6 +26,9 @@
   // The lines all[from, to) leave the session (a retention trim calls this before its splice). gate is the session's
   // query gate when its level counts are current, else null: they are rebuilt when the session is refiltered.
   function remove(c, all, from, to, gate) {
+    // Every line leaves (Resume after a backlog overflow, dropAll): the counts are empty, with no gate run over up to
+    // MAX_RETAINED lines in one task. A stale session's level counts are 0 then too, which its refilter would give.
+    if (from === 0 && to === all.length) { clear(c); return; }
     const lv = c.lvl;
     for (let i = from; i < to; i++) {
       const m = all[i];
@@ -49,6 +52,14 @@
     return c;
   }
 
+  // The retained lines whose tag contains v (case-insensitive), from the tag map: O(distinct tags), no scan of the lines.
+  function tagHits(c, v) {
+    const low = String(v).toLowerCase();
+    let n = 0;
+    for (const [tag, k] of c.tags) if (String(tag).toLowerCase().includes(low)) n += k;
+    return n;
+  }
+
   const ALV = g.ALV || (g.ALV = {});
-  ALV.counts = Object.freeze({ create, add, remove, clear, recount });
+  ALV.counts = Object.freeze({ create, add, remove, clear, recount, tagHits });
 })(typeof window !== 'undefined' ? window : globalThis);

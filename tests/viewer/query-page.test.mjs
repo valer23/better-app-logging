@@ -1,7 +1,7 @@
-// The page side of the query (roadmap P6): the legacy script compiles the filter bar into ALV.query and runs it in the
-// drain, keeps every session's counts with it (flush, trim, Clear, file load, refilter), keeps the last valid filter on an
-// invalid regex, and shows the counts in the level toggles' tooltips. Run on the legacy inline script with a sticky
-// document (tests/viewer/_load.mjs), document.hidden true: the drain takes its data path only.
+// The page side of the query (roadmap P6): the legacy script compiles the query (setQuery) and runs it in the drain,
+// keeps every session's counts with it (flush, trim, Clear, file load, refilter) and keeps the last valid filter on an
+// invalid query. Run on the legacy inline script with a sticky document (tests/viewer/_load.mjs), document.hidden true:
+// the drain takes its data path only.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
@@ -19,7 +19,8 @@ function boot() {
   return {
     api, run, doc,
     send(count, platform = 'ios') { for (let i = 0; i < count; i++, n++) api.handleWsMsg({ data: frame(n) }, platform); },
-    field(id, value) { doc.getElementById(id).value = value; },
+    // Text typed into the query bar and applied (what the 100 ms debounce runs).
+    bar(text) { doc.getElementById('queryInput').value = text; run('queryBar.apply()'); },
     // The session's counts, and a full recount of its lines under the active query (null levels while it is stale).
     counts(s = 'liveSession') {
       const plain = c => ({ lvl: [...c.lvl], tags: Array.from(c.tags).map(([k, v]) => `${k}=${v}`).sort(), apps: Array.from(c.apps).map(([k, v]) => `${k}=${v}`).sort() });
@@ -32,73 +33,59 @@ function boot() {
   };
 }
 
-test('queryChanged turns the filter bar into query text; a filter that compiles the same refilters nothing', () => {
+test('setQuery refilters only when the compiled filter changed, and an invalid query changes nothing', () => {
   const v = boot();
   v.send(30); v.api.flushBatch();
-  v.field('search', 'line 1');
-  v.run('queryChanged()');
+  assert.equal(v.run('setQuery(\'"line 1"\')'), null);
   assert.equal(v.run('filterGen'), 1);
   assert.deepEqual(v.run('liveSession.filtered.map(m => m.msg)').join(','), 'line 1,line 10,line 11,line 12,line 13,line 14,line 15,line 16,line 17,line 18,line 19');
-  v.run('queryChanged()');
-  assert.equal(v.run('filterGen'), 1, 'the same text compiles to the same key: no refilter');
-  v.run('toggleSearchMod("regex")');
-  assert.equal(v.run('filterGen'), 2, '.* turns the search into a /regex/');
-  v.run("enabledLevels.delete('VERBOSE'); queryChanged()");
+  v.run('setQuery(\'"line 1"  \')');
+  assert.equal(v.run('filterGen'), 1, 'the same filter compiles to the same key: no refilter');
+  v.run('setQuery(\'/line 1/\', { regex: true })');
+  assert.equal(v.run('filterGen'), 2);
+  v.run('setQuery(\'/line 1/ -level:V\')');
   assert.equal(v.run('liveSession.filtered.length'), 9, 'line 1 and 10-19 without the VERBOSE ones (12, 18)');
   assert.equal(v.run('setQuery("tag:bt")'), null);
   assert.equal(v.run('liveSession.filtered.length'), 8, 'setQuery replaces the whole filter: tag bt_stack, every level');
   assert.equal(v.run("liveSession.filtered.filter(m => m.lvl === 'VERBOSE').length"), 3);
   assert.match(v.run('setQuery("tg:bt").msg'), /^Unknown field 'tg'/);
-  assert.equal(v.run('liveSession.filtered.length'), 8, 'an invalid query changes nothing');
+  assert.match(v.run('setQuery("line (2", { regex: true }).msg'), /^Invalid regex: /);
+  assert.deepEqual([v.run('filterGen'), v.run('liveSession.filtered.length')], [4, 8], 'an invalid query changes nothing');
 });
 
-test('an invalid regex search keeps the last valid filter applied and marks the .* button; a valid one clears the mark', () => {
+test('an invalid edit in the bar never blocks a level chip, a sidebar row or a tile fix: each rewrites the last valid text and applies', () => {
   const v = boot();
   v.send(30); v.api.flushBatch();
-  v.run('toggleSearchMod("regex")');
-  v.field('search', 'line 2.');
-  v.run('queryChanged()');
+  const shown = () => [v.run('liveSession.filtered.length'), v.doc.getElementById('queryInput').value, v.doc.getElementById('queryError').hidden];
+  v.bar('/line ./ tag:bt -level:V');
+  assert.deepEqual(shown(), [5, '/line ./ tag:bt -level:V', true], 'tag bt_stack (8 lines) minus its 3 VERBOSE ones');
+  v.bar('/line (/');
+  assert.deepEqual(shown(), [5, '/line (/', false], 'the last valid filter stays');
+  assert.deepEqual([v.run('shellState().levels'), v.run('shellState().query')], [5, true], 'the empty-state causes read the applied filter');
+  v.run('queryBar.toggleLevel(0)');
+  assert.deepEqual(shown(), [8, '/line ./ tag:bt', true], 'a level chip applies');
+  v.bar('pid:abc');
+  v.run("togglePlatform('ios')");
+  assert.deepEqual(shown(), [0, 'dev:android /line ./ tag:bt', true], 'a sidebar row applies (every line here is ios)');
+  v.bar('tg:x');
+  v.run("resetFilter('devices')");
+  assert.deepEqual(shown(), [8, '/line ./ tag:bt', true], 'the empty-state fix applies');
+});
+
+test('a dev:<name> query follows deviceInfo (q.usesDevNames): a device picked or gone recompiles it on the next shellSync', () => {
+  const v = boot();
+  v.send(4, 'android'); v.send(4, 'ios'); v.api.flushBatch();
+  v.run("deviceInfo.android = { id: 'R5CT', name: 'Pixel 8 Pro' }");
+  v.bar('dev:pixel');
+  assert.deepEqual([v.run('activeQuery.usesDevNames'), v.run('activeQuery.plats'), v.run('liveSession.filtered.length')], [true, 1, 4]);
+  v.run("deviceInfo.android = { id: 'R9XY', name: 'Galaxy S24' }; shellSync()");   // the device picker (the shell tick does the same)
+  assert.deepEqual([v.run('activeQuery.plats'), v.run('liveSession.filtered.length')], [0, 0], 'dev:pixel names no device now');
+  v.run("deviceInfo.ios = { id: '0000', name: 'Pixel phone' }; shellSync()");
+  assert.deepEqual([v.run('activeQuery.plats'), v.run('liveSession.filtered.length')], [2, 4]);
+  v.bar('dev:ios');
   const gen = v.run('filterGen');
-  assert.equal(v.run('liveSession.filtered.length'), 10, '/line 2./: line 20 to line 29');
-  v.field('search', 'line (2');
-  v.run('queryChanged()');
-  assert.deepEqual([v.run('filterGen'), v.run('liveSession.filtered.length')], [gen, 10], 'the last valid filter stays');
-  assert.equal(v.doc.getElementById('searchRegexBtn').classList.contains('error'), true);
-  v.field('search', 'line (2)');
-  v.run('queryChanged()');
-  assert.equal(v.doc.getElementById('searchRegexBtn').classList.contains('error'), false);
-  assert.equal(v.run('liveSession.filtered.length'), 11);
-});
-
-test('with an invalid regex in the box every other legacy control still applies; only the search term stays at its last valid value', () => {
-  const v = boot();
-  v.send(30); v.api.flushBatch();
-  v.run('toggleSearchMod("regex")');
-  v.field('search', 'line .');
-  v.run('queryChanged()');
-  assert.equal(v.run('liveSession.filtered.length'), 30);
-  v.field('search', 'line (');
-  v.run('queryChanged()');
-  assert.equal(v.doc.getElementById('searchRegexBtn').classList.contains('error'), true);
-  v.run("enabledLevels.delete('VERBOSE'); queryChanged()");
-  assert.equal(v.run("liveSession.filtered.filter(m => m.lvl === 'VERBOSE').length"), 0, 'a level toggle applies');
-  assert.equal(v.run('liveSession.filtered.length'), 25);
-  v.run("togglePlatform('ios')");
-  assert.equal(v.run("liveSession.filtered.filter(m => m.platform === 'ios').length"), 0, 'a platform toggle applies');
-  v.field('tagFilter', 'bt');
-  v.run('queryChanged()');
-  assert.equal(v.run('liveSession.filtered.length'), 0, 'every line here is ios: nothing left');
-  v.run("togglePlatform('ios')");
-  assert.equal(v.run("liveSession.filtered.every(m => m.tag === 'bt_stack' && m.lvl !== 'VERBOSE')"), true, 'the Tag field applies');
-  assert.equal(v.run('liveSession.filtered.length'), 5, 'tag bt_stack (8 lines) minus its 3 VERBOSE ones, still /line ./ (the last valid search)');
-  assert.equal(v.doc.getElementById('searchRegexBtn').classList.contains('error'), true, 'the .* error mark stays');
-  assert.deepEqual([v.run('shellState().levels'), v.run('shellState().tag')], [5, 'bt'], 'the empty-state causes read the applied filter');
-  v.run("resetFilter('levels')");
-  assert.equal(v.run("liveSession.filtered.some(m => m.lvl === 'VERBOSE')"), true, 'the empty-state fix applies');
-  v.field('search', 'line (2)');
-  v.run('queryChanged()');
-  assert.equal(v.doc.getElementById('searchRegexBtn').classList.contains('error'), false);
-  assert.equal(v.run("liveSession.filtered.every(m => /line (2)/.test(m.msg))"), true, 'a valid regex takes over again');
+  v.run("deviceInfo.ios = { id: '', name: '' }; shellSync()");
+  assert.equal(v.run('filterGen'), gen, 'no device name in the query: nothing recompiles');
 });
 
 test('counts equal a full recount after a seeded sequence of frames, flushes, trims, a resume after overflow, Clear, filter and level changes and a session switch', () => {
@@ -113,9 +100,9 @@ test('counts equal a full recount after a seeded sequence of frames, flushes, tr
     const staleBefore = v.run('liveSession.query !== filterGen'), discardedBefore = v.run('liveSession.discarded'), lenBefore = v.run('liveSession.all.length');
     if (op < 5) v.send(1 + r(60), r(2) ? 'ios' : 'android');
     else if (op === 5) v.api.flushBatch();
-    else if (op === 6) { v.field('tagFilter', ['', 'bt', 'kernel', 'x'][r(4)]); v.field('search', ['', 'line 1', '2'][r(3)]); v.run('queryChanged()'); }
+    else if (op === 6) v.bar([['', 'tag:bt', 'tag:kernel', 'tag:x'][r(4)], ['', '"line 1"', '2'][r(3)]].join(' '));   // typed text, applied (the level and dev: tokens go with it)
     else if (op === 7) v.run(`togglePlatform('${r(2) ? 'ios' : 'android'}')`);
-    else if (op === 8) v.run(`{ const l = ${JSON.stringify(LV)}[${r(6)}]; enabledLevels.has(l) ? enabledLevels.delete(l) : enabledLevels.add(l); queryChanged(); }`);
+    else if (op === 8) v.run(`queryBar.toggleLevel(${r(6)})`);   // a level chip
     else if (op === 9) { if (r(3) === 0) { v.api.clearLogs(); seen.clears++; } }
     else if (op === 10) v.api.selectSession(v.run(r(2) ? 'fileSession' : 'liveSession'));
     else if (op === 11) {
@@ -156,16 +143,6 @@ test('a file load counts its tags and apps at once and its levels when rendered;
   assert.deepEqual([[...v.run('fileSession.counts.lvl')], v.run('fileSession.counts.tags.size')], [[0, 0, 0, 0, 0, 0], 0]);
 });
 
-test('the level toggles\' tooltips carry the counts: lines of each level that pass the rest of the filter', () => {
-  const v = boot();
-  v.send(12); v.api.flushBatch();
-  v.field('tagFilter', 'bt');
-  v.run("enabledLevels.delete('INFO'); queryChanged(); syncLevelTitles()");
-  assert.equal(v.run('liveSession.filtered.length'), 2, 'bt_stack lines 0 (V) and 4 (E); line 8 (I) is hidden');
-  assert.deepEqual([...v.run('levelBtns.map(b => b.title)')], ['Verbose, 1 line', 'Debug, 0 lines', 'Info, 1 line', 'Warning, 0 lines', 'Error, 1 line', 'Fatal, 0 lines'],
-    'Info still counts its line: counts ignore the level filter');
-});
-
 test('dev-bench applies &q (with &case and &re) and &cap before the run and reports them; an invalid &q is reported, not applied', () => {
   const bench = search => {
     const v = boot();
@@ -181,4 +158,67 @@ test('dev-bench applies &q (with &case and &re) and &cap before the run and repo
   assert.equal(bad.run('filterGen'), 0, 'the invalid query left the filter alone');
   assert.equal(bad.run('MAX_RETAINED'), 50000, 'the paused scenario sets its own cap after &cap');
   assert.match(read(path.join(ASSETS, 'js', 'dev-bench.js')), /\bquery, queryError, cap: MAX_RETAINED,/, 'the result reports them');
+});
+
+test('the no-match tile\'s tag causes come from the tag counts: NOT tag:x on every retained line, tag:x on none; never while lines match', () => {
+  const v = boot();
+  v.send(8); v.api.flushBatch();             // tags bt_stack, BluetoothGatt, chatty, kernel, twice each
+  const causes = text => { v.run(`setQuery(${JSON.stringify(text)})`); return [v.run('shellState().notTag'), v.run('shellState().tag')]; };
+  assert.deepEqual(causes('tag:zzz'), ['', 'zzz'], 'no retained line matches tag:zzz');
+  assert.deepEqual(causes('tag:zzz tag:kernel'), ['', ''], 'kernel lines exist: the tag is not why nothing shows');
+  assert.deepEqual(causes('tag:kernel level:none'), ['', ''], 'the levels are the cause');
+  v.run("liveSession.all.forEach(m => { m.tag = 'chatty'; }); ALV.counts.recount(liveSession.counts, liveSession.all, activeQuery.gate)");
+  assert.deepEqual(causes('-tag:chatty'), ['chatty', ''], 'every retained line carries it');
+  assert.deepEqual(causes('-tag:kernel x'), ['', ''], 'lines without kernel exist');
+  assert.deepEqual(causes('-tag:chat'), ['chat', '']);
+  v.run("setQuery('')");
+  assert.deepEqual([v.run('shellState().notTag'), v.run('shellState().tag')], ['', ''], 'lines show: nothing to explain');
+});
+
+test('dev-bench read scenario: readPhaseP50Ms and readPhaseP95Ms count only the flushes after Follow goes off; flushP95Ms counts every one', () => {
+  const v = boot();
+  const g = v.run('globalThis');
+  g.URLSearchParams = URLSearchParams;
+  const clock = { t: 0 };
+  let tick = null;
+  g.__clock = clock;
+  g.__cost = 0;
+  g.performance = { now: () => clock.t };
+  g.setInterval = fn => { tick = fn; return 1; };
+  v.run('location.search = "?bench=1&scenario=read&secs=5"');
+  v.run('flushBatch = function () { __clock.t += __cost; }');   // a flush that takes __cost ms; the bench wraps it
+  v.run(read(path.join(ASSETS, 'js', 'dev-bench.js')));          // starts at t = 0; the first second is warm-up
+  const flushAt = (t, cost) => { clock.t = t; g.__cost = cost; v.run('flushBatch()'); };
+  for (let t = 1100; t < 2000; t += 150) flushAt(t, 30);   // Follow on: flushes that build rows
+  clock.t = 2100; tick();                                  // Follow goes off (a flush the switch causes costs 30 ms too)
+  for (let t = 2200; t < 5000; t += 150) flushAt(t, 1);    // the reading phase
+  clock.t = 5000; tick();                                  // secs reached: the result
+  const r = v.run('window.__benchResult');
+  assert.deepEqual([r.flushP95Ms, r.readPhaseP50Ms, r.readPhaseP95Ms], [30, 1, 1], 'the follow-mode second is in p95, not in the read phase');
+  assert.ok(r.readPhaseFlushes >= 19 && r.readPhaseFlushes < r.flushes, `read-phase flushes: ${r.readPhaseFlushes} of ${r.flushes}`);
+  assert.deepEqual([r.query, r.queryError, r.cap], [null, null, 500000], 'the result reports the query and the cap');
+});
+
+test('a {type:"dropped"} frame runs shellSync but writes no visible number: the 250 ms interval owns them (F11)', () => {
+  const v = boot();
+  v.send(10); v.api.flushBatch();
+  v.run('queryBar.numbers()');
+  const count = v.doc.getElementById('filterCount');
+  assert.equal(count.textContent, '10 of 10 lines');
+  v.send(5); v.api.flushBatch();
+  for (let i = 0; i < 20; i++) v.api.handleWsMsg({ data: JSON.stringify({ type: 'dropped', count: 3 }) }, 'ios');
+  assert.equal(count.textContent, '10 of 10 lines', 'twenty dropped frames, no write');
+  v.run('queryBar.numbers()');
+  assert.equal(count.textContent, '15 of 15 lines', 'the interval\'s write shows them');
+});
+
+test('a session switch shows the shown session\'s numbers at once (selectSession no longer asks for them: queryBar.sync notices the switch)', () => {
+  const v = boot();
+  v.send(10); v.api.flushBatch();
+  v.run('queryBar.numbers()');
+  const count = v.doc.getElementById('filterCount');
+  v.api.selectSession(v.run('fileSession'));
+  assert.equal(count.textContent, '0 of 0 lines');
+  v.api.selectSession(v.run('liveSession'));
+  assert.equal(count.textContent, '10 of 10 lines');
 });

@@ -91,7 +91,7 @@ test('toolbar and status bar are fixed-height flex: none children of #main under
 
 test('the page passes every action that shell.js and live.js call (the fake pages answer any action name, so a missing one only throws on a real click)', () => {
   const code = inlineScripts(html).at(-1).code;
-  for (const [file, factory] of [['shell.js', 'createShell'], ['live.js', 'createLive'], ['grid.js', 'createGrid']]) {
+  for (const [file, factory] of [['shell.js', 'createShell'], ['live.js', 'createLive'], ['grid.js', 'createGrid'], ['querybar.js', 'createQueryBar']]) {
     const used = [...new Set([...read(path.join(ASSETS, 'js', file)).matchAll(/\bactions\.(\w+)/g)].map(m => m[1]))];
     const call = code.slice(code.indexOf(`ALV.${factory}(`));
     const open = call.indexOf('actions: {') + 'actions: '.length;
@@ -177,6 +177,23 @@ test('toolbar: the legacy top bar and its glass switch are gone; the controls mo
   assert.deepEqual(elements(more).filter(el => el.attrs.role).map(el => el.attrs.role), ['menuitem', 'separator', 'menuitemcheckbox']);
 });
 
+test('query region: the bar (labelled field, Aa, .*, Clear filter, the ⌘F hint), the alert line and the chip row replace the legacy filter controls', () => {
+  const fb = findById(root, 'filterbar');
+  assert.deepEqual([fb.attrs.class, fb.parent.attrs.id], ['chrome', 'main']);
+  const input = findById(root, 'queryInput');
+  assert.deepEqual([input.tag, input.attrs.type, input.attrs.spellcheck, input.attrs['aria-describedby']], ['input', 'text', 'false', 'queryError']);
+  assert.equal(input.attrs.placeholder, 'Filter: level:E  tag:Bluetooth  app:com.example.headset  &quot;timeout&quot;  -tag:chatty  /time(out|d)/');
+  const label = elements(fb).find(el => el.tag === 'label');
+  assert.deepEqual([label.attrs.for, label.attrs.class], ['queryInput', 'sr-only']);
+  for (const id of ['queryCaseBtn', 'queryRegexBtn']) assert.equal(findById(root, id).attrs['aria-pressed'], 'false', `#${id} is a toggle`);
+  assert.deepEqual([findById(root, 'queryError').attrs.role, 'hidden' in findById(root, 'queryError').attrs], ['alert', true]);
+  for (const id of ['levelChips', 'deviceChips']) assert.equal(findById(root, id).attrs.role, 'group');
+  for (const id of ['search', 'searchCaseBtn', 'searchRegexBtn', 'tagFilter', 'pidFilter', 'levelToggles', 'platToggles']) assert.equal(findById(root, id), null, `#${id} is gone`);
+  const legacy = read(path.join(ASSETS, 'css', 'legacy.css'));
+  assert.doesNotMatch(legacy, /#filterbar|#search\b|#tagFilter|#pidFilter|\.lvl-btn|\.plat-btn|\.search-mod|\.toggle-group|\.bar-spacer|\.stats\b|\.sep\b/);
+  assert.doesNotMatch(inlineScripts(html).at(-1).code, /enabledLevels|enabledPlatforms|platBtns|toggleSearchMod|queryChanged|fromLegacy|lastSearch|searchInvalid/);
+});
+
 test('status bar: devices, drops (with its popover in the popover layer), the moved #58 hint, Retained and Follow; the live bar and #stats are gone', () => {
   const sb = findById(root, 'statusBar');
   assert.deepEqual([sb.tag, sb.attrs.class, sb.parent.attrs.id], ['footer', 'chrome', 'main']);
@@ -185,7 +202,7 @@ test('status bar: devices, drops (with its popover in the popover layer), the mo
     assert.ok(closestWithin(findById(root, id), '[id=statusBar]', root), `#${id} is in the status bar`);
   }
   assert.equal(findById(root, 'dropsPopover').parent.attrs.id, 'ovPopovers');
-  assert.ok(closestWithin(findById(root, 'filterCount'), '[id=filterbar]', root), 'the line count waits in the filter bar for P6');
+  assert.ok(closestWithin(findById(root, 'filterCount'), '.chip-row', root), 'the line count is in the query region\'s chip row (P6)');
   for (const id of ['liveBar', 'stats', 'liveBarAndroidDropped', 'liveBarIosDropped']) assert.equal(findById(root, id), null, `#${id} is gone`);
   const legacy = read(path.join(ASSETS, 'css', 'legacy.css'));
   assert.doesNotMatch(legacy, /#liveBar|\.live-bar|\.reading-window-hint|\.stats-export|status-pill\.dropped/);
@@ -428,10 +445,10 @@ test('every sprite symbol is used by the page or the JS', () => {
 
 test('no emoji in the primitives, the shell, the app-layer CSS, the overlay root, the sidebar or the Export button', () => {
   const EMOJI = /\p{Extended_Pictographic}/u;
-  for (const p of ['js/dom.js', 'js/keys.js', 'js/ui.js', 'js/shell.js', 'js/grid.js', 'css/base.css', 'css/shell.css', 'css/grid.css']) assert.doesNotMatch(read(path.join(ASSETS, p)), EMOJI, p);
+  for (const p of ['js/dom.js', 'js/keys.js', 'js/ui.js', 'js/shell.js', 'js/grid.js', 'js/querybar.js', 'css/base.css', 'css/shell.css', 'css/grid.css', 'css/query.css']) assert.doesNotMatch(read(path.join(ASSETS, p)), EMOJI, p);
   const lines = html.split('\n');
   for (const p of ['js/live.js']) assert.doesNotMatch(read(path.join(ASSETS, p)), EMOJI, p);
-  for (const id of ['overlayRoot', 'exportWrap', 'sidebar', 'toolbar', 'statusBar']) {
+  for (const id of ['overlayRoot', 'exportWrap', 'sidebar', 'toolbar', 'statusBar', 'filterbar']) {
     const el = findById(root, id);
     const last = elements(el).at(-1);
     const text = lines.slice(el.line - 1, (last ? last.line : el.line)).join('\n');
@@ -748,8 +765,9 @@ test('pseudo-elements that set padding, a border or a percentage size declare th
 
 test('every legacy animation or transition is switched off by both Reduce motion rules', () => {
   const legacy = cssFiles.find(f => f.path === 'css/legacy.css').text;
-  // legacy.css shrinks with every region PR (P4b removes the top bar's switches and buttons, P5a the table rows: 15 left).
-  assert.ok(C.animatedSelectors(legacy).length >= 15, 'the legacy animation scan found too few selectors');
+  // legacy.css shrinks with every region PR (P4b removes the top bar's switches and buttons, P5a the table rows, P6b the
+  // filter bar's buttons: 12 left).
+  assert.ok(C.animatedSelectors(legacy).length >= 12, 'the legacy animation scan found too few selectors');
   assert.deepEqual(C.reducedMotionCoverageErrors(legacy, 'viewer/assets/css/legacy.css'), []);
 });
 
@@ -976,4 +994,48 @@ test('column resize lives in grid.js: the legacy initResizeHandles and its .col-
   assert.doesNotMatch(code, /initResizeHandles|col-resize-handle/);
   assert.match(code, /\ngrid = ALV\.createGrid\(\{/, 'the page creates the grid once, after the toolbar and status bar');
   assert.ok(gridCss().some(r => r.selectors.includes('.lgrid > thead > tr > th > .col-sep') && C.declarations(r.body).some(d => d.prop === 'width' && d.value === '24px')), 'a 24 px hit area (spec)');
+});
+
+// ---- query.css: the chip area clips, it never scrolls, and a token chip shrinks before its remove control is hidden (P6b Task 14 review) ----
+const queryCss = () => C.cssRules(read(path.join(ASSETS, 'css', 'query.css')));
+const queryDecl = (sel, prop) => queryCss().filter(r => r.selectors.includes(sel)).flatMap(r => C.declarations(r.body)).find(d => d.prop === prop)?.value;
+
+test('the chip area clips instead of scrolling, so focusing a hidden control cannot shift the level chips', () => {
+  assert.equal(queryDecl('.chip-area', 'overflow'), 'clip', 'overflow: clip is not scrollable by focus (hidden is, by scrollLeft)');
+  assert.equal(queryDecl('.chip-area', 'padding'), '4px', 'the focus-ring padding stays');
+  assert.equal(queryDecl('.chip-area', 'margin'), '-4px');
+});
+
+test('a token chip shrinks to its × (ellipsis on the value), in the chip row and in the "N filters" popover', () => {
+  for (const sel of ['.chip-body', '.token-list', '.chip.token .v', '#tokenMoreText']) assert.equal(queryDecl(sel, 'min-width'), '0', `${sel} may shrink`);
+  assert.equal(queryDecl('#tokenChips', 'flex'), '0 1 auto');
+  assert.equal(queryDecl('#tokenOne', 'flex'), '0 1 auto');
+  assert.equal(queryDecl('.chip-body', 'overflow'), 'hidden');
+  assert.equal(queryDecl('.chip.token .v', 'overflow'), 'hidden');
+  assert.equal(queryDecl('.chip.token .v', 'text-overflow'), 'ellipsis');
+  assert.ok(queryDecl('.chip.token .v', 'max-width'), 'a capped value');
+  assert.equal(queryDecl('.chip.token .chip-x', 'flex'), 'none', 'the × never shrinks away');
+  assert.equal(queryDecl('.token-list .chip.token', 'max-width'), '100%', 'in the popover a chip never outgrows the panel');
+});
+
+test('the device chips give way before the token chips, and a token chip keeps a floor that holds its × (or the chevron)', () => {
+  assert.equal(queryDecl('.chip-area', '--tok-floor'), 'calc(24px + 8px + 2px + 2ch)', '24 px × + 8 px padding + 2 px border + 2ch of value');
+  // The order is made by the shrink weights (F8): the devices' 1000 against the tokens' 1, and each device chip and the group keep a floor that
+  // holds the badge, so a squeezed group never overflows onto the divider or the token chip. The Chromium layout probe checks the widths.
+  assert.equal(queryDecl('#deviceChips', 'flex'), '0 1000 auto', 'overrides .chip-group flex: none; takes the shrink before the tokens (1)');
+  assert.equal(queryDecl('#tokenChips', 'flex'), '0 1 auto');
+  assert.equal(queryDecl('.chip.dev', 'min-width'), 'calc(var(--badge) + 24px)', '8 + 8 px padding, 2 px border, 6 px gap, the badge');
+  assert.equal(queryDecl('#deviceChips', 'min-width'), 'calc(2 * (var(--badge) + 24px) + 4px)', 'two device chips and the group gap');
+  assert.equal(queryDecl('.chip-dev-name', 'min-width'), '0', 'its ellipsis takes effect early');
+  // The token group, its single-token box and every token chip (incl. "N filters") share the floor: nothing narrower can hide the ×.
+  for (const sel of ['#tokenChips', '#tokenOne', '.chip.token']) assert.equal(queryDecl(sel, 'min-width'), 'var(--tok-floor)', `${sel} keeps the floor`);
+  assert.equal(queryDecl('#tokenOne:empty', 'display'), 'none', 'with 2+ tokens the empty box must not reserve the floor');
+  assert.equal(queryDecl('#tokenMore .icon', 'flex'), 'none', 'the chevron never shrinks away');
+  assert.equal(queryDecl('#tokenMoreText', 'text-overflow'), 'ellipsis');
+});
+
+test('the "N filters" popover is bounded by the viewport and scrolls, so the last token chips and their x stay reachable (F10)', () => {
+  assert.match(queryDecl('.token-pop', 'max-height'), /vh/, 'bounded by the viewport height');
+  assert.equal(queryDecl('.token-pop', 'overflow'), 'auto');
+  assert.equal(queryDecl('.token-pop', 'padding'), '8px', 'the padding holds the chips\' 2 px rings (offset 2 px) inside the scrollport');
 });

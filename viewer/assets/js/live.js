@@ -13,10 +13,10 @@
   // streams), rate (lines/s over every streaming device), buffered (the paused backlog), lines }.
   function streamBadge(b) {
     const { num, fmtRate } = sp();
-    if (b.kind === 'file') return { tone: 'idle', pulse: false, text: `File · ${num(b.lines)} lines` };
+    if (b.kind === 'file') return { tone: 'idle', pulse: false, text: `File · ${num(b.lines)} ${lines(b.lines)}` };
     if (b.paused) return { tone: 'warn', pulse: false, text: `Paused · ${num(b.buffered)} buffered` };
     if (b.streaming) return { tone: 'ok', pulse: true, text: `Streaming · ${fmtRate(b.rate)}` };
-    return { tone: 'idle', pulse: false, text: `Stopped · ${num(b.lines)} lines` };
+    return { tone: 'idle', pulse: false, text: `Stopped · ${num(b.lines)} ${lines(b.lines)}` };
   }
 
   const lines = n => (n === 1 ? 'line' : 'lines');

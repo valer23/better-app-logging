@@ -40,12 +40,16 @@ test('pillView: Paused wins over new lines, singular and plural, thin-space grou
 });
 
 test('emptyView: no matches with each spec cause in order and its fix; after Clear; streaming but silent; the phone gone; otherwise none', () => {
-  const v = o => G.emptyView({ kind: 'live', all: 0, shown: 0, cleared: false, paused: false, levelsOff: false, devicesOff: false, tag: '', query: false, waiting: [], gone: [], ...o });
+  const v = o => G.emptyView({ kind: 'live', all: 0, shown: 0, cleared: false, paused: false, levelsOff: false, devicesOff: false, notTag: '', tag: '', query: false, waiting: [], gone: [], ...o });
   const m = v({ all: 48310 });
   assert.deepEqual([m.title, m.desc, m.fix, m.reset, m.icon, m.spin], ['No lines match this filter', '0 of 48\u2009310 lines in view. No retained line matches the level and device chips.', null, true, 'search-x', false]);
   assert.deepEqual([v({ all: 5, levelsOff: true, devicesOff: true, tag: 'x' }).fix, v({ all: 5, levelsOff: true }).fixLabel], ['levels', 'Turn levels back on'], 'levels first');
   assert.deepEqual([v({ all: 5, devicesOff: true, tag: 'x' }).fix, v({ all: 5, devicesOff: true }).desc], ['devices', '0 of 5 lines in view. Both devices are hidden.']);
   assert.deepEqual([v({ all: 5, tag: 'bt_stack' }).desc, v({ all: 5, tag: 'bt_stack' }).fixLabel], ['0 of 5 lines in view. No retained line matches tag:bt_stack.', 'Remove tag:bt_stack']);
+  const n = v({ all: 5, notTag: 'chatty', tag: 'x', query: true });
+  assert.deepEqual([n.desc, n.fix, n.fixLabel, n.say], ['0 of 5 lines in view. NOT tag:chatty hides every line here.', 'notTag', 'Remove NOT tag:chatty', 'No lines match this filter. NOT tag:chatty hides every line here.'], 'NOT tag before tag (P6)');
+  assert.equal(v({ all: 5, devicesOff: true, notTag: 'chatty' }).fix, 'devices', 'devices before NOT tag');
+  assert.equal(v({ all: 1, levelsOff: true }).desc, '0 of 1 line in view. All levels are turned off.', 'singular');
   assert.deepEqual([v({ all: 5, query: true }).desc, v({ all: 5, query: true }).fix, v({ all: 5, query: true }).reset, v({ all: 5, query: true }).say, v({ all: 5, tag: 'x', query: true }).fix],
     ['0 of 5 lines in view.', null, true, 'No lines match this filter.', 'tag'], 'the search or PID / App field filters: the count and Reset filter, no invented cause; a tag still names itself');
   assert.equal(v({ all: 5, shown: 1 }), null, 'rows show: no tile');
@@ -231,7 +235,7 @@ function gridPage({ headerText = false } = {}) {
     hs.forEach((h, i) => { h.textContent = texts[i]; });
   }
   const st = { cur: { kind: 'live', all: [], filtered: [] }, live: { android: false, ios: false }, noDevice: { android: false, ios: false },
-    enabled: new Set(['android', 'ios']), levels: 6, tag: '', query: false, cleared: false, paused: false, gridShown: true };
+    enabled: new Set(['android', 'ios']), levels: 6, notTag: '', tag: '', query: false, cleared: false, paused: false, gridShown: true };
   const ticks = [];
   const calls = [];
   const shell = { onTick: fn => ticks.push(fn), devices: () => ({ android: { name: 'Pixel 8 Pro' }, ios: { name: 'iPhone 15' } }) };
@@ -429,10 +433,10 @@ test('stream keys: End and ⌘↓ go to the newest line, Home and ⌘↑ to the 
   assert.deepEqual(calls.map(c => c[0]), ['jumpToEnd', 'jumpToEnd', 'jumpToEnd', 'jumpToOldest', 'jumpToOldest']);
 });
 
-test('stream keys: End and Home wait while the grid is hidden or a legacy modal is over it (the setup guide scrolls with them)', () => {
+test('stream keys: End and Home wait while the grid is hidden', () => {
   const { p, st, calls } = gridPage();
   const end = () => ({ key: 'End', code: 'End', preventDefault() {} });
-  st.gridShown = false;   // the device cards, the dropzone or the loading view; or #setupModal / #stallModal open
+  st.gridShown = false;   // the device cards, the dropzone or the loading view
   assert.equal(p.keys.dispatch(end(), p.doc.body), null, 'the key stays the page\'s: no preventDefault, no jump');
   assert.equal(press(p, p.doc.body, 'Home'), null);
   assert.equal(press(p, null, 'ArrowDown', { metaKey: true }), null);
@@ -458,10 +462,10 @@ test('stream keys: Space pauses and F toggles Follow only with the grid focused,
   assert.deepEqual(calls.map(c => c[0]), ['togglePause', 'toggleAutoScroll']);
 });
 
-test('stream keys: Space and F wait while a legacy modal covers the grid (the stall or setup sheet leaves focus on the table), review F4', () => {
+test('stream keys: Space, F, End and Home wait while the grid is hidden or a legacy modal is open (the stall or setup sheet leaves focus on the table), review F4', () => {
   const { p, st, calls } = gridPage();
   const t = p.byId.logTableEl;
-  st.gridShown = false;   // #stallModal / #setupModal open over the grid, or the grid hidden
+  st.gridShown = false;   // the grid hidden: the device cards, the dropzone or loading
   assert.equal(press(p, t, ' ', { code: 'Space' }), null, 'Space does not pause the stream behind the sheet');
   assert.equal(press(p, t, 'f', { code: 'KeyF' }), null, 'F does not flip Follow unseen');
   assert.deepEqual(calls, []);
@@ -469,6 +473,21 @@ test('stream keys: Space and F wait while a legacy modal covers the grid (the st
   assert.equal(press(p, t, ' ', { code: 'Space' }), 'stream.pause');
   assert.equal(press(p, t, 'f', { code: 'KeyF' }), 'stream.follow');
   assert.deepEqual(calls.map(c => c[0]), ['togglePause', 'toggleAutoScroll']);
+  // A legacy modal over a shown grid: the page's one modal check (keys.setModalCheck) blocks all four, gridShown stays true.
+  calls.length = 0;
+  let open = true;
+  p.keys.setModalCheck(() => open);
+  assert.equal(press(p, t, ' ', { code: 'Space' }), null, 'Space does not pause behind the sheet');
+  assert.equal(press(p, t, 'f', { code: 'KeyF' }), null, 'F does not flip Follow behind the sheet');
+  assert.equal(press(p, t, 'End'), null, 'End does not scroll the sheet\'s page');
+  assert.equal(press(p, t, 'Home'), null);
+  assert.deepEqual(calls, []);
+  open = false;
+  assert.equal(press(p, t, ' ', { code: 'Space' }), 'stream.pause');
+  assert.equal(press(p, t, 'f', { code: 'KeyF' }), 'stream.follow');
+  assert.equal(press(p, t, 'End'), 'stream.latest');
+  assert.equal(press(p, t, 'Home'), 'stream.oldest');
+  assert.deepEqual(calls.map(c => c[0]), ['togglePause', 'toggleAutoScroll', 'jumpToEnd', 'jumpToOldest']);
 });
 
 test('stream keys: Pause and Follow carry aria-keyshortcuts and show their key in the toolbar kbd', () => {
@@ -495,6 +514,12 @@ test('empty tile: written only when it changes, announced only when its cause do
   $('gridEmptyFix').click();
   $('gridEmptyReset').click();
   assert.deepEqual(calls.filter(c => c[0] === 'resetFilter'), [['resetFilter', 'levels'], ['resetFilter', 'all']]);
+  st.levels = 6; st.notTag = 'chatty';
+  grid.syncEmpty();
+  assert.equal($('gridEmptyFix').textContent, 'Remove NOT tag:chatty');
+  $('gridEmptyFix').click();
+  assert.deepEqual(calls.filter(c => c[0] === 'resetFilter').at(-1), ['resetFilter', 'notTag']);
+  st.notTag = ''; st.levels = 0;
   let writes = 0;
   const title = $('gridEmptyTitle');
   const desc = Object.getOwnPropertyDescriptor(title, 'textContent');
@@ -561,12 +586,13 @@ test('empty tile: focus moves off a button the tile hides (Reset filter, or the 
   st.cur = { kind: 'live', all: new Array(500), filtered: [1] };
   grid.syncEmpty();
   assert.equal(p.doc.activeElement, $('logTableEl'), 'focus elsewhere is not moved');
-  p.focus($('search'));
+  const field = p.dom.el('input', { type: 'text' });   // a control outside the tile (the query region is not mounted here)
+  p.focus(field);
   st.cur = { kind: 'live', all: new Array(500), filtered: [] };
   grid.syncEmpty();
   st.cur = { kind: 'live', all: new Array(500), filtered: [1] };
   grid.syncEmpty();
-  assert.equal(p.doc.activeElement, $('search'), 'a focused control outside the tile keeps focus');
+  assert.equal(p.doc.activeElement, field, 'a focused control outside the tile keeps focus');
 });
 
 // ---- Arrival highlight (P5b) ----

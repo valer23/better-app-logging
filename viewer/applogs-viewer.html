@@ -17,6 +17,7 @@
 <link rel="stylesheet" href="assets/css/base.css">
 <link rel="stylesheet" href="assets/css/shell.css">
 <link rel="stylesheet" href="assets/css/grid.css">
+<link rel="stylesheet" href="assets/css/query.css">
 </head>
 <body>
 <!-- Lucide icon sprite (lucide-static 1.49.0, ISC: assets/icons/SOURCES.md, assets/icons/LICENSE-lucide.txt).
@@ -111,19 +112,33 @@
   </div>
 </header>
 
-<div class="lg-scope" id="filterbar">
-  <input type="text" id="search"    placeholder="🔍 Search message…" oninput="queryChanged()">
-  <button class="search-mod" id="searchCaseBtn"  onclick="toggleSearchMod('case')"  title="Case-sensitive search">Aa</button>
-  <button class="search-mod" id="searchRegexBtn" onclick="toggleSearchMod('regex')" title="Regex search">.*</button>
-  <input type="text" id="tagFilter" placeholder="Tag / Process…"      oninput="queryChanged()">
-  <input type="text" id="pidFilter" placeholder="PID / App…"          oninput="queryChanged()">
-  <div class="sep"></div>
-  <div class="toggle-group" id="levelToggles"></div>
-  <div class="sep"></div>
-  <div class="toggle-group" id="platToggles"></div>
-  <div class="bar-spacer"></div>
-  <!-- The line count waits here for P6's chip row ("47 106 of 48 310 lines"). -->
-  <div class="stats" id="filterCount"></div>
+<!-- The query region (assets/js/querybar.js, spec "Query region"): the query bar, then the chip row. The chips are built
+     by createQueryBar; every number in it is written on its 250 ms interval. -->
+<div class="chrome" id="filterbar">
+  <div class="query" id="queryBox">
+    <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-search"/></svg>
+    <label class="sr-only" for="queryInput">Filter logs</label>
+    <input type="text" id="queryInput" spellcheck="false" autocomplete="off" autocapitalize="off" aria-describedby="queryError" placeholder="Filter: level:E  tag:Bluetooth  app:com.example.headset  &quot;timeout&quot;  -tag:chatty  /time(out|d)/">
+    <button type="button" class="icon-btn sm q-mod" id="queryCaseBtn" aria-pressed="false" aria-label="Match case">Aa</button>
+    <button type="button" class="icon-btn sm q-mod" id="queryRegexBtn" aria-pressed="false" aria-label="Treat text as regex">.*</button>
+    <button type="button" class="btn btn-ghost btn-sm" id="queryClearBtn" hidden>Clear filter</button>
+    <span class="kbd" id="queryKbd" aria-hidden="true" hidden></span>
+  </div>
+  <div class="query-error" id="queryError" role="alert" hidden><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-circle-alert"/></svg><span id="queryErrorText"></span></div>
+  <div class="chip-row">
+    <div class="chip-area">
+      <div class="chip-group" id="levelChips" role="group" aria-label="Levels"></div>
+      <span class="divider-v" aria-hidden="true"></span>
+      <div class="chip-group" id="deviceChips" role="group" aria-label="Devices"></div>
+      <span class="divider-v" id="tokenDiv" aria-hidden="true" hidden></span>
+      <div class="chip-group" id="tokenChips" role="group" aria-label="Active filters" hidden>
+        <span class="chip-group" id="tokenOne"></span>
+        <button type="button" class="chip token" id="tokenMore" aria-haspopup="dialog" aria-expanded="false" aria-controls="tokenPop" hidden><span id="tokenMoreText"></span><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-chevron-down"/></svg></button>
+      </div>
+    </div>
+    <span id="filterCount"></span>
+    <button type="button" class="btn btn-ghost btn-sm" id="queryResetBtn" hidden>Reset</button>
+  </div>
 </div>
 
 <!-- File mode -->
@@ -378,6 +393,8 @@ pkill -f idevicesyslog</pre>
         <button type="button" class="menu-item" role="menuitemcheckbox" aria-checked="false" tabindex="-1" id="moreGlass" data-act="glass"><svg class="icon menu-check" aria-hidden="true" focusable="false"><use href="#i-check"/></svg><span>Glass</span></button>
       </div>
     </div>
+    <!-- The "N filters" chip's popover (assets/js/querybar.js): each active filter with its own remove button. -->
+    <div class="token-pop ov" id="tokenPop" aria-label="Active filters" hidden><div class="token-list" id="tokenList"></div></div>
     <!-- The status bar's drops popover (assets/js/live.js), one block per platform. -->
     <div class="drops-pop ov" id="dropsPopover" aria-label="Dropped lines" hidden>
       <div id="dropsAndroid" hidden><div class="drops-title" id="dropsAndroidTitle"></div><p class="drops-desc" id="dropsAndroidDesc"></p></div>
@@ -407,6 +424,8 @@ pkill -f idevicesyslog</pre>
 <script src="assets/js/live.js"></script>
 <!-- The log grid (roadmap P5): row helpers, column resize, grid ARIA. ALV.createGrid runs from the legacy script. -->
 <script src="assets/js/grid.js"></script>
+<!-- The query region (roadmap P6): bar, chips, count. ALV.createQueryBar runs from the legacy script. -->
+<script src="assets/js/querybar.js"></script>
 <script>
 // ─── Glass material (macOS only) ─────────────────────────────────────────
 // The material is stored by ALV.prefs (assets/js/prefs.js): set('material') writes data-material and
@@ -447,11 +466,11 @@ const LEVEL_CHAR = {VERBOSE:'V',DEBUG:'D',INFO:'I',WARN:'W',ERROR:'E',ASSERT:'F'
 // "12 345 lines", "1 line": thin-space grouping (shellPure.num), as every number in the UI.
 const countOf = n => `${ALV.shellPure.num(n)} ${n === 1 ? 'line' : 'lines'}`;
 const { rowClass, timeOf } = ALV.gridPure;   // the row's class and its time cell (assets/js/grid.js)
-const enabledLevels   = new Set(LEVELS);
-const enabledPlatforms = new Set(['android','ios']);
-// The search the legacy filter bar applies (queryChanged): shellState reads it before the Filtering section runs.
-let lastSearch = { search: '', regex: false };
-let searchInvalid = false;
+// The platforms the applied query shows, as the sets the sidebar rows and the status bar read (shellState().enabled),
+// by activeQuery.plats (bit 1 Android, bit 2 iOS). Shared and never changed.
+const PLAT_SETS = [new Set(), new Set(['android']), new Set(['ios']), new Set(['android', 'ios'])];
+// How many levels a level mask shows (shellState().levels), by mask.
+const LEVEL_BITS = Array.from({ length: 64 }, (_, m) => [0, 1, 2, 3, 4, 5].filter(k => m & (1 << k)).length);
 
 // ── State ──
 // The table shows one session (`cur`). Each session (assets/js/session.js) holds its own buffer,
@@ -471,6 +490,7 @@ let wsAndroid = null, wsIos = null;
 let shell = null;   // the app shell (ALV.createShell, assets/js/shell.js), created before the first selectSession
 let liveUi = null;  // the toolbar and status bar (ALV.createLive, assets/js/live.js), created right after it
 let grid = null;    // the log grid's header and ARIA (ALV.createGrid, assets/js/grid.js), created right after that
+let queryBar = null;   // the query region (ALV.createQueryBar, assets/js/querybar.js), created right after the grid
 // What the sidebar device rows show (shellState): log lines received per platform (the rate meter, and what
 // ends a stall), the last setStatus per platform, the device the picker holds, and whether the iOS driver
 // check failed (Windows).
@@ -636,39 +656,9 @@ const TRIM_FRACTION = 0.1;      // trim to 90% of the cap at once: ~1-2ms splice
 let nextSeq = 0;                // arrival order of live lines; never reset, so stale references still compare
 // The loss counters (discarded, overflowed, seqFloor, dropped) are per session: see session.js.
 
-// ── Level toggles ──
-const levelBtns = LEVELS.map(lvl => {
-  const btn = document.createElement('button');
-  btn.className = 'lvl-btn active'; btn.dataset.lvl = lvl;
-  btn.textContent = LEVEL_CHAR[lvl]; btn.title = lvl;
-  btn.onclick = () => { enabledLevels.has(lvl) ? enabledLevels.delete(lvl) : enabledLevels.add(lvl); btn.classList.toggle('active', enabledLevels.has(lvl)); queryChanged(); };
-  document.getElementById('levelToggles').appendChild(btn);
-  return btn;
-});
-// Each level toggle's tooltip carries its count (P6b's level chips show it): the shown session's lines of that level that
-// pass the rest of the filter, whatever the level toggles say. On the shell's tick (twice a second), written only on change.
-const LEVEL_TITLE = ['Verbose', 'Debug', 'Info', 'Warning', 'Error', 'Fatal'];
-function syncLevelTitles() {
-  const lv = cur.counts.lvl;
-  levelBtns.forEach((b, k) => { const t = `${LEVEL_TITLE[k]}, ${ALV.shellPure.num(lv[k])} ${lv[k] === 1 ? 'line' : 'lines'}`; if (b.title !== t) b.title = t; });
-}
-
-// ── Platform toggles ──
-const platBtns = {};
-[['android','🤖 Android'],['ios','🍎 iOS']].forEach(([plat, label]) => {
-  const btn = document.createElement('button');
-  btn.className = 'plat-btn active'; btn.dataset.plat = plat; btn.textContent = label;
-  btn.onclick = () => togglePlatform(plat);
-  platBtns[plat] = btn;
-  document.getElementById('platToggles').appendChild(btn);
-});
-// Shows or hides one platform's lines: the filter bar button and the sidebar device row (shell.js).
-function togglePlatform(plat) {
-  enabledPlatforms.has(plat) ? enabledPlatforms.delete(plat) : enabledPlatforms.add(plat);
-  platBtns[plat].classList.toggle('active', enabledPlatforms.has(plat));
-  queryChanged();
-  shellSync();
-}
+// Shows or hides one platform's lines (the sidebar device rows, the status bar and the device chips): the query bar
+// rewrites its dev: token and applies it.
+function togglePlatform(plat) { queryBar.toggleDevice(plat); }
 
 // ── Sessions ──
 // The sidebar SESSIONS rows (assets/js/shell.js) and "Open log file…" pick the session on screen. Each
@@ -935,6 +925,10 @@ document.getElementById('logTable').addEventListener('click', e => {
   }
 });
 
+// The legacy setup and stall sheets are not ALV dialogs, so keys.setModal never covers them: while one shows, no shortcut
+// fires (it would act on the page behind the sheet: scroll it with End and Home, pause it with Space, open a menu over it).
+ALV.keys.setModalCheck(() => !!document.querySelector('.modal-overlay.visible'));
+
 // ── App shell (assets/js/shell.js): the sidebar and the window drag bands ──
 // The shell reads the page only through shellState() and acts only through these functions.
 shell = ALV.createShell({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, keys: ALV.keys, prefs: ALV.prefs, state: shellState,
@@ -944,26 +938,40 @@ liveUi = ALV.createLive({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, 
   actions: { togglePause, toggleAutoScroll, clear: clearLogs, zoom: setLogZoom, openFile: openLogFile, setGlass, togglePlatform } });
 grid = ALV.createGrid({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, keys: ALV.keys, prefs: ALV.prefs, shell, state: shellState,
   actions: { jumpToEnd, jumpToOldest, togglePause, toggleAutoScroll, updateNewerPill, resetFilter } });
-shell.onTick(syncLevelTitles);
+queryBar = ALV.createQueryBar({ doc: document, win: window, dom: ALV.dom, ui: ALV.ui, keys: ALV.keys, shell, state: shellState,
+  actions: { setQuery, sync: shellSync } });
 function shellState() {
   return {
     cur, sessions: [liveSession, fileSession],
     live: { android: androidLive, ios: iosLive }, status: liveStatus, devices: deviceInfo, driverMissing: iosDriverMissing, noDevice,
-    lines: wsLines, dropped: liveSession.dropped, enabled: enabledPlatforms, paused: livePaused, buffered: pendingBatch.length,
+    lines: wsLines, dropped: liveSession.dropped, enabled: PLAT_SETS[activeQuery.plats], paused: livePaused, buffered: pendingBatch.length,
     maxRetained: MAX_RETAINED,   // the status bar's Following tooltip (Retained text)
-    // The stream keys (grid.js) fire only while the grid shows and no legacy modal (setup guide, stall) is over it:
-    // keys.setModal does not cover those, and the setup guide scrolls with Home and End. A getter: it is read only
-    // when End or Home is pressed, never by the per-flush and tick callers of shellState().
-    get gridShown() { return document.getElementById('logWrapper').classList.contains('visible') && !document.querySelector('.modal-overlay.visible'); },
-    // The grid's empty states (grid.js): no line since a Clear on Live, the filter's levels and tag, and whether the
-    // search or PID / App field filters too (the no-match tile then names no cause).
+    // The stream keys (grid.js) fire only while the grid shows (a legacy modal over it blocks every key: setModalCheck).
+    // A getter: it is read only when End or Home is pressed, never by the per-flush and tick callers of shellState().
+    get gridShown() { return document.getElementById('logWrapper').classList.contains('visible'); },
+    // The applied query (the query bar's chips read it back).
+    filter: activeQuery,
+    // The grid's empty states (grid.js): no line since a Clear on Live, the query's levels shown, its tag causes (getters:
+    // read by the tile on each flush, they answer at once while lines match), and whether anything but the level and
+    // device chips filters (the no-match tile then names no chip cause).
     // stale: the shown session's filtered list lags the filter (a file just opened, before its render): no tile yet.
     stale: cur.query !== filterGen,
-    cleared: liveClearedSeq === nextSeq, levels: enabledLevels.size, tag: document.getElementById('tagFilter').value,
-    query: !!(searchInvalid ? lastSearch.search : document.getElementById('search').value) || !!document.getElementById('pidFilter').value,
+    cleared: liveClearedSeq === nextSeq, levels: LEVEL_BITS[activeQuery.levels],
+    get notTag() { return tagCauses().notTag; },
+    get tag() { return tagCauses().tag; },
+    query: !activeQuery.chipsOnly,
   };
 }
-function shellSync() { if (shell) shell.sync(); if (liveUi) liveUi.sync(); if (grid) grid.sync(); }
+function shellSync() { if (shell) shell.sync(); if (liveUi) liveUi.sync(); if (grid) grid.sync(); if (queryBar) queryBar.sync(); }
+// The no-match tile's tag causes (spec "Log grid"; ALV.query.tagCause): a negated tag every retained line of the shown
+// session carries, or a tag none carries, from its tag counts (O(distinct tags), no scan of the lines). Only while it has
+// lines, none passes and its filtered list is current; otherwise none.
+const NO_TAG_CAUSE = Object.freeze({ notTag: '', tag: '' });
+function tagCauses() {
+  const s = cur;
+  if (s.filtered.length || !s.all.length || s.query !== filterGen) return NO_TAG_CAUSE;
+  return ALV.query.tagCause(activeQuery, v => ALV.counts.tagHits(s.counts, v), s.all.length);
+}
 // "Open log file…" (the SESSIONS row and ⌘O): the file session, then the picker. The picker is the
 // dropzone's file input, so a picked file loads exactly like a dropped one (handleFile).
 function openLogFile() {
@@ -1468,6 +1476,7 @@ function showStallModal(text) {
   exportMenuCtl.close({ restoreFocus: false });
   if (shell) shell.closeMenus();   // the sidebar's device menus live in the same overlay root
   if (liveUi) liveUi.closeMenus();   // so do the toolbar's More menu and the status bar's drops popover
+  if (queryBar) queryBar.closeMenus();   // and the query region's "N filters" popover
   const el = document.getElementById('stallModalText');
   if (el && text) el.textContent = text;
   const res = document.getElementById('stallRepairResult');
@@ -1812,17 +1821,18 @@ function refreshExportMenu() {
   document.getElementById('exportNoteBox').hidden = !(s.discarded || lost);
   const parts = [];
   const num = ALV.shellPure.num;
+  const were = s.discarded === 1 ? 'line was' : 'lines were';
   if (s.discarded) parts.push(s.overflowed
-    ? `Exports the lines held before the pause (${num(s.all.length)}). ${num(s.discarded)} lines were discarded because the paused backlog exceeded ${num(MAX_RETAINED)}; on resume the live lines here are discarded and the view continues from the newest.`
-    : `Exports retained lines only: ${num(s.discarded)} older lines were discarded (live view keeps the newest ${num(MAX_RETAINED)}).`);
+    ? `Exports the lines held before the pause (${num(s.all.length)}). ${num(s.discarded)} ${were} discarded because the paused backlog exceeded ${num(MAX_RETAINED)}; on resume the live lines here are discarded and the view continues from the newest.`
+    : `Exports retained lines only: ${num(s.discarded)} older ${were} discarded (live view keeps the newest ${num(MAX_RETAINED)}).`);
   if (lost) parts.push(`${num(lost)} ${lost === 1 ? 'line' : 'lines'} never reached the viewer (server buffer overflow); the export may have gaps where ${lost === 1 ? 'it' : 'they'} occurred${s.discarded ? ' (unless later discarded by the retention cap)' : ''}.`);
   note.textContent = parts.join(' ');
 }
 const exportMenuCtl = ALV.ui.menu(document.getElementById('exportBtn'), document.getElementById('exportSurface'), { onOpen: refreshExportMenu });
-// Not while a legacy setup / stall modal is shown: they are not ALV dialogs, so keys.setModal never covers
-// them. Opened by the shortcut, the menu gives focus back to where it was (the search field), not the button.
+// Not while a legacy setup / stall modal is shown (setModalCheck). Opened by the shortcut, the menu gives focus back to
+// where it was (the query bar), not the button.
 ALV.keys.register({ id: 'export.menu', keys: 'Mod+E', inText: true,
-  when: () => cur.all.length > 0 && !document.querySelector('.modal-overlay.visible'),
+  when: () => cur.all.length > 0,
   run: () => (exportMenuCtl.isOpen() ? exportMenuCtl.close() : exportMenuCtl.open({ focus: 'first', returnFocus: document.activeElement })) });
 document.getElementById('exportBtn').setAttribute('aria-keyshortcuts', ALV.keys.aria('export.menu'));
 ALV.ui.tooltip(document.getElementById('exportBtn'), { text: 'Export', shortcut: 'export.menu' });
@@ -1943,15 +1953,6 @@ function updateExportVisibility() {
 }
 
 // ── Filtering ──
-let searchCaseSensitive = false;
-let searchRegexMode     = false;
-
-function toggleSearchMod(kind) {
-  if (kind === 'case')  { searchCaseSensitive = !searchCaseSensitive; document.getElementById('searchCaseBtn').classList.toggle('active', searchCaseSensitive); }
-  if (kind === 'regex') { searchRegexMode     = !searchRegexMode;     document.getElementById('searchRegexBtn').classList.toggle('active', searchRegexMode); }
-  queryChanged();
-}
-
 // The query every session follows (P6): setQuery compiles `text` (assets/js/query.js) and, when the compiled filter differs
 // from the active one, makes it active, bumps filterGen and refilters the session on screen; the others are refiltered
 // when they are shown again (restoreView compares their `query` with filterGen). An invalid query changes nothing: the
@@ -1962,34 +1963,10 @@ function setQuery(text, opts) {
   if (r.q.key !== activeQuery.key) { activeQuery = r.q; filterGen++; applyFilters(); }
   return null;
 }
-// The filter bar changed (until P6b's query bar): its controls become query text (ALV.query.fromLegacy). A regex-mode
-// search that is not a valid regex marks the .* button and keeps only the search term at its last valid value
-// (lastSearch); every other control (levels, devices, Tag, PID / App) still applies. This is the one place the
-// controls are read, so the empty-state causes (shellState) ask it for the search that is applied.
-function queryChanged() {
-  const val = id => document.getElementById(id).value;
-  const st = { search: val('search'), case: searchCaseSensitive, regex: searchRegexMode,
-    tag: val('tagFilter'), pid: val('pidFilter'), levels: enabledLevels, plats: enabledPlatforms };
-  let text = ALV.query.fromLegacy(st);
-  searchInvalid = text === null;
-  if (searchInvalid) { st.search = lastSearch.search; st.regex = lastSearch.regex; text = ALV.query.fromLegacy(st); }
-  else lastSearch = { search: st.search, regex: st.regex };
-  const bad = setQuery(text, { case: searchCaseSensitive }) !== null || searchInvalid;
-  document.getElementById('searchRegexBtn').classList.toggle('error', bad && searchRegexMode);
-}
-// The grid's empty-state fixes (spec "Log grid", no matches): 'levels' turns every level back on, 'devices' shows both
-// platforms, 'tag' clears the tag filter, 'all' (Reset filter) does all three and clears the search and PID / App.
-function resetFilter(what) {
-  const all = what === 'all';
-  if (all || what === 'levels') for (const l of LEVELS) enabledLevels.add(l);
-  if (all || what === 'devices') { enabledPlatforms.add('android'); enabledPlatforms.add('ios'); }
-  if (all || what === 'tag') document.getElementById('tagFilter').value = '';
-  if (all) { document.getElementById('search').value = ''; document.getElementById('pidFilter').value = ''; }
-  for (const b of document.querySelectorAll('#levelToggles .lvl-btn')) b.classList.toggle('active', enabledLevels.has(b.dataset.lvl));
-  for (const p of ['android', 'ios']) platBtns[p].classList.toggle('active', enabledPlatforms.has(p));
-  queryChanged();
-  shellSync();
-}
+// The grid's empty-state fixes (spec "Log grid", no matches), as query rewrites (assets/js/querybar.js): 'levels' turns
+// every level back on, 'devices' shows both platforms, 'notTag' and 'tag' remove the token the tile names, 'all' (Reset
+// filter) empties the query.
+function resetFilter(what) { queryBar.fix(what); }
 
 // Rebuilds `s.filtered` and the level counts for the active query, in one pass; no DOM work.
 function refilterSession(s) {
@@ -2032,11 +2009,10 @@ function applyFilters() {
   document.getElementById('logTable').scrollTop = 0; // explicit reset only on full re-render
 }
 
-// The filter bar's line count (until P6's chip row) and the status bar's Retained text with the #45 note,
-// whose long form is its title. Runs on every flush: statText writes a text only when it changed.
+// The status bar's Retained text with the #45 note, whose long form is its title. Runs on every flush: statText writes a
+// text only when it changed. (The query region's line count is written on its own 250 ms interval: querybar.js.)
 function updateStats() {
   const s = cur, live = s.kind === 'live';
-  statText('filterCount', ALV.livePure.lineCount(s.filtered.length, s.all.length));
   statText('retainedText', live ? ALV.livePure.retainedText(s.all.length, MAX_RETAINED, s.discarded, s.overflowed) : '');
   // The #45 note alone, which the status bar shows instead of the plain count at its narrow tier (shell.css).
   statText('retainedNote', live ? ALV.livePure.retainedNote(s.discarded, s.overflowed) : '');
@@ -2184,6 +2160,7 @@ function showSetup(platform) {
   exportMenuCtl.close({ restoreFocus: false });   // as showStallModal: the menu would paint above this modal
   if (shell) shell.closeMenus();
   if (liveUi) liveUi.closeMenus();
+  if (queryBar) queryBar.closeMenus();
   document.getElementById('setupModal').classList.add('visible'); switchSetupTab(platform);
 }
 function hideSetup()         { document.getElementById('setupModal').classList.remove('visible'); }

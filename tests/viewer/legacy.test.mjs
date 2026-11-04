@@ -24,7 +24,10 @@ const { api, run } = loadLegacy([
 const prefs = run('ALV.prefs');
 
 test('Ctrl+Shift+L (the shell\'s view.theme) cycles Dark, Light, System through ALV.prefs on the page', () => {
-  const keys = run('ALV.keys');
+  // A sticky document: the page's modal check (keys.setModalCheck) asks querySelector, which a deep stub always answers.
+  const page = loadLegacy([], { document: stickyDocument() });
+  const keys = page.run('ALV.keys');
+  const prefs = page.run('ALV.prefs');
   const press = () => keys.dispatch({ key: 'L', code: 'KeyL', ctrlKey: true, shiftKey: true, preventDefault() {} }, null);
   prefs.set('theme', 'dark');
   assert.equal(press(), 'view.theme');
@@ -66,16 +69,16 @@ test('pageScriptSrcs lists the <script src> files in page order and skips inline
 test('a sticky document hands out one stub per id, keeps what the legacy script writes, and has a writable hidden flag', () => {
   const doc = stickyDocument();
   assert.equal(doc.getElementById('stats'), doc.getElementById('stats'));
-  assert.equal(doc.getElementById('search').value, '');
+  assert.equal(doc.getElementById('queryInput').value, '');
   assert.equal(doc.hidden, true);
   doc.hidden = false;
   assert.equal(doc.hidden, false);
   const { run } = loadLegacy([], { document: doc });
-  run('updateStats()');
+  run('queryBar.numbers()');
   assert.equal(doc.getElementById('filterCount').textContent, '0 of 0 lines');
 });
 
-test('updateStats (every flush) writes the line count and the Retained text only when they change (P4b)', () => {
+test('updateStats (every flush) writes the Retained text only when it changes, and the line count no more (P6: the query region\'s interval)', () => {
   const { run } = loadLegacy([], { document: stickyDocument() });
   const writes = run(`(() => {
     const seen = { filterCount: 0, retainedText: 0 }, get = document.getElementById;
@@ -87,7 +90,7 @@ test('updateStats (every flush) writes the line count and the Retained text only
     document.getElementById = get;
     return JSON.stringify(seen);
   })()`);
-  assert.equal(writes, '{"filterCount":2,"retainedText":2}', 'one write per change, none for a repeat');
+  assert.equal(writes, '{"filterCount":0,"retainedText":2}', 'one write per change, none for a repeat');
 });
 
 test('the page wires both window drag bands through the shell: one mousedown and one dblclick listener each', () => {
@@ -191,6 +194,11 @@ test('the Export menu, its loss note and the loading text group numbers with thi
   assert.match(doc.getElementById('exportNote').textContent, new RegExp(`^Exports retained lines only: 2${T}000 older lines were discarded \\(live view keeps the newest 500${T}000\\)\\. 1 line never reached`));
   v.run('liveSession.all = [null]; refreshExportMenu()');
   assert.equal(doc.getElementById('exportAllCount').textContent, '1 line');
+  v.run('liveSession.discarded = 1; refreshExportMenu()');
+  assert.match(doc.getElementById('exportNote').textContent, /^Exports retained lines only: 1 older line was discarded \(/);
+  v.run('liveSession.overflowed = true; refreshExportMenu()');
+  assert.match(doc.getElementById('exportNote').textContent, /^Exports the lines held before the pause \(1\)\. 1 line was discarded because /);
+  v.run('liveSession.overflowed = false');
   doc.getElementById('loadingText').textContent = '';
   v.run("handleFile({ name: 'a.log', text: 'Oct 14 15:53:43.000001 X[1] <Notice>: a' })");
   assert.equal(doc.getElementById('loadingText').textContent, 'Rendering 1 line…');
@@ -201,13 +209,19 @@ test('known gap, fixed in P11: a TXT export of Android lines does not re-import'
   assert.deepEqual(parsed, []);   // EXPORTED_TXT_RE only accepts the iOS timestamp shape
 });
 
-test('togglePlatform hides and shows one platform\'s lines and keeps the filter bar button in step (P4 sidebar rows)', () => {
+test('togglePlatform hides and shows one platform\'s lines by rewriting the query\'s dev: token (P4 sidebar rows, P6 device chips)', () => {
   const doc = stickyDocument();
   const { run } = loadLegacy([], { document: doc });
+  doc.getElementById('queryInput').value = 'level:W+';
   run('togglePlatform("ios")');
-  assert.deepEqual([run('enabledPlatforms.has("ios")'), run('enabledPlatforms.has("android")'), run('filterGen')], [false, true, 1]);
+  assert.deepEqual([doc.getElementById('queryInput').value, run('shellState().enabled.has("ios")'), run('shellState().enabled.has("android")'), run('filterGen')], ['dev:android level:W+', false, true, 1], 'a new chip token goes in front, away from the caret');
   run('togglePlatform("ios")');
-  assert.deepEqual([run('enabledPlatforms.has("ios")'), run('filterGen')], [true, 2]);
+  assert.deepEqual([doc.getElementById('queryInput').value, run('shellState().enabled.size'), run('filterGen')], ['level:W+', 2, 2]);
+  doc.getElementById('queryInput').value = 'tg:x';
+  run('queryBar.apply()');
+  run('togglePlatform("ios")');
+  assert.deepEqual([doc.getElementById('queryInput').value, doc.getElementById('queryError').hidden, run('shellState().enabled.size'), run('filterGen')], ['dev:android level:W+', true, 1, 3],
+    'an invalid edit in the bar is dropped: the sidebar row still toggles the platform (parity: platform toggles)');
 });
 
 const LOG = '{"type":"log","ts":"2026 Oct 14 15:53:43","pid":1,"tid":0,"lvl":"INFO","tag":"t","app":"","msg":"m"}';
@@ -288,11 +302,12 @@ test('handleWsMsg still shows the stall sheet for the stall frame unless the str
 
 test('showStallModal and showSetup close the sidebar row menus and the toolbar / status-bar menus: #overlayRoot (z 200) would paint them above the modal (P4)', () => {
   const { run } = loadLegacy([], { document: stickyDocument() });
-  run(`globalThis.__closed = []; shell = { closeMenus: () => { __closed.push('shell'); }, sync() {} }; liveUi = { closeMenus: () => { __closed.push('live'); }, sync() {} };`);
+  run(`globalThis.__closed = []; shell = { closeMenus: () => { __closed.push('shell'); }, sync() {} }; liveUi = { closeMenus: () => { __closed.push('live'); }, sync() {} };
+    queryBar = { closeMenus: () => { __closed.push('query'); }, sync() {} };`);
   run(`showStallModal('x')`);
-  assert.equal(run('__closed.join()'), 'shell,live', 'the stall modal is opened by a frame, so no pointerdown light dismiss runs');
+  assert.equal(run('__closed.join()'), 'shell,live,query', 'the stall modal is opened by a frame, so no pointerdown light dismiss runs');
   run(`showSetup('ios')`);
-  assert.equal(run('__closed.join()'), 'shell,live,shell,live');
+  assert.equal(run('__closed.join()'), 'shell,live,query,shell,live,query');
 });
 
 // The legacy side of the shell adapter, against the real legacy code: the fields shellState() returns are what
@@ -302,14 +317,15 @@ const settle = () => new Promise(r => setImmediate(r));
 test('shellState has the shape the shell reads: live, status, devices, driverMissing, lines, dropped and enabled', () => {
   const { run } = loadLegacy([], { document: stickyDocument() });
   const st = run('shellState()');
-  assert.deepEqual(Object.keys(st).sort(), ['buffered', 'cleared', 'cur', 'devices', 'driverMissing', 'dropped', 'enabled', 'gridShown', 'levels', 'lines', 'live', 'maxRetained', 'noDevice', 'paused', 'query', 'sessions', 'stale', 'status', 'tag']);
+  assert.deepEqual(Object.keys(st).sort(), ['buffered', 'cleared', 'cur', 'devices', 'driverMissing', 'dropped', 'enabled', 'filter', 'gridShown', 'levels', 'lines', 'live', 'maxRetained', 'noDevice', 'notTag', 'paused', 'query', 'sessions', 'stale', 'status', 'tag']);
   assert.deepEqual([st.cur === run('liveSession'), st.sessions[0] === run('liveSession'), st.sessions[1] === run('fileSession')], [true, true, true]);
   assert.equal(st.dropped, run('liveSession.dropped'), 'the same object, so a drop shows without a copy');
   assert.equal(st.lines, run('wsLines'));
   assert.equal(st.noDevice, run('noDevice'));
   assert.equal(st.devices, run('deviceInfo'));
   assert.equal(st.status, run('liveStatus'));
-  assert.equal(st.enabled, run('enabledPlatforms'));
+  assert.equal(st.enabled, run('PLAT_SETS[3]'), 'both platforms: the shared set');
+  assert.equal(st.filter, run('activeQuery'));
   assert.deepEqual(JSON.parse(JSON.stringify(st.live)), { android: false, ios: false });
   assert.equal(st.driverMissing, false);
   run('androidLive = true; iosLive = true');
@@ -485,12 +501,17 @@ test('Quiet system noise: a saved "on" is re-sent at startup (the bridge starts 
   await assert.rejects(bad.api.postIosQuiet(true), /403/);
 });
 
-test('shellState().gridShown: true only while #logWrapper shows and no legacy modal is open (the stream keys wait otherwise)', () => {
+test('shellState().gridShown: true only while #logWrapper shows; a legacy modal blocks every shortcut in keys.js instead', () => {
   const { run } = loadLegacy([], { document: stickyDocument() });
   run("showOnly('livePanel')");
   assert.equal(run('shellState().gridShown'), false, 'the device cards');
   run("showOnly('logWrapper')");
   assert.equal(run('shellState().gridShown'), true);
+  const end = () => run("ALV.keys.dispatch({ key: 'End', code: 'End', preventDefault() {} }, null)");
+  const ctrlE = () => run("ALV.keys.dispatch({ key: 'e', code: 'KeyE', ctrlKey: true, preventDefault() {} }, null)");   // not macOS: Mod is Ctrl
+  run('cur.all.push({})');   // Export needs a line
   run("document.getElementById('setupModal').classList.add('modal-overlay', 'visible')");
-  assert.equal(run('shellState().gridShown'), false, 'the setup guide scrolls with Home and End');
+  assert.deepEqual([end(), ctrlE()], [null, null], 'the setup guide scrolls with Home and End, and no menu opens over it');
+  run("document.getElementById('setupModal').classList.remove('visible')");
+  assert.deepEqual([end(), ctrlE()], ['stream.latest', 'export.menu']);
 });

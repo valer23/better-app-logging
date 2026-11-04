@@ -83,8 +83,7 @@ test('parse: a key still being typed is never an error, and it hides nothing onc
 test('parse: the spec\'s error copy, and the new copy for pid, plat and negated phrases or regexes', () => {
   assert.deepEqual(errs('tg:x'), ["Unknown field 'tg'. Did you mean tag:?"]);
   assert.deepEqual(errs('TG:x'), ["Unknown field 'TG'. Did you mean tag:?"]);
-  assert.deepEqual(errs('lebel:E apps:x pi:1 dv:a plt:ios'), ["Unknown field 'lebel'. Did you mean level:?", "Unknown field 'apps'. Did you mean app:?",
-    "Unknown field 'pi'. Did you mean pid:?", "Unknown field 'dv'. Did you mean dev:?", "Unknown field 'plt'. Did you mean plat:?"]);
+  assert.deepEqual(errs('pi:1 dv:a plt:ios'), ["Unknown field 'pi'. Did you mean pid:?", "Unknown field 'dv'. Did you mean dev:?", "Unknown field 'plt'. Did you mean plat:?"]);
   assert.deepEqual(errs('level:X'), ["Unknown level 'X'. Use V, D, I, W, E or F, or W+ for W and above."]);
   assert.deepEqual(errs('level:D,Q+'), ["Unknown level 'Q+'. Use V, D, I, W, E or F, or W+ for W and above."]);
   assert.deepEqual(errs('pid:abc'), ["PID 'abc' is not a number."]);
@@ -179,9 +178,9 @@ test('round trip: parse output survives serialize and parse (explicit rows, then
     assert.equal(Q.serialize(Q.parse(out).tokens), out, `idempotent: ${JSON.stringify(out)}`);
   };
   for (const text of ['/x "a\\/ "', '/x tag:"a\\/ "', '/x -tag:"\\/ \\\\" /y', 'a "b\\\\" /c "\\/ d"', 'tag:"\\\\" /z',
-    '/x tag:"a/"', '/x -app:"a/" y', '/x dev:"b/"']) same(text);
+    '/x tag:"a/"', '/x -app:"a/" y', '/x dev:"b/"', '/foo tag:"a/i"']) same(text);
   const r = rng(99);
-  const parts = ['/', ' ', '\\', '"', 'a', 'a', 'tag:', '-', '\\/ ', '\\"', '/ ', 'tag:"a/"', ' tag:"a/" '];
+  const parts = ['/', ' ', '\\', '"', 'a', 'a', 'tag:', '-', '\\/ ', '\\"', '/ ', 'tag:"a/"', ' tag:"a/" ', 'i', 'g', '/i', 'a/i', ' tag:"a/i" ', '/gi'];
   for (let n = 0; n < 20000; n++) {
     const text = Array.from({ length: 1 + r(14) }, () => parts[r(parts.length)]).join('');
     if (Q.parse(text).errors.length === 0) same(text);
@@ -295,4 +294,158 @@ test('compile: mark is the first positive text term, case-insensitive unless Aa'
   assert.equal(mark('"Time Out"', { case: true }).exec('a time out'), null);
   assert.equal(mark('a.c', {}).exec('abc a.c').index, 4, 'a literal word is escaped');
   assert.equal(mark('a', {}).global, false, 'no g flag: no lastIndex state between lines');
+});
+
+// ---- Rewrites (P6b): chips and text are one model ----
+
+test('setLevels writes one canonical level token where the first stood, keeps every other byte, and drops it when all six are on', () => {
+  const rows = [
+    ['', 56, 'level:W+'],
+    ['tag:x', 56, 'level:W+ tag:x'],
+    ['tag:x  level:E   "a  b"', 6, 'tag:x  level:D,I   "a  b"'],
+    ['level:E tag:x -level:F', 0, 'level:none tag:x'],
+    ['tag:x level:E', 63, 'tag:x'],
+    ['level:E tag:x', 63, 'tag:x'],
+    ['  level:E', 63, ''],
+    ['tag: level:W+', 62, 'tag: level:D+'],
+  ];
+  for (const [text, mask, want] of rows) assert.equal(Q.setLevels(text, mask), want, `${JSON.stringify(text)} → ${mask}`);
+});
+
+test('setDevices writes dev:android, dev:ios or dev:none in place of every dev: and plat: token, and nothing for both', () => {
+  const rows = [
+    ['tag:x', 1, 'dev:android tag:x'],
+    ['dev:pixel tag:x plat:ios', 2, 'dev:ios tag:x'],
+    ['tag:x dev:ios', 3, 'tag:x'],
+    ['-dev:ios', 0, 'dev:none'],
+  ];
+  for (const [text, plats, want] of rows) assert.equal(Q.setDevices(text, plats), want, `${text} → ${plats}`);
+});
+
+test('removeToken, indexOf and tokenAt: by token index, the other tokens byte-identical; the caret on a token\'s range', () => {
+  const text = 'level:W+  -tag:"chatty x"  /a b/ word';
+  assert.equal(Q.removeToken(text, 1), 'level:W+  /a b/ word');
+  assert.equal(Q.removeToken(text, 3), 'level:W+  -tag:"chatty x"  /a b/');
+  assert.equal(Q.removeToken(text, 9), text, 'no such token: unchanged');
+  assert.equal(Q.indexOf(text, { k: 'tag', v: 'chatty x', neg: true }), 1);
+  assert.equal(Q.indexOf(text, { k: 'tag', v: 'chatty x', neg: false }), -1);
+  assert.deepEqual([0, 8, 9, 10, 25, 26, 30, 33, 99].map(c => Q.tokenAt(text, c)), [0, 0, -1, 1, 1, -1, 2, 3, -1], 'a range includes its end');
+  const r = rng(11);
+  for (let n = 0; n < 500; n++) {
+    const tokens = Array.from({ length: 2 + r(4) }, () => genToken(r));
+    const text2 = Q.serialize(tokens);
+    const i = r(tokens.length);
+    assert.deepEqual(toks(Q.removeToken(text2, i)), tokens.filter((_, j) => j !== i), text2);
+  }
+});
+
+test('chip rewrites round-trip: every level mask and platform set reads back from the text it writes', () => {
+  for (let mask = 0; mask < 64; mask++) {
+    const text = Q.setLevels('tag:x "y"', mask);
+    assert.equal(Q.build(text, {}, {}).q.levels, mask, text);
+    assert.equal(Q.setLevels(text, mask), text, 'idempotent');
+  }
+  for (const plats of [0, 1, 2, 3]) assert.equal(Q.build(Q.setDevices('a', plats), {}, {}).q.plats, plats);
+});
+
+test('tagCause: NOT tag:x that every retained line carries; tag:x when no retained line carries any positive tag', () => {
+  const hits = { chatty: 10, bt: 0, kernel: 3 };
+  const cause = text => ({ ...Q.tagCause(Q.build(text, {}, {}).q, v => hits[v.toLowerCase()] || 0, 10) });
+  assert.deepEqual(cause('-tag:Chatty'), { notTag: 'Chatty', tag: '' });
+  assert.deepEqual(cause('-tag:kernel'), { notTag: '', tag: '' });
+  assert.deepEqual(cause('tag:bt'), { notTag: '', tag: 'bt' });
+  assert.deepEqual(cause('tag:bt tag:kernel'), { notTag: '', tag: '' }, 'kernel lines match: tag:bt is not the cause');
+  assert.deepEqual(cause('tag:bt tag:nope'), { notTag: '', tag: 'bt' });
+  assert.deepEqual(cause('level:E'), { notTag: '', tag: '' });
+  assert.deepEqual([Q.build('level:E dev:ios plat:ios', {}, {}).q.chipsOnly, Q.build('level:E x', {}, {}).q.chipsOnly], [true, false]);
+});
+
+// ---- Typed text (P6b): what the bar may apply on its 100 ms debounce ----
+
+test('unknown keys: only a missing letter or a swap of a known key is "Did you mean"; log words one letter away search the message', () => {
+  assert.deepEqual(errs('tg:x pi:1 ap:x de:a plt:ios leve:E tga:x pdi:1'), ["Unknown field 'tg'. Did you mean tag:?", "Unknown field 'pi'. Did you mean pid:?",
+    "Unknown field 'ap'. Did you mean app:?", "Unknown field 'de'. Did you mean dev:?", "Unknown field 'plt'. Did you mean plat:?",
+    "Unknown field 'leve'. Did you mean level:?", "Unknown field 'tga'. Did you mean tag:?", "Unknown field 'pdi'. Did you mean pid:?"]);
+  const words = 'pin:3 pod:a ppid:1 apk:x apn:y dex:z play:on lebel:E apps:x id:7 Exception:';
+  assert.deepEqual(errs(words), []);
+  assert.deepEqual(toks(words).map(t => t.k), Array(11).fill('word'));
+});
+
+test('regex flags: "/foo/i" is reported with a hint, never searched as a word; paths stay words', () => {
+  assert.deepEqual(errs('/foo/i -/a\\/b/gi'), ['Regex flags are not supported. Use /foo/, and Aa for match case.',
+    'Regex flags are not supported. Use /a\\/b/, and Aa for match case.']);
+  for (const p of ['/usr/lib', '/tmp/x', '/proc/sys', '/a/b/c', '/foo/', '/i']) assert.deepEqual(errs(p), [], p);
+  assert.equal(Q.build('/foo/i', {}, {}).q, null, 'never applied');
+});
+
+test('regex flags (F2): only the flags people type after a regex (g, i, m, never m alone) are reported; URL and path tails made of other gimsuy letters stay words', () => {
+  for (const p of ['/api/msg', '/img/gui', '/v1/sum', '/home/my', '/tmp/my', '/home/guy', '/sys/msg', '/dev/sg', '/var/is', '/data/mu', '/data/u', '/data/us', '/x/s', '/x/y', '/x/m']) {
+    assert.deepEqual(errs(p), [], p);
+    assert.deepEqual(toks(p).map(t => t.k), ['word'], p);
+    assert.notEqual(Q.build(p, {}, {}).q, null, `${p} applies`);
+  }
+  assert.deepEqual(errs('/a/g /b/gi /c/im /d/gim /e/mig'), Array(5).fill(0).map((_, i) => `Regex flags are not supported. Use /${'abcde'[i]}/, and Aa for match case.`));
+  assert.deepEqual(errs('/a/gg /a/ii'), [], 'a repeated letter is no flag set');
+});
+
+test('regex flags (F3): a flagged regex whose body holds spaces is reported too, never split into two words', () => {
+  assert.deepEqual(errs('/time out/i'), ['Regex flags are not supported. Use /time out/, and Aa for match case.']);
+  assert.deepEqual(errs('/connection (lost|reset)/i'), ['Regex flags are not supported. Use /connection (lost|reset)/, and Aa for match case.']);
+  assert.deepEqual(errs('tag:x -/a \\/ b/gi y'), ['Regex flags are not supported. Use /a \\/ b/, and Aa for match case.']);
+  assert.equal(Q.build('/connection (lost|reset)/i', {}, {}).q, null, 'never applied');
+  // The report covers the whole flagged regex, so the next token parses on its own.
+  const t = toks('/time out/i word');
+  assert.deepEqual([t.length, t.at(-1).v], [2, 'word']);
+  // No closing slash with flags, or a flag set that is no flag set: the words they always were.
+  for (const p of ['/time out/ i', '/foo bar', '/var/log message', '/var/log msg/is', '/ab c/xy']) assert.deepEqual(errs(p), [], p);
+});
+
+test('nested quantifiers: a regex that can backtrack exponentially is refused before it applies; flat and bounded repeats pass', () => {
+  const msg = 'Invalid regex: Nested quantifiers such as (a+)+ can freeze the viewer. The last valid filter is still applied.';
+  for (const [text, opts] of [['/(a+)+$/', {}], ['/(x*)*y/', {}], ['/(?:a\\d+){2,}/', {}], ['/((a+)b)+/', {}], ['(\\w+\\s?)+$', { regex: true }], ['-(a+)*', { regex: true }], ['/(a*){25}/', {}], ['/((a+){4}){4}$/', {}], ['/(a+){4}$/', {}], ['/(a+){3}$/', {}], ['/((a+){2}){2}/', {}], ['/(((a+){2}){1}){2}/', {}], ['/((a+){2}b){2}/', {}], ['/((a+){2}b)+/', {}]]) {
+    const r = Q.build(text, opts, {});
+    assert.deepEqual([r.q, r.error && r.error.msg], [null, msg], text);
+  }
+  for (const [text, opts] of [['/(ab)+/', {}], ['/(a|b)+c/', {}], ['/a+b*/', {}], ['/(a{2}){3}/', {}], ['/([a+])+/', {}], ['/\\(a+\\)+/', {}], ['(a+)+', {}], ['/(ab){5}/', {}], ['/(a+){2}/', {}], ['/(a+){2}(b+){2}/', {}], ['/((a+){2}){1}/', {}], ['/((a+){1}){2}/', {}]]) {
+    assert.equal(Q.build(text, opts, {}).error, null, text);
+  }
+  const { start, end } = Q.build('ok /(a+)+/', {}, {}).error;
+  assert.deepEqual([start, end], [3, 10], 'the error carries the range of its token');
+});
+
+test('the <mark> takes the first non-empty hit of a regex term, as legacy did (a pattern such as /x*/ matches "" first)', () => {
+  const mark = (t, o) => Q.build(t, o, {}).q.mark;
+  const hit = (m, s) => { const r = m.exec(s); return r && [r.index, r[0]]; };
+  assert.deepEqual(hit(mark('/x*/', {}), 'abxxc'), [2, 'xx']);
+  assert.deepEqual(hit(mark('\\d*', { regex: true }), 'pid 12'), [4, '12']);
+  assert.equal(hit(mark('/x*/', {}), 'abc'), null, 'only empty hits: no mark');
+  assert.deepEqual(hit(mark('/x*/', {}), 'xab'), [0, 'x']);
+  const m = mark('/b+/', {});
+  assert.deepEqual([hit(m, 'abb'), hit(m, 'cb'), m.global], [[1, 'bb'], [1, 'b'], false], 'no state carried from one row to the next');
+});
+
+test('the <mark> scan is bounded (F6): a regex that matches "" at every offset and scans on from each one costs a fixed budget per row, never O(length^2)', () => {
+  const mark = (t, o) => Q.build(t, o, {}).q.mark;
+  const line = 'a'.repeat(4000);
+  for (const [text, o] of [['.*x|', { regex: true }], ['/.*Exception|/', {}], ['/(?:.*x)?/', {}]]) {
+    const m = mark(text, o);
+    const t0 = process.hrtime.bigint();
+    for (let i = 0; i < 60; i++) assert.equal(m.exec(line), null, text);
+    const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+    assert.ok(ms < 150, `${text}: 60 rows of 4000 characters took ${ms} ms (unbounded: about 400 ms)`);
+  }
+  // Within the budget the first non-empty hit is still found, however many empty hits come before it ...
+  const hit = (m, s) => { const r = m.exec(s); return r && [r.index, r[0]]; };
+  assert.deepEqual(hit(mark('\\d*', { regex: true }), 'Connection failed after 3 retries'), [24, '3']);
+  assert.deepEqual(hit(mark('\\d*', { regex: true }), 'x'.repeat(100) + '42'), [100, '42'], 'a short row: far more offsets than 16');
+  // ... and a long row past the budget marks nothing (what P6a did) instead of stalling the flush.
+  assert.equal(hit(mark('\\d*', { regex: true }), 'x'.repeat(100000) + '42'), null);
+});
+
+test('pid: a number or a numeric string is the line\'s pid; an empty or blank pid is none, so pid:0 does not match it', () => {
+  const lines = [0, '0', '', ' ', null, undefined, '57 ', 57, 'x'].map(pid => L({ pid }));
+  const keep = text => { const { q } = Q.build(text, {}, {}); return lines.map((m, i) => [m, i]).filter(([m]) => q.gate(m) >= 0).map(([, i]) => i); };
+  assert.deepEqual(keep('pid:0'), [0, 1]);
+  assert.deepEqual(keep('-pid:0'), [2, 3, 4, 5, 6, 7, 8]);
+  assert.deepEqual(keep('pid:57'), [6, 7]);
 });
