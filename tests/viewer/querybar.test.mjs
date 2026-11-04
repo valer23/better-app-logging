@@ -576,6 +576,17 @@ test('a chip after the page refused a mode flip rewrites the applied text under 
   assert.deepEqual([$('queryInput').value, $('queryRegexBtn').getAttribute('aria-pressed'), $('queryError').hidden], ['level:D+ a.b.c', 'false', true], 'the bar shows what was applied');
 });
 
+// Records the role of #queryError at every write of its text and every unhide, so a test can prove what the line was when a screen reader would
+// have seen the write (a live region announces what is written into it, or unhidden, while it has role="alert").
+function watchAlert($) {
+  // Clearing writes ('') are not logged: an empty write into a hidden line announces nothing.
+  const line = $('queryError'), text = $('queryErrorText'), log = [];
+  let t = text.textContent, h = line.hidden;
+  Object.defineProperty(text, 'textContent', { get: () => t, set(v) { t = v; if (v) log.push(['text', line.getAttribute('role'), v]); } });
+  Object.defineProperty(line, 'hidden', { get: () => h, set(v) { if (h && !v) log.push(['unhide', line.getAttribute('role')]); h = v; } });
+  return log;
+}
+
 test('a switch back to a draft with an error shows the red box, aria-invalid and the text, but not as an alert; a fresh error is an alert again (R2 #3, D8)', () => {
   const { p, $, st, bar, type, live, file } = barPage();
   const role = () => $('queryError').getAttribute('role');
@@ -583,6 +594,8 @@ test('a switch back to a draft with an error shows the red box, aria-invalid and
   type('tag:bt'); p.advance(100);
   type('tag:bt tg:x'); p.advance(100);
   assert.deepEqual([$('queryError').hidden, role()], [false, 'alert'], 'an error raised by typing is announced');
+  const log = watchAlert($);
+  log.length = 0;
   st.cur = file; bar.sync();
   assert.equal($('queryError').hidden, true);
   st.cur = live; bar.sync();
@@ -592,9 +605,14 @@ test('a switch back to a draft with an error shows the red box, aria-invalid and
   st.cur = file; bar.sync();
   st.cur = live; bar.sync();
   assert.equal(role(), null, 'and again on the next switch back');
-  type('tag:bt tg:y'); p.advance(100);   // a fresh error from typing
+  assert.ok(log.some(e => e[0] === 'text' && e[2]) && log.some(e => e[0] === 'unhide'), 'the switch did write the text and unhide the line');
+  assert.deepEqual(log.filter(e => e[1] !== null), [], 'every write and unhide during the switches happened while the line had no role');
+  log.length = 0;
+  type('tag:bt tga:y'); p.advance(100);   // a fresh error from typing (a different text: setText skips an unchanged one)
   assert.equal(role(), 'alert', 'a new error shown from typing is an alert');
-  assert.equal($('queryErrorText').textContent, "Unknown field 'tg'. Did you mean tag:?");
+  assert.ok(log.some(e => e[0] === 'text' && e[2].startsWith("Unknown field 'tga'")), 'the fresh error wrote its text');
+  assert.deepEqual(log.filter(e => e[1] !== 'alert'), [], 'and every write and unhide for it happened while the line was an alert');
+  assert.match($('queryErrorText').textContent, /^Unknown field 'tga'/);
 });
 
 test('a refusal by the page is restored on a switch without the alert role, as a parse error is (R2 #3)', () => {
@@ -604,15 +622,21 @@ test('a refusal by the page is restored on a switch without the alert role, as a
   type('tag:bt'); p.advance(100);
   type('/slow/'); p.advance(100);   // refused by the page: kept with its error
   assert.equal(role(), 'alert');
+  const log = watchAlert($);
   st.cur = file; bar.sync();
   st.cur = live; bar.sync();
   assert.deepEqual([$('queryError').hidden, $('queryInput').getAttribute('aria-invalid'), role()], [false, 'true', null]);
   assert.match($('queryErrorText').textContent, /^Invalid regex: It would take about/);
+  assert.ok(log.some(e => e[0] === 'text' && e[2]) && log.some(e => e[0] === 'unhide'), 'the switch did write the text and unhide the line');
+  assert.deepEqual(log.filter(e => e[1] !== null), [], 'every write and unhide happened while the line had no role');
   // a draft cut by a switch before its error showed: the error is computed on return, and is not an alert either
   type('tag:bt tg:x'); p.advance(50);
+  log.length = 0;
   st.cur = file; bar.sync();
   st.cur = live; bar.sync();
   assert.deepEqual([$('queryError').hidden, role()], [false, null]);
+  assert.ok(log.some(e => e[0] === 'text' && e[2]), 'the computed error was written');
+  assert.deepEqual(log.filter(e => e[1] !== null), [], 'with no role on the line at any write');
 });
 
 test('restore(s) drops the session\'s draft and shows its applied query (the page\'s file-load guard)', () => {
