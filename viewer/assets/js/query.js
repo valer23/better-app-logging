@@ -234,10 +234,11 @@
   }
   // ---- The regex guard (P7a, follow-up F4) ----
   // nestedQuantifier (above) refuses exponential nesting. Two more shapes freeze a WebKit or V8 regex on one long line:
-  // (1) a group repeated without bound, or often enough (see BOUNDED_MIN), whose alternatives overlap (one is a prefix of another, atom by atom,
+  // (1) a group repeated without bound, or often enough (see BOUNDED_LOG2_MAX), whose alternatives overlap (one is a prefix of another, atom by atom,
   //     under the term's own case flag) or can match '' ((a|aa)+, (\w|\d)+, (.|\s)*, (a|)+): exponential, so it is refused here,
   //     before anything runs (one RegExp.test cannot be interrupted). {n} and {n,m} count by their upper bound, multiplied by the bounds of the bounded repeats around the group
-  //     (((a|aa){8}){8} is (a|aa){64}); and
+  //     (((a|aa){8}){8} is (a|aa){64}), unbounded when a group around it is, and added up across consecutive groups
+  //     ((a|aa){7}(a|aa){7}z); and
   // (2) polynomial backtracking (\s.*.*.*z, \w+\w+z, (.*){2}z, a.*a.*z): its cost depends on the lines, so slowRegex below
   //     times it on the session's own lines when a filter is applied (the page injects the clock). A leading .* is not
   //     among them: compile drops it from the regex a line is tested with (below), so .*.*.*z runs as z.
@@ -310,7 +311,8 @@
     }
   }
   // Every group of src with its repeat bound (ub: how many times it can repeat, Infinity without bound, 0 when it is not
-  // repeated) and its enclosing group (up, -1 at the top), in the order they open. A group still open at the end has i = -1.
+  // repeated), its enclosing group (up, -1 at the top), where it opens (o) and where it ends, quantifier included (e), in the
+  // order they open. A group still open at the end has i = -1.
   function groupsOf(src) {
     const groups = [], open = [];
     for (let i = 0; i < src.length; i++) {
@@ -321,18 +323,21 @@
         let b = i + 1;
         if (src[b] === '?') { const m = /^\?(?::|=|!|<=|<!|<[A-Za-z_$][\w$]*>)/.exec(src.slice(b, b + 40)); b += m ? m[0].length : 1; }
         open.push(groups.length);
-        groups.push({ b, i: -1, ub: 0, up: open.length > 1 ? open[open.length - 2] : -1 });
+        groups.push({ o: i, b, i: -1, e: -1, ub: 0, up: open.length > 1 ? open[open.length - 2] : -1 });
         continue;
       }
       if (c !== ')' || !open.length) continue;
       const g = groups[open.pop()], n = src[i + 1];
       g.i = i;
+      g.e = i + 1;
       g.ub = n === '*' || n === '+' ? Infinity : 0;
+      if (n === '*' || n === '+' || n === '?') g.e++;
       if (n === '{') {
         const m = /^\{(\d+)(,(\d*))?\}/.exec(src.slice(i + 1, i + 25));
         // {n,} is unbounded; {n} and {n,m} count by their upper bound.
-        if (m) g.ub = m[2] !== undefined && m[3] === '' ? Infinity : Number(m[2] === undefined ? m[1] : m[3]);
+        if (m) { g.ub = m[2] !== undefined && m[3] === '' ? Infinity : Number(m[2] === undefined ? m[1] : m[3]); g.e += m[0].length; }
       }
+      if (g.e > i + 1 && src[g.e] === '?') g.e++;   // a lazy quantifier
     }
     return groups;
   }
@@ -342,21 +347,32 @@
     const memo = new Map();
     // Each atom is judged once per call: its start index fixes it (src, flags and alpha do not change between pairs).
     const atom = i => { let x = memo.get(i); if (x === undefined) { x = atomAt(src, i, flags, alpha); memo.set(i, x); } return x; };
+    // The paths a bounded group of k overlapping alternatives adds up, as ub * log2(k) (k counts as at least 2, which keeps the
+    // plain cut-off for a lone alternative that can match ''), summed over the consecutive groups that start where the one before
+    // ends. The sum is compared with BOUNDED_LOG2_MAX. A group is judged as soon as its own cost, or the run it is in, reaches it.
+    let run = 0, runEnd = -1;
     for (const g of groups) {
       if (g.i < 0 || !g.ub) continue;
       // The repeats around the group multiply its bound: ((a|aa){8}){8} is (a|aa){64}. An enclosing group repeated without
-      // bound adds nothing here (a bounded group inside (...)+ is judged by its own bound, as before).
+      // bound makes it unbounded: ((a|aa){8})+ is judged as (a|aa)+ (it ran 16 261 ms on 34 a's).
       let ub = g.ub;
-      if (ub !== Infinity) for (let p = g.up; p >= 0; p = groups[p].up) if (groups[p].ub > 1 && groups[p].ub !== Infinity) ub *= groups[p].ub;
-      const alts = alternatives(src, g.b, g.i);
-      // k alternatives that overlap give up to k^ub paths, so a bounded repeat is judged when ub * log2(k) reaches BOUNDED_MIN
-      // (k counts as at least 2, which keeps the plain cut-off for a lone alternative that can match '').
-      if (ub * Math.log2(Math.max(2, alts.length)) < GUARD.BOUNDED_MIN) continue;
-      if (!alpha) alpha = alphaOf(src);
-      for (let x = 0; x < alts.length; x++) {
-        if (canBeEmpty(atom, alts[x])) return true;
-        for (let y = x + 1; y < alts.length; y++) if (ambiguous(atom, alts[x], alts[y])) return true;
+      for (let p = g.up; p >= 0 && ub !== Infinity; p = groups[p].up) {
+        if (groups[p].ub === Infinity) ub = Infinity;
+        else if (groups[p].ub > 1) ub *= groups[p].ub;
       }
+      const alts = alternatives(src, g.b, g.i);
+      const cost = ub * Math.log2(Math.max(2, alts.length));
+      if (g.o !== runEnd) run = 0;
+      runEnd = g.e;
+      if (!alpha) alpha = alphaOf(src);
+      let overlap = false;
+      for (let x = 0; x < alts.length && !overlap; x++) {
+        if (canBeEmpty(atom, alts[x])) overlap = true;
+        for (let y = x + 1; y < alts.length && !overlap; y++) if (ambiguous(atom, alts[x], alts[y])) overlap = true;
+      }
+      if (!overlap) continue;
+      run += cost;
+      if (run >= GUARD.BOUNDED_LOG2_MAX) return true;
     }
     return false;
   }
@@ -386,11 +402,13 @@
   //   retries), so a load pause does not spend it: the term it reaches past that is refused. A wall-clock stop at
   //   4 × APPLY_MS bounds the worst wait; past it the remaining terms are refused with the same copy.
   // Once per filter change, never per line, per flush or per row. Not a linear engine (P16).
-  // BOUNDED_MIN: a group repeated {n} or {n,m} times with overlapping alternatives is refused when ub * log2(k) >= 16, that is
-  // when k^ub >= 2^16 paths (ub: the upper bound, k: the number of alternatives). Two alternatives keep a cut-off of 16, three
-  // start at 11, four at 8: (a|aa){40}z took 41 s on 40 a's, (\w|\d|[0-9a-f]){15}x 8.7 s on 17 digits. Legit bounded repeats
-  // (\d{1,3}, (ab|cd){2,20}) have no overlapping alternatives and are untouched.
-  const GUARD = Object.freeze({ BOUNDED_MIN: 16, LINE_MS: 20, MEAN_US: 5, TOTAL_MS: 2000, STEP_MS: 8, SAMPLE: 256, MIN_LEN: 1024, START: 32,
+  // BOUNDED_LOG2_MAX: a group repeated {n} or {n,m} times with overlapping alternatives is refused when ub * log2(k) >= 8, that
+  // is when k^ub >= 256 paths (ub: the upper bound, k: the number of alternatives; consecutive groups add their sums). The cost
+  // is the paths per start position times the line length, not the paths alone: (a|aa){15}z ran 35 469 ms on 'a'x200, while
+  // (a|aa){8}z ran 5 ms on 'a'x1024. Two alternatives keep a cut-off of 8, three start at 6, four at 4: (a|aa){40}z took 41 s
+  // on 40 a's, (\w|\d|[0-9a-f]){15}x 8.7 s on 17 digits. Legit bounded repeats (\d{1,3}, (ab|cd){2,20}) have no overlapping
+  // alternatives and are untouched. A heuristic, not a linear engine.
+  const GUARD = Object.freeze({ BOUNDED_LOG2_MAX: 8, LINE_MS: 20, MEAN_US: 5, TOTAL_MS: 2000, STEP_MS: 8, SAMPLE: 256, MIN_LEN: 1024, START: 32,
     TICK_MS: 2, NOISE_MS: 0.02, GAP_MS: 0.25, RETRIES: 2, MEAN_BUDGET_MS: 30, APPLY_MS: 100, MAX_CALLS: 100000 });
   const SYNTH = 'D/BluetoothGatt( 1234): onClientConnectionState() status=0 clientIf=7 device=DE:AD:BE:EF:00:42 mtu 517 handle 0x002a '
     + 'payload {"id": 42, "name": "left bud", "rssi": -61, "path": "/data/user/0/com.example.headset/files/log.txt"} '

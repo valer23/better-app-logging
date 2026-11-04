@@ -465,7 +465,7 @@ test('S1: a group repeated without bound whose alternatives overlap or can be em
   assert.equal(Q.build('(\\w|\\d)+z', { regex: true }, {}).error.msg, S1_MSG, 'a word under .* is a regex term too');
 });
 
-test('S1 (task 2b): overlap is judged over every literal in the source, and under bounded repeats of 16 or more', () => {
+test('S1 (task 2b): overlap is judged over every literal in the source, and under bounded repeats of 8 or more', () => {
   // (ü|üü)+z on 'ü'x32 ran 2 065 ms; (a|aa){40}z on 'a'x40 ran 41 172 ms; (a|aa){1,100}z on 'a'x32 ran 2 513 ms.
   for (const re of ['(ü|üü)+z', '(è|èè)+z', '(\\u00fc|\\u00fc\\u00fc)+z', '(\\xfc|\\xfc\\xfc)+z',
     '(a|aa){40}z', '(a|aa){1,100}z', '(a|aa){16}z']) {
@@ -507,7 +507,40 @@ test('S1 (task 2b review 2): the bound of an enclosing repeat multiplies, so nes
     assert.deepEqual([r.error.msg, r.error.start, r.error.end], [S1_MSG, 0, re.length + 2], re);
   }
   // A group that is not repeated, or an enclosing bound that is small, multiplies nothing in.
-  for (const re of ['((a|aa)b){2}z', '(?:(a|aa){2}){3}z', '((ab|cd){4}){4}z', '((a|aa)){2}z', '(?:(a|aa){3}x)+z']) assert.equal(Q.build(`/${re}/`, {}, {}).error, null, re);
+  for (const re of ['((a|aa)b){2}z', '(?:(a|aa){2}){3}z', '((ab|cd){4}){4}z', '((a|aa)){2}z']) assert.equal(Q.build(`/${re}/`, {}, {}).error, null, re);
+});
+
+test('S1 (task 2c): a bounded group of overlapping alternatives under an unbounded encloser is judged as unbounded', () => {
+  // ((a|aa){8})+z ran 16 261 ms on 'a'x34; (?:(a|aa){4})*z 19 675 ms on 'a'x34; ((a|aa){15})+z 59 944 ms on 'a'x36.
+  // (?:(a|aa){3}x)+z is contrived (the x splits every run, so it is not exponential), refused by the same rule: the encloser is unbounded.
+  for (const re of ['((a|aa){8})+z', '(?:(a|aa){4})*z', '((a|aa){15})+z', '(?:(a|aa){3}x)+z']) {
+    const r = Q.build(`/${re}/`, {}, {});
+    assert.equal(r.q, null, re);
+    assert.deepEqual([r.error.msg, r.error.start, r.error.end], [S1_MSG, 0, re.length + 2], re);
+  }
+  // An unbounded encloser of a group without overlap, or of a group that is not repeated, stays accepted.
+  for (const re of ['((a|b){8})+z', '((ab|cd){4})+z', '((a|aa)b)+z']) assert.equal(Q.build(`/${re}/`, {}, {}).error, null, re);
+});
+
+test('S1 (task 2c): the bounded cut-off is ub * log2(k) >= 8 (the cost is paths per start position times the line length)', () => {
+  // (a|aa){15}z ran 35 469 ms on 'a'x200 although each start position is only 2^15 paths; (a|aa){8}z ran 5 ms on 'a'x1024.
+  for (const re of ['(a|aa){2,15}z', '(a|aa){15}z', '(a|a|a){10}z', '(a|a|a|a){7}z', '(a|aa){8}z']) {
+    const r = Q.build(`/${re}/`, {}, {});
+    assert.equal(r.q, null, re);
+    assert.deepEqual([r.error.msg, r.error.start, r.error.end], [S1_MSG, 0, re.length + 2], re);
+  }
+  assert.equal(Q.build('(a|aa){7}z', { regex: true }, {}).error, null, '7 < 8');
+  assert.equal(Q.build('/(a|aa){7}z/', {}, {}).error, null, '7 < 8');
+});
+
+test('S1 (task 2c): consecutive bounded groups of overlapping alternatives add their ub * log2(k)', () => {
+  for (const re of ['(a|aa){7}(a|aa){7}(a|aa){7}z', '(a|aa){4}(a|aa){4}z', '(a|aa){4}(?:a|aa){2}(a|aa){2}z']) {
+    const r = Q.build(`/${re}/`, {}, {});
+    assert.equal(r.q, null, re);
+    assert.deepEqual([r.error.msg, r.error.start, r.error.end], [S1_MSG, 0, re.length + 2], re);
+  }
+  // 4 + 3 = 7 passes; a sibling without overlap adds nothing; a group that is separated by another term is not a consecutive one.
+  for (const re of ['(a|aa){4}(a|aa){3}z', '(a|aa){7}(b|c){9}z', '(a|aa){7}x(a|aa){7}z', '(a|aa){7}|(a|aa){7}']) assert.equal(Q.build(`/${re}/`, {}, {}).error, null, re);
 });
 
 test('S1 (task 2b review 2): a long alternation under a repeat builds in time (atoms are judged once, not per pair)', () => {
@@ -525,7 +558,7 @@ test('S1 (task 2b review 2): a long alternation under a repeat builds in time (a
 
 test('S1 (task 2b): legitimate bounded repeats and log regexes still build', () => {
   // Not \d{1,3}(?:x\d{1,3}){3}: nestedQuantifier (unchanged) refuses a quantified group that holds a quantifier, as it did before.
-  for (const re of ['(a|b){40}z', '(ab|cd){2,20}x', '(a|aa){2,15}z', '(a|aa){15}z', '(a|a|a){10}z', '(a|a|a|a){7}z', 'gatt.*mtu', 'status=\\d+.*handle',
+  for (const re of ['(a|b){40}z', '(ab|cd){2,20}x', '(a|aa){7}z', '((a|aa)b){2}z', '((ab|cd){4}){4}z', '(?:(a|aa){2}){3}z', 'gatt.*mtu', 'status=\\d+.*handle',
     '([0-9a-f]{2}:){5}[0-9a-f]{2}']) {
     assert.equal(Q.build(`/${re}/`, {}, {}).error, null, re);
   }
