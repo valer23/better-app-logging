@@ -1085,7 +1085,7 @@ function loadParsedFile(name, msgs) {
   if (slow) {
     fileSession.filter = ALV.query.build('', fileSession.queryOpts, deviceInfo).q;
     fileSession.queryText = '';
-    if (queryBar && queryBar.restore) queryBar.restore(fileSession);
+    if (queryBar) queryBar.restore(fileSession);
     // slow.cause, not slow.reason: the next step here is about the file, not the bar.
     ALV.ui.toast({ kind: 'info', title: `Filter cleared on ${name || 'this file'}`, desc: `${slow.cause}. Showing all lines. Make the regex more specific to filter this file.` });
   }

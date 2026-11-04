@@ -2,9 +2,11 @@
    ALV.queryBarPure is pure: the level chips' accessible names. ALV.createQueryBar wires #filterbar, once, from the legacy
    script after createGrid: the query bar (Aa, .*, Clear filter, the ⌘F hint, the invalid line), the level and device
    chips, the line count and Reset. The bar owns the query text and the Aa / .* modes and applies them through
-   actions.setQuery (the legacy script compiles and refilters); what the chips show is read back from the applied query
-   (state().filter), so chips and text are one model. Nothing here runs per line or per flush: the numbers refresh on a
-   250 ms interval and are written only when they changed. */
+   actions.setQuery (the legacy script compiles and refilters the shown session); what the chips show is read back from the
+   shown session's applied query (state().filter), so chips and text are one model. Each session has its own query (P7a):
+   the bar shows the shown session's applied text and modes (cur.queryText, cur.queryOpts), keeps an edit it has not applied
+   per session, and never lets a debounce armed for one session apply to another. Nothing here runs per line or per flush:
+   the numbers refresh on a 250 ms interval and are written only when they changed. */
 (function (g) {
   'use strict';
 
@@ -32,9 +34,10 @@
   // ---- DOM ----
 
   // createQueryBar({ doc, win, dom, ui, keys, shell, state, actions }) → { sync(), numbers(), apply(), text(), focus(),
-  // toggleLevel(k), toggleDevice(platform), reset(), fix(what), closeMenus() }. state() is the legacy shellState() (cur, filter: the
-  // applied compiled query, devices, tag); actions are legacy functions: setQuery(text, opts) → error | null, and sync()
-  // (shellSync: the sidebar rows and the status bar read the applied query too).
+  // toggleLevel(k), toggleDevice(platform), reset(), fix(what), closeMenus(), restore(s), set(text, opts) }. state() is the legacy
+  // shellState() (cur: the shown session with its queryText and queryOpts, filter: its applied compiled query, devices, tag);
+  // actions are legacy functions: setQuery(text, opts) → error | null (on the shown session), recompile() (dev: names, every
+  // session; the shell's tick), and sync() (shellSync: the sidebar rows and the status bar read the applied query too).
   function createQueryBar({ doc, win, dom, ui, keys, shell, state, actions }) {
     const { num, setText, setAttr, setHidden } = g.ALV.shellPure;
     const Q = g.ALV.query;
@@ -50,9 +53,23 @@
     let mc = false;   // Aa
     let rx = false;   // .*
     let pending = 0;  // the debounce's generation: a timer that is not the newest does nothing
-    let applied = ''; // the text of the filter applied last
-    let appliedOpts = { case: false, regex: false }; // and the Aa / .* modes it compiled under: the text means nothing without them
+    // What each session applied lives on the session (cur.queryText, cur.queryOpts; setQuery stores them). An edit the bar
+    // has not applied (invalid, refused, or cut by a switch inside the debounce) is kept here per session, with the error it
+    // shows, until the session is shown again. A WeakMap: a closed session takes its draft with it.
+    const drafts = new WeakMap();   // session → { text, case, regex, err }
+    let shownErr = null;            // the message the alert line shows, or null
+    let shownSig = null;            // sig() of the edit that message belongs to: keep() stores it only with that edit
+    let refused = null;             // sig() of the edit apply() was last refused for (basis skips it)
     const opts = () => ({ case: mc, regex: rx });
+    const sig = (text, c, r) => `${text}\u0000${c}${r}`;
+    function showError(msg, of = null) {
+      shownErr = msg || null;
+      shownSig = msg ? of : null;
+      box.classList.toggle('invalid', !!msg);
+      setAttr(input, 'aria-invalid', msg ? 'true' : null);
+      setText($('queryErrorText'), msg || '');
+      setHidden($('queryError'), !msg);
+    }
 
     // Applies the text now (a chip, a toggle, Clear, Reset, the end of the debounce). An invalid query keeps the last
     // valid filter (setQuery leaves it alone) and says why under the bar, in a role="alert" line written only when the
@@ -61,11 +78,8 @@
       pending++;
       const before = state().filter;
       const err = actions.setQuery(input.value, opts());
-      if (!err) { applied = input.value; appliedOpts = opts(); }
-      box.classList.toggle('invalid', !!err);
-      setAttr(input, 'aria-invalid', err ? 'true' : null);
-      setText($('queryErrorText'), err ? err.msg : '');
-      setHidden($('queryError'), !err);
+      refused = err ? sig(input.value, mc, rx) : null;
+      showError(err ? err.msg : null, refused);
       if (!err) drawTokens(input.value);
       actions.sync();
       numbers();   // the filter's result shows at once; sync() leaves the numbers to the interval
@@ -73,19 +87,20 @@
       // The no-match tile (grid.js) announces itself with its cause, which the count would displace in the 5 s throttle: it says only what the tile does not.
       const tile = st.cur.all.length > 0 && st.cur.filtered.length === 0 && !st.stale;
       if (st.filter !== before && !tile) ui.announce(lineCount(st.cur.filtered.length, st.cur.all.length));
+      return err;
     }
     // Writes `text` into the bar and applies it at once, under the modes `o` (the ones the text was read under, else the ones now on).
-    function rewrite(text, o = opts()) { mc = o.case; rx = o.regex; input.value = text; apply(); }
+    function rewrite(text, o = opts()) { mc = o.case; rx = o.regex; input.value = text; return apply(); }
     // What a chip, row or tile fix rewrites: the bar's text when it compiles, else the last applied text (the invalid edit is dropped, so the fix always applies).
     // The text and the modes it compiles under travel together, and the rewrite is applied under those modes: the bar's text with the modes now on, else the
-    // applied text with the modes now on when it compiles under them, else the applied text with the modes it was applied under (.* turned on over `a(`
+    // applied text with the modes now on when it compiles under them, else the applied text with the modes it was applied under (cur.queryOpts) (.* turned on over `a(`
     // fails, the literal filter stays, and a chip on that literal must not be compiled as a regex).
     function basis() {
-      const d = state().devices;
+      const d = state().devices, s = state().cur;
       const o = opts();
-      if (Q.build(input.value, o, d).q) return { text: input.value, o };
-      if (Q.build(applied, o, d).q) return { text: applied, o };
-      return { text: applied, o: appliedOpts };
+      if (sig(input.value, mc, rx) !== refused && Q.build(input.value, o, d).q) return { text: input.value, o };
+      if (Q.build(s.queryText, o, d).q) return { text: s.queryText, o };
+      return { text: s.queryText, o: s.queryOpts };
     }
     // Rewrites the basis text with edit(text, query-it-compiles-to) → the new text, or null for no change.
     function change(edit) {
@@ -203,9 +218,9 @@
     // The chips' pressed state, the device names, the toggles and the bar: on sync and on the shell's tick (twice a second).
     // No number is written here: the 250 ms interval owns them.
     function syncChips() {
-      // A dev: name (dev:pixel) is resolved against the devices known when it compiled: when they change, the applied text
-      // compiles to another filter, which setQuery applies (an equal one costs a parse; only while such a token is in use).
-      if (state().filter.usesDevNames) actions.setQuery(applied, appliedOpts);
+      // A dev: name (dev:pixel) is resolved against the devices known when it compiled: the page compiles every session whose
+      // filter names a device again (recompileDevNames: the shown one refilters now, another when it is shown).
+      actions.recompile();
       const q = state().filter;
       levels.forEach(({ b }, k) => setAttr(b, 'aria-pressed', String((q.levels & (1 << k)) !== 0)));
       const dev = shell.devices();
@@ -218,14 +233,51 @@
       syncBar();
     }
     // shellSync (the shell's tick, a dropped frame, a device pick, a session switch): the chips and the bar, and no number, except when the
-    // shown session is another one than the last sync saw: that switch writes the new session's numbers at once. Otherwise the numbers are the
-    // 250 ms interval's, and apply() asks for them at once on a filter change (spec "Performance": at most 4 writes a second). selectSession
-    // stays untouched (the drain functions are byte-identical to P6a): sync() is how the query bar notices the switch.
+    // shown session is another one than the last sync saw: that switch keeps the leaving session's draft, shows the new session's query
+    // (load) and writes its numbers at once. Otherwise the numbers are the 250 ms interval's, and apply() asks for them at once on a filter
+    // change (spec "Performance": at most 4 writes a second). selectSession stays byte-identical: sync() is how the bar notices the switch.
+    // Nothing is announced on a switch: the SESSIONS row's aria-current and the field's value carry it.
     let shownSession = state().cur;
+    // Keeps the field for session `s` when it differs from what `s` applied; forgets it otherwise. The error shown is kept only
+    // when it belongs to this very edit (an edit fixed inside the debounce must not come back under its old error).
+    function keep(s) {
+      const now = sig(input.value, mc, rx);
+      if (input.value !== s.queryText || mc !== s.queryOpts.case || rx !== s.queryOpts.regex) drafts.set(s, { text: input.value, case: mc, regex: rx, err: now === shownSig ? shownErr : null });
+      else drafts.delete(s);
+    }
+    // Shows session `s`: its draft, else its applied text and modes. pending++ first, so a debounce armed for the session shown before
+    // never applies to `s`. A draft with an error shows it again (nothing applies; the session's last valid filter stays). A draft
+    // with no error is compiled now: a parse error shows at once and nothing applies; one that compiles to another filter is applied
+    // after the usual quiet, to `s` (the page's guard runs then). The guard's own refusals cannot be recomputed here, which is why
+    // keep() stores them with their edit.
+    function load(s) {
+      pending++;
+      pop.close({ restoreFocus: false });
+      const d = drafts.get(s);
+      drafts.delete(s);
+      input.value = d ? d.text : s.queryText;
+      mc = d ? d.case : s.queryOpts.case;
+      rx = d ? d.regex : s.queryOpts.regex;
+      drawTokens(s.queryText);
+      let err = d ? d.err : null;
+      if (d && !err) {
+        const r = Q.build(d.text, opts(), state().devices);
+        if (r.error) err = r.error.msg;
+        else if (r.q.key !== s.filter.key) { const id = ++pending; win.setTimeout(() => { if (id === pending) apply(); }, DEBOUNCE_MS); }
+      }
+      refused = err ? sig(input.value, mc, rx) : null;
+      showError(err, refused);
+    }
+    // The page changed `s`'s applied query itself (the file-load guard): its draft goes, and the bar shows it if it is on screen.
+    function restore(s) {
+      drafts.delete(s);
+      if (s === shownSession) { load(s); syncChips(); numbers(); }
+    }
     function sync() {
+      const c = state().cur, switched = c !== shownSession;
+      if (switched) { keep(shownSession); shownSession = c; load(c); }
       syncChips();
-      const c = state().cur;
-      if (c !== shownSession) { shownSession = c; numbers(); }
+      if (switched) numbers();
     }
     win.setInterval(() => { if (!doc.hidden) numbers(); }, NUMBERS_MS);
     shell.onTick(syncChips);
@@ -270,7 +322,9 @@
     syncChips();
     numbers();
     return {
-      sync, numbers, apply, toggleLevel, toggleDevice, reset, fix,
+      sync, numbers, apply, toggleLevel, toggleDevice, reset, fix, restore,
+      // Writes `text` into the bar under the modes `o` and applies it at once: the error, or null (dev-bench &q; P7b presets).
+      set: (text, o) => rewrite(text, { case: !!(o && o.case), regex: !!(o && o.regex) }) || null,
       text: () => input.value,
       focus,
       // A legacy modal is about to open over the page: the popover lives in #overlayRoot (z 200), above it.

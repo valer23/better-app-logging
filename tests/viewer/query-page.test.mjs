@@ -341,7 +341,7 @@ test('a file whose lines make the File session\'s regex too slow opens unfiltere
   assert.match(v.run('__toasts[0].desc'), /^It (would take|takes) about .+\. Showing all lines\. Make the regex more specific to filter this file\.$/);
 });
 
-test('the bar shows the cleared query after a file load drops the File session\'s regex', { todo: 'Task 4: queryBar.restore' }, () => {
+test('the bar shows the cleared query after a file load drops the File session\'s regex', () => {
   const v = boot();
   v.api.selectSession(v.run('fileSession'));
   v.run(`resetLines(fileSession, Array.from({ length: 10 }, (_, i) => (${JSON.stringify(fileLine())}))); applyFilters()`);
@@ -360,4 +360,24 @@ test('the bar shows the cleared query after a file load drops the File session\'
   assert.equal(v.run('JSON.stringify(__toasts.map(t => [t.kind, t.title]))'), JSON.stringify([['info', 'Filter cleared on big.txt']]));
   assert.match(v.run('__toasts[0].desc'), /^It (would take|takes) about .+\. Showing all lines\. Make the regex more specific to filter this file\.$/);
   assert.equal(v.doc.getElementById('queryInput').value, '', 'the bar shows the cleared query');
+});
+
+test('dev:<name> on a background session: the recompile makes it stale, it refilters once when shown; back to its old key is not stale', () => {
+  const v = boot();
+  v.send(4, 'android'); v.send(4, 'ios'); v.api.flushBatch();
+  v.run("deviceInfo.android = { id: 'R5CT', name: 'Pixel 8 Pro' }");
+  v.bar('dev:pixel');
+  v.run(`resetLines(fileSession, [${JSON.stringify(fileLine())}]); fileSession.query = null`);
+  v.api.selectSession(v.run('fileSession'));
+  v.run("deviceInfo.android = { id: 'R9XY', name: 'Galaxy' }; recompileDevNames()");
+  assert.equal(v.run('liveSession.query !== liveSession.filter'), true, 'Live is stale: dev:pixel names no device now');
+  const before = v.run('liveSession.filtered.length');
+  v.send(4, 'android'); v.api.flushBatch();
+  assert.equal(v.run('liveSession.filtered.length'), before + 4, 'until shown, Live follows the query its lines follow');
+  v.run("deviceInfo.android = { id: 'R5CT', name: 'Pixel 8 Pro' }; recompileDevNames()");
+  assert.equal(v.run('liveSession.query === liveSession.filter'), true, 'back to the key its lines follow: that query again, not stale');
+  v.run("deviceInfo.android = { id: 'R9XY', name: 'Galaxy' }; recompileDevNames()");
+  v.run('__n = 0; __rf = refilterSession; refilterSession = s => { __n++; return __rf(s); }');
+  v.api.selectSession(v.run('liveSession'));
+  assert.deepEqual([v.run('__n'), v.run('liveSession.filtered.length')], [1, 0]);
 });
