@@ -577,12 +577,26 @@ test('S1 (task 2b): legitimate bounded repeats and log regexes still build', () 
   }
 });
 
+test('S1 (task 2d): only the overlapping alternatives count against the bounded cut-off', () => {
+  // The cut-off is defined over overlapping alternatives. Counting every alternative refused cheap patterns that passed before task 2c:
+  // the first ran 2.8 ms on 'error'x2000, the second 2.1 ms on '1'x5000, the third 0.7 ms on 'foobar'x2000.
+  for (const re of ['(error|err|warn|warning|fail|failed|fatal|crash){3}z', '(\\w|\\d|_|-){4}z', '(foo|bar|baz|foobar){4}z']) {
+    assert.equal(Q.overlapRepeat(re, ''), false, re);
+    assert.equal(Q.build(`/${re}/`, {}, {}).error, null, re);
+  }
+  // Every alternative that overlaps still counts, however many siblings do not: these stay refused.
+  for (const re of ['(a|aa|b|c|d|e|f|g){15}z', '(a|a|a){10}z', '(a|a|a|a){7}z', '(a|aa){15}z', '(a|aa){7}(a|aa){7}(a|aa){7}z', '(|a|b|c|d|e|f|g){8}z']) {
+    assert.equal(Q.overlapRepeat(re, ''), true, re);
+  }
+});
+
 test('S1 passes common log regexes', () => {
   // Not \d{1,3}(\.\d{1,3}){3}: nestedQuantifier (unchanged) already refuses a quantified group that holds a quantifier,
   // before S1 runs. S1 neither widens nor narrows that rule, so the unrolled dotted quad stands in for it.
   const pass = ['(POST|PUT)+', '(ab|ac)+', '(foo|bar)+', '(a|b)+c', '\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}', '([0-9a-f]{2}:){5}[0-9a-f]{2}', 'time(out)?\\s+\\d+',
     '(error|fail|timeout|disconnect)', '\\bconn(ected|ecting)\\b', '(a+){2}', '^\\[(\\w+)\\]\\s+(.*)$', 'gatt.*mtu', 'foo.*bar.*baz.*qux',
-    'status=\\d+.*handle', '(?<=id=)\\d+', '(?!foo)bar', '(\\w)\\1', '[A-Z]\\w+Exception', '0x[0-9a-f]+', '(a|b){3}'];
+    'status=\\d+.*handle', '(?<=id=)\\d+', '(?!foo)bar', '(\\w)\\1', '[A-Z]\\w+Exception', '0x[0-9a-f]+', '(a|b){3}',
+    '(error|err|warn|warning|fail|failed|fatal|crash){3}z', '(\\w|\\d|_|-){4}z', '(foo|bar|baz|foobar){4}z'];
   for (const re of pass) assert.equal(Q.build(`/${re}/`, {}, {}).error, null, re);
   assert.equal(Q.overlapRepeat('(a|aa)+', 'i'), true);
   assert.equal(Q.overlapRepeat('(A|b)+', ''), false, 'case-sensitive: A and b share nothing');

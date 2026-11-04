@@ -347,8 +347,9 @@
     const memo = new Map();
     // Each atom is judged once per call: its start index fixes it (src, flags and alpha do not change between pairs).
     const atom = i => { let x = memo.get(i); if (x === undefined) { x = atomAt(src, i, flags, alpha); memo.set(i, x); } return x; };
-    // The paths a bounded group of k overlapping alternatives adds up, as ub * log2(k) (k counts as at least 2, which keeps the
-    // plain cut-off for a lone alternative that can match ''), summed over the consecutive groups that start where the one before
+    // The paths a bounded group adds up, as ub * log2(k), k the number of its alternatives that overlap (that can match '', or are
+    // ambiguous with another one; k counts as at least 2, which keeps the plain cut-off for a lone alternative that can match ''),
+    // summed over the consecutive groups that start where the one before
     // ends (a plain term between two groups ends the run; a repeated group without overlap does not, it may match the same
     // characters: (a|aa){4}(a|b){2}(a|aa){4}z). The sum is compared with BOUNDED_LOG2_MAX. A group is judged as soon as its own
     // cost, or the run it is in, reaches it. The run is kept per enclosing group (runs: parent index -> { sum, end }), so a repeated
@@ -364,18 +365,19 @@
         else if (groups[p].ub > 1) ub *= groups[p].ub;
       }
       const alts = alternatives(src, g.b, g.i);
-      const cost = ub * Math.log2(Math.max(2, alts.length));
       let r = runs.get(g.up);
       if (!r || g.o !== r.end) runs.set(g.up, r = { sum: 0, end: -1 });
       r.end = g.e;
       if (!alpha) alpha = alphaOf(src);
-      let overlap = false;
-      for (let x = 0; x < alts.length && !overlap; x++) {
-        if (canBeEmpty(atom, alts[x])) overlap = true;
-        for (let y = x + 1; y < alts.length && !overlap; y++) if (ambiguous(atom, alts[x], alts[y])) overlap = true;
+      // k: the alternatives that take part in at least one overlap (one that can match '', or one ambiguous with another).
+      const part = new Array(alts.length).fill(false);
+      for (let x = 0; x < alts.length; x++) {
+        if (canBeEmpty(atom, alts[x])) part[x] = true;
+        for (let y = x + 1; y < alts.length; y++) if (ambiguous(atom, alts[x], alts[y])) part[x] = part[y] = true;
       }
-      if (!overlap) continue;
-      r.sum += cost;
+      const k = part.filter(Boolean).length;
+      if (!k) continue;
+      r.sum += ub * Math.log2(Math.max(2, k));
       if (r.sum >= GUARD.BOUNDED_LOG2_MAX) return true;
     }
     return false;
@@ -407,7 +409,7 @@
   //   4 × APPLY_MS bounds the worst wait; past it the remaining terms are refused with the same copy.
   // Once per filter change, never per line, per flush or per row. Not a linear engine (P16).
   // BOUNDED_LOG2_MAX: a group repeated {n} or {n,m} times with overlapping alternatives is refused when ub * log2(k) >= 8, that
-  // is when k^ub >= 256 paths (ub: the upper bound, k: the number of alternatives; consecutive groups add their sums). The cost
+  // is when k^ub >= 256 paths (ub: the upper bound, k: the number of overlapping alternatives; consecutive groups add their sums). The cost
   // is the paths per start position times the line length, not the paths alone: (a|aa){15}z ran 35 469 ms on 'a'x200, while
   // (a|aa){8}z ran 5 ms on 'a'x1024. Two alternatives keep a cut-off of 8, three start at 6, four at 4: (a|aa){40}z took 41 s
   // on 40 a's, (\w|\d|[0-9a-f]){15}x 8.7 s on 17 digits. Legit bounded repeats (\d{1,3}, (ab|cd){2,20}) have no overlapping
