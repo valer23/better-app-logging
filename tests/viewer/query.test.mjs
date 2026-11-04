@@ -604,6 +604,24 @@ test('S1 (task 2d review): an alternative led by a group or a zero-width escape 
   for (const re of ['((?:ab)|(?:cd)|ef|gh){4}z', '(\\Bab|cd|ef|gh){4}z']) assert.equal(Q.overlapRepeat(re, ''), false, re);
 });
 
+test('S1 (task 2d review 2): an alternative ambiguous() cannot judge (a quantified, null or zero-width atom) counts once an overlap is found', () => {
+  // ambiguous() used to answer false when it met a quantified atom (a?a, ab?aa) or a group, so those alternatives stayed out of k even
+  // though they overlap the others. At the previous commit (a|aa|a?a|a?aa|a?a?a){7}z was accepted and ONE re.test took 68 124 ms on
+  // 'a'x32 (slowRegex cannot interrupt its first call); (a|aa|a?a|a?aa){7}z took 8.2 s on 'a'x200, (aa|aaa|ab?aa|ab?aaa){7}z 478 ms.
+  // Every pair stopped on such an atom is 'unknown'; once the group holds a definite overlap, both alternatives of an unknown pair count.
+  const refuse = ['(a|aa|a?a|a?aa|a?a?a){7}z', '(a|aa|a?a|a?aa){7}z', '(a|aa|a?a){7}z', '(a|aa|a{2}|a{1}a){7}z', '(a|aa|a?aa|a??a){6}z',
+    '(aa|aaa|ab?aa|ab?aaa){7}z', '(aa|aaa|a(?:a)a|a(?:a)aa){7}z'];
+  assert.deepEqual(refuse.filter(re => !Q.overlapRepeat(re, '')), [], 'overlapRepeat refuses every one of them');
+  // build only after the static check above: the first of them freezes a regex engine for a minute when it gets through.
+  for (const re of refuse) {
+    const r = Q.build(`/${re}/`, {}, {});
+    assert.equal(r.q, null, re);
+    assert.deepEqual([r.error.msg, r.error.start, r.error.end], [S1_MSG, 0, re.length + 2], re);
+  }
+  // With no definite overlap, an unknown pair adds nothing.
+  for (const re of ['(a+|b){3}z', '(a?a|b){4}z', '(ab?|cd){7}z']) assert.equal(Q.overlapRepeat(re, ''), false, re);
+});
+
 test('S1 passes common log regexes', () => {
   // Not \d{1,3}(\.\d{1,3}){3}: nestedQuantifier (unchanged) already refuses a quantified group that holds a quantifier,
   // before S1 runs. S1 neither widens nor narrows that rule, so the unrolled dotted quad stands in for it.

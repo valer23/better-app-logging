@@ -298,21 +298,19 @@
     for (let i = from; i < to;) { const x = atom(i); if (!x || !x.opt) return false; i = x.end; }
     return true;
   }
-  // The alternative starts with something ambiguous() cannot compare: a group, an anchor (atomAt is null), \b or \B (zero width), or an
-  // atom that matches no character of the alphabet.
-  function unjudged(atom, src, [from]) {
-    const x = atom(from);
-    return !x || x.set.size === 0 || (src[from] === '\\' && (src[from + 1] === 'b' || src[from + 1] === 'B'));
-  }
-  // Atom by atom, every pair shares a character and one alternative runs out first: the repeat can split a run two ways.
+  // Do two alternatives overlap? Atom by atom, every pair shares a character and one alternative runs out first: the repeat can split a
+  // run two ways (AMBIG). Two atoms that share no character: they do not (CLEAR). Anything ambiguous() cannot compare, met before
+  // either of those: a group or an anchor (atomAt is null), \b or \B (matches no character), or a quantified atom (a?a, ab?aa): UNKNOWN.
+  // An unknown pair may well overlap ((a|aa|a?a){7}z), so overlapRepeat counts it once the group holds a definite overlap.
+  const CLEAR = 0, AMBIG = 1, UNKNOWN = 2;
   function ambiguous(atom, a, b) {
     for (let i = a[0], j = b[0]; ;) {
-      if (i >= a[1] || j >= b[1]) return true;
+      if (i >= a[1] || j >= b[1]) return AMBIG;
       const x = atom(i), y = atom(j);
-      if (!x || !y || x.q || y.q) return false;
+      if (!x || !y || x.q || y.q || !x.set.size || !y.set.size) return UNKNOWN;
       let share = false;
       for (const ch of x.set) if (y.set.has(ch)) { share = true; break; }
-      if (!share) return false;
+      if (!share) return CLEAR;
       i = x.end; j = y.end;
     }
   }
@@ -376,15 +374,19 @@
       r.end = g.e;
       if (!alpha) alpha = alphaOf(src);
       // k: the alternatives that take part in at least one overlap (one that can match '', or one ambiguous with another).
-      const part = new Array(alts.length).fill(false);
+      // An alternative in a pair ambiguous() cannot judge (UNKNOWN: a group, an anchor, \b / \B or a quantified atom met before a
+      // shared or a distinct character) joins too, but only once the group holds a definite overlap: (a|aa|(?:a)|(?:aa)){7}z ran
+      // 5.8 s on 'a'x200, (a|aa|a?a|a?aa|a?a?a){7}z 68 s on 'a'x32. Without one it adds nothing ((a+|b){3}: slowRegex times it).
+      const part = new Array(alts.length).fill(false), unk = new Array(alts.length).fill(false);
       for (let x = 0; x < alts.length; x++) {
         if (canBeEmpty(atom, alts[x])) part[x] = true;
-        for (let y = x + 1; y < alts.length; y++) if (ambiguous(atom, alts[x], alts[y])) part[x] = part[y] = true;
+        for (let y = x + 1; y < alts.length; y++) {
+          const r = ambiguous(atom, alts[x], alts[y]);
+          if (r === AMBIG) part[x] = part[y] = true;
+          else if (r === UNKNOWN) unk[x] = unk[y] = true;
+        }
       }
-      // Once an overlap is found, an alternative ambiguous() cannot judge joins too: its first atom is a group, an anchor or
-      // \b / \B (atomAt is null or matches no character, or the escape is zero width), so no pair is ever flagged for it, yet it can
-      // match at the same position as the others ((a|aa|(?:a)|(?:aa)){7}z ran 5.8 s on 'a'x200).
-      if (part.includes(true)) for (let x = 0; x < alts.length; x++) if (!part[x] && unjudged(atom, src, alts[x])) part[x] = true;
+      if (part.includes(true)) for (let x = 0; x < alts.length; x++) if (unk[x]) part[x] = true;
       const k = part.filter(Boolean).length;
       if (!k) continue;
       r.sum += ub * Math.log2(Math.max(2, k));
