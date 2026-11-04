@@ -534,12 +534,17 @@ test('S1 (task 2c): the bounded cut-off is ub * log2(k) >= 8 (the cost is paths 
 });
 
 test('S1 (task 2c): consecutive bounded groups of overlapping alternatives add their ub * log2(k)', () => {
-  for (const re of ['(a|aa){7}(a|aa){7}(a|aa){7}z', '(a|aa){4}(a|aa){4}z', '(a|aa){4}(?:a|aa){2}(a|aa){2}z']) {
+  // A repeated group between two overlapping groups does not break the run, even one without overlap of its own: (a|aa){4}(a|b){2}(a|aa){4}z
+  // ran 65 ms on 'a'x200 because the middle group matches 'a' too, and a group that cannot match the same characters is not told apart
+  // from it. The rule stays cautious (a false refusal on a contrived pattern, not a missed blow-up).
+  for (const re of ['(a|aa){7}(a|aa){7}(a|aa){7}z', '(a|aa){4}(a|aa){4}z', '(a|aa){4}(?:a|aa){2}(a|aa){2}z',
+    '(a|aa){4}(b|c){2}(a|aa){4}z', '(a|aa){4}(?:x){1}(a|aa){4}z', '(a|aa){7}(b|c){9}(a|aa){1}z']) {
     const r = Q.build(`/${re}/`, {}, {});
     assert.equal(r.q, null, re);
     assert.deepEqual([r.error.msg, r.error.start, r.error.end], [S1_MSG, 0, re.length + 2], re);
   }
-  // 4 + 3 = 7 passes; a sibling without overlap adds nothing; a group that is separated by another term is not a consecutive one.
+  // 4 + 3 = 7 passes; a sibling without overlap adds nothing; a plain term (not a repeated group) between two groups ends the run;
+  // so does the end of an alternative.
   for (const re of ['(a|aa){4}(a|aa){3}z', '(a|aa){7}(b|c){9}z', '(a|aa){7}x(a|aa){7}z', '(a|aa){7}|(a|aa){7}']) assert.equal(Q.build(`/${re}/`, {}, {}).error, null, re);
 });
 

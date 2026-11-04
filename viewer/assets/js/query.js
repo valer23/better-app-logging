@@ -349,7 +349,9 @@
     const atom = i => { let x = memo.get(i); if (x === undefined) { x = atomAt(src, i, flags, alpha); memo.set(i, x); } return x; };
     // The paths a bounded group of k overlapping alternatives adds up, as ub * log2(k) (k counts as at least 2, which keeps the
     // plain cut-off for a lone alternative that can match ''), summed over the consecutive groups that start where the one before
-    // ends. The sum is compared with BOUNDED_LOG2_MAX. A group is judged as soon as its own cost, or the run it is in, reaches it.
+    // ends (a plain term between two groups ends the run; a repeated group without overlap does not, it may match the same
+    // characters: (a|aa){4}(a|b){2}(a|aa){4}z). The sum is compared with BOUNDED_LOG2_MAX. A group is judged as soon as its own
+    // cost, or the run it is in, reaches it.
     let run = 0, runEnd = -1;
     for (const g of groups) {
       if (g.i < 0 || !g.ub) continue;
