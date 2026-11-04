@@ -920,15 +920,69 @@ test('slowRegex: a sample line unlike the longest one that is fine on its prefix
   }
 });
 
-test('slowRegex: only a few of the longest distinct sample lines are projected; the rest run on their first PREFIX chars, so no line runs whole unprojected', () => {
-  const lines = msgs(100, 100);
-  lines[0] = { msg: 'L'.repeat(3000) };                         // the longest: the worst-line probe
-  for (let i = 1; i <= 20; i++) lines[i * 4] = { msg: String.fromCharCode(64 + i) + 'x'.repeat(599 + i) };   // 20 long lines, all distinct
-  const seen = new Map();
-  const c = fakeClock(s => { if (s[0] !== 'L' && s.length > Q.GUARD.PREFIX) seen.set(s[0], Math.max(seen.get(s[0]) || 0, s.length)); return 1e-6 * s.length; });
-  assert.equal(Q.slowRegex(qOf(c.re), lines, c.now), null);
-  const whole = [...seen].filter(([ch, len]) => len >= 600).map(([ch]) => ch);
-  assert.ok(whole.length <= Q.GUARD.PROJECT, `${whole.length} long lines ran whole (${whole.join('')}), at most ${Q.GUARD.PROJECT} are projected`);
+test('slowRegex: the longest line is projected too: a slow part past what the worst-line probe timed refuses it before it runs whole (any clock step)', () => {
+  for (const step of STEPS) {
+    const lines = msgs(100, 100);
+    lines[0] = { msg: 'D'.repeat(1508) };                       // the longest line, in the sample: linear to 300 chars, then cubic in what follows
+    let whole = 0;
+    const c = fakeClock(s => {
+      if (s[0] !== 'D') return 1e-6 * s.length;
+      if (s.length === 1508) whole++;
+      return 1e-6 * s.length + 1e-7 * Math.max(0, s.length - 300) ** 3;   // the worst-line probe accepts it early at 128 chars; 1 ms at 512, 170 ms whole
+    }, 'f+', { step });
+    const err = Q.slowRegex(qOf(c.re), lines, c.now);
+    assert.match(err && err.cause || '', /ms on one of these lines/, `step ${step}: ${JSON.stringify(err)}`);
+    assert.equal(whole, 0, `step ${step}: the whole line never ran`);
+  }
+});
+
+test('slowRegex: every distinct sample line is checked, not only the longest few: a cliff line that is the 5th longest is refused (any clock step)', () => {
+  for (const step of STEPS) {
+    const lines = msgs(100, 100);
+    lines[0] = { msg: 'L'.repeat(3000) };                       // the longest (worst-line probe): linear
+    for (let i = 1; i <= 20; i++) lines[i * 4] = { msg: String.fromCharCode(64 + i) + 'x'.repeat(1999 - i * 10) };   // 20 long distinct lines, 1 989 down to 1 799 chars
+    lines[88] = { msg: 'S' + 'x'.repeat(1199) };                // the 21st: shorter than all of them, cheap to 300 chars then cubic: 73 ms whole
+    let whole = 0;
+    const c = fakeClock(s => {
+      if (s[0] === 'S') { if (s.length === 1200) whole++; return 1e-6 * s.length + 1e-7 * Math.max(0, s.length - 300) ** 3; }
+      return 1e-6 * s.length;
+    }, 'f+', { step });
+    const err = Q.slowRegex(qOf(c.re), lines, c.now);
+    assert.match(err && err.cause || '', /ms on one of these lines/, `step ${step}: ${JSON.stringify(err)}`);
+    assert.equal(whole, 0, `step ${step}: the whole line never ran`);
+  }
+});
+
+test('slowRegex: a session of many fine long distinct lines is accepted on every clock step, inside the APPLY_MS probe budget', () => {
+  for (const step of STEPS) {
+    const lines = msgs(300, 100);
+    lines[0] = { msg: 'L'.repeat(3000) };
+    for (let i = 1; i <= 60; i++) lines[i * 4] = { msg: String.fromCharCode(64 + (i % 26)) + i + 'x'.repeat(299 + i * 20) };   // 60 long distinct lines, 320 to 1 500 chars
+    const c = fakeClock(s => 1e-6 * s.length, 'f+', { step });
+    assert.equal(Q.slowRegex(qOf(c.re), lines, c.now), null, `step ${step}`);
+    assert.ok(c.t < Q.GUARD.APPLY_MS, `step ${step}: the probe read the clock for ${c.t.toFixed(1)} ms`);
+  }
+});
+
+test('slowRegex: a prefix that is cheap does not let the next step run into a cliff: the projection doubles, so the one step it cannot predict stays small', () => {
+  for (const step of STEPS) {
+    const lines = msgs(100, 100);
+    lines[0] = { msg: 'L'.repeat(2400) };
+    lines[50] = { msg: 'S' + 'x'.repeat(1999) };               // 2 000 chars; cheap to 500, then cubic in what follows
+    let worst = 0;
+    const lens = new Set();
+    const c = fakeClock(s => {
+      if (s[0] !== 'S') return 1e-6 * s.length;
+      lens.add(s.length);
+      const ms = 1e-6 * s.length + 1e-7 * Math.max(0, s.length - 500) ** 3;    // 0.0003 ms at 512 chars, 14 ms at 1 024, 340 ms at 2 000
+      worst = Math.max(worst, ms);
+      return ms;
+    }, 'f+', { step });
+    const err = Q.slowRegex(qOf(c.re), lines, c.now);
+    assert.match(err && err.cause || '', /ms on one of these lines/, `step ${step}: ${JSON.stringify(err)}`);
+    assert.ok(worst < 25, `step ${step}: the costliest call on that line was ${worst.toFixed(1)} ms (a x4 step from 512 would run 2 000 chars: 340 ms)`);
+    assert.ok(lens.has(16) && lens.has(64) && lens.has(256), `step ${step}: it grew x2 from ${Math.min(...lens)} chars (${[...lens].sort((a, b) => a - b).join(' ')})`);
+  }
 });
 
 test('slowRegex: the 4 x APPLY_MS wall stop fires inside one term: the first timing that reads past it ends the probe', () => {
@@ -1054,4 +1108,40 @@ test('slowRegex on a real clock rounded to the webviews\' steps (5 µs, 100 µs,
       assert.ok(ms < 600, `${name}, step ${step}: the guard took ${ms.toFixed(0)} ms`);
     }
   }
+});
+
+// R1 rework 2: the same guard, a real regex, a real clock rounded to the webviews' steps. Each case is refused with the whole guard
+// under 600 ms; a loaded machine may inflate a timing, so up to 3 attempts, each retry logged (the refusal itself is the outcome).
+const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+const blobOf = (n, seed = 0) => Array.from({ length: n }, (_, i) => B64[(i * 7 + (i >> 3) + seed) % 64]).join('');
+const normalLines = n => Array.from({ length: n }, (_, i) => ({ msg: `D/BluetoothGatt( ${1000 + i}): onClientConnectionState() status=${i % 3} took ${i % 97} ms` }));
+function refusedUnder600(label, src, lines) {
+  const clockOf = step => (step ? () => Math.floor(performance.now() / step) * step : () => performance.now());
+  for (const step of [0, 0.005, 0.1, 1]) {
+    let err = null, ms = Infinity;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const now = clockOf(step), t0 = performance.now();
+      err = Q.slowRegex(Q.build(`/${src}/`, {}, {}).q, lines, now);
+      ms = performance.now() - t0;
+      console.log(`# real clock, step ${step} ms: ${src} on ${label} ${err ? 'refused' : 'accepted'} in ${ms.toFixed(0)} ms (attempt ${attempt})`);
+      if (err && ms < 600) break;
+    }
+    assert.ok(err, `${label}, step ${step}: refused`);
+    assert.ok(ms < 600, `${label}, step ${step}: the guard took ${ms.toFixed(0)} ms`);
+  }
+}
+
+test('slowRegex on a real clock: the LONGEST line holds the slow part (\\s.*.*z on "dump:" + 300 base64 chars + 1 200 spaces): refused, the guard under 600 ms on every clock step', () => {
+  refusedUnder600('the longest line', '\\s.*.*z', [{ msg: 'dump:' + blobOf(300) + ' '.repeat(1200) + 'end' }, ...normalLines(100)]);
+});
+
+test('slowRegex on a real clock: a cliff line behind more than 3 longer distinct blobs (1 005 lines, all in the sample) is refused, the guard under 600 ms on every clock step', () => {
+  const n = 1005, lines = normalLines(n), at = i => Math.floor(i * n / Q.GUARD.SAMPLE);
+  for (let j = 0; j < 4; j++) lines[at(10 + 10 * j)] = { msg: `blob${j}: ` + blobOf(2300 + 50 * j, j) };   // 4 longer distinct lines, no whitespace
+  lines[at(100)] = { msg: 'dump:' + blobOf(300) + ' '.repeat(1200) + 'end' };                              // the 5th longest
+  refusedUnder600('a cliff line past 4 longer blobs', '\\s{2}.*.*z', lines);
+});
+
+test('slowRegex on a real clock: a cliff just past a power-of-two prefix (500 chars, then 1 500 spaces) does not run into a step 64 times larger: refused, the guard under 600 ms', () => {
+  refusedUnder600('a cliff past a 512-char prefix', '\\s{2}.*.*z', [{ msg: blobOf(3000) }, { msg: 'dump:' + blobOf(495) + ' '.repeat(1500) + 'end' }, ...normalLines(100)]);
 });
