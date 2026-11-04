@@ -233,9 +233,11 @@ test('each session renders into its own tbody: the legacy script looks #tbody up
   assert.equal(legacy().split("getElementById('tbody')").length - 1, 1);
 });
 
-test('dev-bench.js offers the behind scenario and reports its checks', () => {
+test('dev-bench.js offers the behind, switch and refilter scenarios and reports their checks', () => {
   const src = read(path.join(ASSETS, 'js', 'dev-bench.js'));
-  assert.match(src, /\['follow', 'read', 'paused', 'behind'\]/);
+  assert.match(src, /\['follow', 'read', 'paused', 'behind', 'switch', 'refilter'\]/);
+  for (const key of ['liveRefilters', 'liveQueryKept', 'fileQueryKept', 'liveKeptFiltering', 'liveCountsOk', 'guardMs',
+    'liveKeyKeptAfterRefusals', 'barText']) assert.ok(src.includes(key), `P7a result key ${key}`);
   for (const key of ['maxLiveRows', 'fileRowsMutated', 'fileHasLiveLines', 'switchLiveMsMax', 'switchFileMsMax',
     'liveRowsAfterReturn', 'liveTailOk', 'restoreOk']) assert.ok(src.includes(key), `result key ${key}`);
 });

@@ -14,7 +14,7 @@ const BENCH_BINDINGS = [
   'fileSession', 'selectSession', 'discardBacklog', 'resetLines', 'setQuery',
 ];
 // dev-bench.js assigns these top-level bindings, so none of them may be `const`.
-const BENCH_REASSIGNED = ['flushBatch', 'iosLive', 'MAX_RETAINED'];
+const BENCH_REASSIGNED = ['flushBatch', 'refilterSession', 'iosLive', 'MAX_RETAINED'];
 
 const { api, run } = loadLegacy([
   'setLogZoom',

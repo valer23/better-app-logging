@@ -227,6 +227,55 @@ test('dev-bench read scenario: readPhaseP50Ms and readPhaseP95Ms count only the 
   assert.deepEqual([r.query, r.queryError, r.cap], [null, null, 500000], 'the result reports the query and the cap');
 });
 
+// Loads dev-bench.js with `search`, a scripted clock that also advances with real time (the guard measures real costs),
+// and the bench's tick captured; ticks every 10 ms of scripted time until the result is set.
+function runBench(search, before = null) {
+  const v = boot();
+  const g = v.run('globalThis');
+  g.URLSearchParams = URLSearchParams;
+  const real = () => performance.now(), base = real(), clock = { t: 0 };
+  let tick = null;
+  g.performance = { now: () => clock.t + (real() - base) };
+  g.setInterval = fn => { tick = fn; return 1; };
+  v.run(`location.search = ${JSON.stringify(search)}`);
+  v.run(read(path.join(ASSETS, 'js', 'dev-bench.js')));
+  if (before) before(v);
+  for (clock.t = 10; clock.t <= 30000 && !v.run('window.__benchResult'); clock.t += 10) tick();
+  return v.run('window.__benchResult');
+}
+
+test('dev-bench scenario=switch: Live keeps its query while File\'s filter changes five times; no Live refilter; the documented fields', () => {
+  const r = runBench('?bench=2000&scenario=switch&secs=14&cap=3000&q=tag%3Ao');
+  assert.equal(r.scenario, 'switch');
+  assert.deepEqual([r.cycles, r.liveRefilters, r.liveQueryKept, r.fileQueryKept, r.liveKeptFiltering, r.liveCountsOk], [5, 0, true, true, true, true]);
+  for (const f of ['switchLiveMsMax', 'switchLiveMsMed', 'switchFileMsMax', 'fileSetQueryMsMax', 'maxLiveRows', 'liveTailOk']) assert.ok(f in r, f);
+});
+
+test('dev-bench scenario=refilter: one entry per query with ms, guardMs, error and kept; &slow=1 adds the refused ones', () => {
+  // The guard runs on a real clock: up to 3 runs, so a refusal of an accepted query that does not repeat (the machine,
+  // not the regex) cannot fail the test.
+  let r = null;
+  for (let i = 0; i < 3 && !(r && r.refilter.slice(0, 7).every(x => x.error === null)); i++) {
+    r = runBench('?bench=2000&scenario=refilter&secs=17&cap=3000&slow=1');
+    for (const x of r.refilter.slice(0, 7)) if (x.error !== null) console.log(`refilter smoke: run ${i + 1} refused an accepted query (the machine, not the regex): ${x.q} -> ${x.error}`);
+  }
+  // Array.from: a test-realm array (r.refilter.map would build one in the sandbox realm, which a strict deepEqual rejects).
+  assert.deepEqual(Array.from(r.refilter, x => [x.q, x.re]), [['level:I+ tag:o "bench"', false], ['level:I+ tag:o -zzzz', false],
+    ['/bench line \\d+ x+$/', false], ['/time ?out/', false], ['', false], ['error timeout disconnect', true], ['/bench\\w*/ /line\\s+\\d+/ /x+$/', false],
+    ['/\\s.*.*.*z/', false], ['/(.*){2}z/', false], ['/\\w+\\w+z/', false]]);
+  for (const x of r.refilter.slice(0, 7)) assert.deepEqual([x.error, typeof x.ms, typeof x.guardMs, typeof x.nsPerLine], [null, 'number', 'number', 'number'], x.q);
+  assert.equal(r.refilter[5].guardMs, 0, 'plain words under .* have no quantifier: not timed');
+  for (const x of r.refilter.slice(7)) assert.match(x.error, /^Invalid regex: It /, x.q);
+  assert.equal(r.liveKeyKeptAfterRefusals, true);
+});
+
+test('dev-bench: readPhase* are null when the read switch never happens, and &q lands in the query bar', () => {
+  const rd = runBench('?bench=2000&scenario=read&secs=5', v => v.run('liveSession.follow = false'));   // already reading: no switch
+  assert.deepEqual([rd.readPhaseP50Ms, rd.readPhaseP95Ms, rd.readPhaseFlushes], [null, null, null]);
+  const r = runBench('?bench=2000&scenario=follow&secs=5&q=tag%3Ao');
+  assert.equal(r.barText, 'tag:o');
+});
+
 test('a {type:"dropped"} frame runs shellSync but writes no visible number: the 250 ms interval owns them (F11)', () => {
   const v = boot();
   v.send(10); v.api.flushBatch();
