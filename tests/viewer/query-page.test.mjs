@@ -24,10 +24,10 @@ function boot() {
     // The session's counts, and a full recount of its lines under the active query (null levels while it is stale).
     counts(s = 'liveSession') {
       const plain = c => ({ lvl: [...c.lvl], tags: Array.from(c.tags).map(([k, v]) => `${k}=${v}`).sort(), apps: Array.from(c.apps).map(([k, v]) => `${k}=${v}`).sort() });
-      const stale = run(`${s}.query !== filterGen`);
+      // The counts follow the query `filtered` was built with (P7a): s.query, shown or not; null (a file before its first
+      // refilter) counts no level. No stale exemption: a session's counts are always exact for its own query.
       const got = plain(run(`${s}.counts`));
-      const want = plain(run(`ALV.counts.recount(ALV.counts.create(), ${s}.all, ${stale} ? null : activeQuery.gate)`));
-      if (stale) got.lvl = want.lvl;
+      const want = plain(run(`ALV.counts.recount(ALV.counts.create(), ${s}.all, ${s}.query === null ? null : ${s}.query.gate)`));
       return [got, want];
     },
   };
@@ -36,13 +36,21 @@ function boot() {
 test('setQuery refilters only when the compiled filter changed, and an invalid query changes nothing', () => {
   const v = boot();
   v.send(30); v.api.flushBatch();
+  // P7a: no filterGen; the shown session's filter key says whether a call applied a new filter, and it is never stale after one.
+  const key = () => v.run('cur.filter.key'), fresh = () => v.run('cur.query === cur.filter');
+  const key0 = key();
   assert.equal(v.run('setQuery(\'"line 1"\')'), null);
-  assert.equal(v.run('filterGen'), 1);
+  const key1 = key();
+  assert.notEqual(key1, key0);
+  assert.equal(fresh(), true);
   assert.deepEqual(v.run('liveSession.filtered.map(m => m.msg)').join(','), 'line 1,line 10,line 11,line 12,line 13,line 14,line 15,line 16,line 17,line 18,line 19');
   v.run('setQuery(\'"line 1"  \')');
-  assert.equal(v.run('filterGen'), 1, 'the same filter compiles to the same key: no refilter');
+  assert.equal(key(), key1, 'the same filter compiles to the same key: no refilter');
+  assert.equal(fresh(), true);
   v.run('setQuery(\'/line 1/\', { regex: true })');
-  assert.equal(v.run('filterGen'), 2);
+  const key2 = key();
+  assert.notEqual(key2, key1);
+  assert.equal(fresh(), true);
   v.run('setQuery(\'/line 1/ -level:V\')');
   assert.equal(v.run('liveSession.filtered.length'), 9, 'line 1 and 10-19 without the VERBOSE ones (12, 18)');
   assert.equal(v.run('setQuery("tag:bt")'), null);
@@ -50,7 +58,7 @@ test('setQuery refilters only when the compiled filter changed, and an invalid q
   assert.equal(v.run("liveSession.filtered.filter(m => m.lvl === 'VERBOSE').length"), 3);
   assert.match(v.run('setQuery("tg:bt").msg'), /^Unknown field 'tg'/);
   assert.match(v.run('setQuery("line (2", { regex: true }).msg'), /^Invalid regex: /);
-  assert.deepEqual([v.run('filterGen'), v.run('liveSession.filtered.length')], [4, 8], 'an invalid query changes nothing');
+  assert.deepEqual([key() === v.run("ALV.query.build('tag:bt', {}, deviceInfo).q.key"), v.run('liveSession.filtered.length'), fresh()], [true, 8, true], 'an invalid query changes nothing');
 });
 
 test('an invalid edit in the bar never blocks a level chip, a sidebar row or a tile fix: each rewrites the last valid text and applies', () => {
@@ -77,27 +85,29 @@ test('a dev:<name> query follows deviceInfo (q.usesDevNames): a device picked or
   v.send(4, 'android'); v.send(4, 'ios'); v.api.flushBatch();
   v.run("deviceInfo.android = { id: 'R5CT', name: 'Pixel 8 Pro' }");
   v.bar('dev:pixel');
-  assert.deepEqual([v.run('activeQuery.usesDevNames'), v.run('activeQuery.plats'), v.run('liveSession.filtered.length')], [true, 1, 4]);
+  assert.deepEqual([v.run('liveSession.filter.usesDevNames'), v.run('liveSession.filter.plats'), v.run('liveSession.filtered.length')], [true, 1, 4]);
   v.run("deviceInfo.android = { id: 'R9XY', name: 'Galaxy S24' }; shellSync()");   // the device picker (the shell tick does the same)
-  assert.deepEqual([v.run('activeQuery.plats'), v.run('liveSession.filtered.length')], [0, 0], 'dev:pixel names no device now');
+  assert.deepEqual([v.run('liveSession.filter.plats'), v.run('liveSession.filtered.length')], [0, 0], 'dev:pixel names no device now');
   v.run("deviceInfo.ios = { id: '0000', name: 'Pixel phone' }; shellSync()");
-  assert.deepEqual([v.run('activeQuery.plats'), v.run('liveSession.filtered.length')], [2, 4]);
+  assert.deepEqual([v.run('liveSession.filter.plats'), v.run('liveSession.filtered.length')], [2, 4]);
   v.bar('dev:ios');
-  const gen = v.run('filterGen');
+  v.run('__f = liveSession.filter');
   v.run("deviceInfo.ios = { id: '', name: '' }; shellSync()");
-  assert.equal(v.run('filterGen'), gen, 'no device name in the query: nothing recompiles');
+  assert.equal(v.run('liveSession.filter === __f'), true, 'no device name in the query: nothing recompiles');
 });
 
 test('counts equal a full recount after a seeded sequence of frames, flushes, trims, a resume after overflow, Clear, filter and level changes and a session switch', () => {
   const v = boot();
   v.run('MAX_RETAINED = 120');
+  const fl = i => ({ ts: '', pid: 1, tid: 0, tag: TAGS[i % 4], app: i % 3 ? '' : 'com.x', lvl: LV[i % 6], msg: `line ${i}`, platform: i % 2 ? 'ios' : 'android' });
+  v.run(`resetLines(fileSession, ${JSON.stringify(Array.from({ length: 40 }, (_, i) => fl(i)))}); fileSession.query = null`);
   const r = rng(5);
   const ran = new Array(12).fill(0);   // a generator that skips ops would pass vacuously, so every op is tallied and asserted below
-  const seen = { liveLines: 0, staleTrims: 0, staleFlushes: 0, clears: 0, resumes: 0, fileSteps: 0 };
+  const seen = { liveLines: 0, awayFlushes: 0, awayTrims: 0, fileFilterChanges: 0, clears: 0, resumes: 0, fileSteps: 0 };
   for (let step = 0; step < 3000; step++) {
     const op = r(12);
     ran[op]++;
-    const staleBefore = v.run('liveSession.query !== filterGen'), discardedBefore = v.run('liveSession.discarded'), lenBefore = v.run('liveSession.all.length');
+    const awayBefore = v.run('cur !== liveSession'), fileFilterBefore = v.run('fileSession.filter'), discardedBefore = v.run('liveSession.discarded'), lenBefore = v.run('liveSession.all.length');
     if (op < 5) v.send(1 + r(60), r(2) ? 'ios' : 'android');
     else if (op === 5) v.api.flushBatch();
     else if (op === 6) v.bar([['', 'tag:bt', 'tag:kernel', 'tag:x'][r(4)], ['', '"line 1"', '2'][r(3)]].join(' '));   // typed text, applied (the level and dev: tokens go with it)
@@ -112,20 +122,34 @@ test('counts equal a full recount after a seeded sequence of frames, flushes, tr
     }
     if (v.run('liveSession.all.length') > 0) seen.liveLines++;
     if (v.run('cur') !== v.run('liveSession')) seen.fileSteps++;
-    if (staleBefore && v.run('liveSession.all.length') > lenBefore) seen.staleFlushes++;
-    if (staleBefore && v.run('liveSession.discarded') > discardedBefore) seen.staleTrims++;
-    const [got, want] = v.counts();
-    assert.deepEqual(got, want, `step ${step}, op ${op}`);
+    if (awayBefore && v.run('liveSession.all.length') > lenBefore) seen.awayFlushes++;
+    if (awayBefore && v.run('liveSession.discarded') > discardedBefore) seen.awayTrims++;
+    assert.equal(v.run('liveSession.query === liveSession.filter'), true, `step ${step}: Live is never stale`);
+    if (v.run('fileSession.filter') !== fileFilterBefore && v.run('liveSession.all.length') > 0) seen.fileFilterChanges++;
+    for (const s of ['liveSession', 'fileSession']) {
+      const [got, want] = v.counts(s);
+      assert.deepEqual(got, want, `step ${step}, op ${op}: ${s} counts`);
+      // filtered equals a full refilter of all under the query it follows (in order, same objects); null: not filtered yet
+      assert.equal(v.run(`(() => { const s = ${s}; if (s.query === null) return true;
+        const w = s.all.filter(m => { const k = s.query.gate(m); return k >= 0 && s.query.lvOk[k]; });
+        return w.length === s.filtered.length && w.every((m, i) => m === s.filtered[i]); })()`), true, `step ${step}, op ${op}: ${s} filtered`);
+    }
   }
   v.api.selectSession(v.run('liveSession'));
   v.api.flushBatch();
-  const [got, want] = v.counts();
-  assert.deepEqual(got, want, 'back on Live, refiltered');
+  for (const s of ['liveSession', 'fileSession']) {
+    const [got, want] = v.counts(s);
+    assert.deepEqual(got, want, `back on Live, refiltered: ${s} counts`);
+    assert.equal(v.run(`(() => { const s = ${s}; if (s.query === null) return true;
+      const w = s.all.filter(m => { const k = s.query.gate(m); return k >= 0 && s.query.lvOk[k]; });
+      return w.length === s.filtered.length && w.every((m, i) => m === s.filtered[i]); })()`), true, `back on Live: ${s} filtered`);
+  }
   assert.ok(v.run('liveSession.discarded') > 0, 'the sequence trimmed');
   for (let op = 0; op < 12; op++) assert.ok(ran[op] >= 150, `op ${op} ran ${ran[op]} times`);
   assert.ok(seen.liveLines >= 1000, `the live session held lines at ${seen.liveLines} steps`);
-  assert.ok(seen.staleFlushes >= 5, `lines ingested while the live session was stale: ${seen.staleFlushes}`);
-  assert.ok(seen.staleTrims >= 20, `a trim dropped lines while the live session was stale: ${seen.staleTrims}`);
+  assert.ok(seen.awayFlushes >= 5, `lines ingested while the live session was away: ${seen.awayFlushes}`);
+  assert.ok(seen.awayTrims >= 20, `a trim dropped lines while the live session was away: ${seen.awayTrims}`);
+  assert.ok(seen.fileFilterChanges >= 50, `File's filter changed while Live held lines at ${seen.fileFilterChanges} steps`);
   assert.ok(seen.clears >= 20, `Clear ran ${seen.clears} times`);
   assert.ok(seen.resumes >= 100, `Resume after a backlog overflow ran ${seen.resumes} times`);
   assert.ok(seen.fileSteps >= 500, `a file session was on screen at ${seen.fileSteps} steps`);
@@ -152,10 +176,10 @@ test('dev-bench applies &q (with &case and &re) and &cap before the run and repo
     return v;
   };
   const v = bench('?bench=2000&q=level%3AI%2B%20tag%3Ao%20%22bench%22&case=1&cap=100000');
-  assert.equal(v.run('activeQuery.key'), v.run(`ALV.query.build('level:I+ tag:o "bench"', { case: true }, deviceInfo).q.key`));
+  assert.equal(v.run('liveSession.filter.key'), v.run(`ALV.query.build('level:I+ tag:o "bench"', { case: true }, deviceInfo).q.key`));
   assert.equal(v.run('MAX_RETAINED'), 100000);
   const bad = bench('?bench=2000&q=%2Ftime(%2F&scenario=paused&cap=7');
-  assert.equal(bad.run('filterGen'), 0, 'the invalid query left the filter alone');
+  assert.equal(bad.run('liveSession.filter.key'), bad.run("ALV.query.build('', {}, deviceInfo).q.key"), 'the invalid query left the filter alone');
   assert.equal(bad.run('MAX_RETAINED'), 50000, 'the paused scenario sets its own cap after &cap');
   assert.match(read(path.join(ASSETS, 'js', 'dev-bench.js')), /\bquery, queryError, cap: MAX_RETAINED,/, 'the result reports them');
 });
@@ -167,7 +191,7 @@ test('the no-match tile\'s tag causes come from the tag counts: NOT tag:x on eve
   assert.deepEqual(causes('tag:zzz'), ['', 'zzz'], 'no retained line matches tag:zzz');
   assert.deepEqual(causes('tag:zzz tag:kernel'), ['', ''], 'kernel lines exist: the tag is not why nothing shows');
   assert.deepEqual(causes('tag:kernel level:none'), ['', ''], 'the levels are the cause');
-  v.run("liveSession.all.forEach(m => { m.tag = 'chatty'; }); ALV.counts.recount(liveSession.counts, liveSession.all, activeQuery.gate)");
+  v.run("liveSession.all.forEach(m => { m.tag = 'chatty'; }); ALV.counts.recount(liveSession.counts, liveSession.all, liveSession.query.gate)");
   assert.deepEqual(causes('-tag:chatty'), ['chatty', ''], 'every retained line carries it');
   assert.deepEqual(causes('-tag:kernel x'), ['', ''], 'lines without kernel exist');
   assert.deepEqual(causes('-tag:chat'), ['chat', '']);
@@ -221,4 +245,50 @@ test('a session switch shows the shown session\'s numbers at once (selectSession
   assert.equal(count.textContent, '0 of 0 lines');
   v.api.selectSession(v.run('liveSession'));
   assert.equal(count.textContent, '10 of 10 lines');
+});
+
+const fileLine = o => ({ ts: '', pid: 1, tid: 0, tag: 'x', app: '', lvl: 'INFO', msg: 'f', platform: 'ios', ...o });
+
+test('setQuery changes only the shown session: a filter on File leaves Live\'s query, text and filtered list alone, and switching back refilters nothing', () => {
+  const v = boot();
+  v.send(30); v.api.flushBatch();
+  v.bar('tag:bt');
+  v.run('__liveF = liveSession.filter; __liveFiltered = liveSession.filtered');
+  v.run(`resetLines(fileSession, [${JSON.stringify(fileLine({ tag: 'kernel' }))}]); fileSession.query = null`);
+  v.api.selectSession(v.run('fileSession'));
+  v.bar('level:E');
+  assert.equal(v.run('fileSession.queryText'), 'level:E');
+  assert.deepEqual([v.run('liveSession.filter === __liveF'), v.run('liveSession.queryText'), v.run('liveSession.filtered === __liveFiltered')], [true, 'tag:bt', true]);
+  v.run('__refilters = 0; __rf = refilterSession; refilterSession = s => { if (s === liveSession) __refilters++; return __rf(s); }');
+  v.api.selectSession(v.run('liveSession'));
+  assert.equal(v.run('__refilters'), 0, 'Live\'s own query did not change: no refilter on the switch');
+});
+
+test('a background live session keeps filtering and counting its new lines with its own query while File is shown', () => {
+  const v = boot();
+  v.run('MAX_RETAINED = 100');
+  v.bar('tag:bt');
+  v.run(`resetLines(fileSession, [${JSON.stringify(fileLine())}]); fileSession.query = null`);
+  v.api.selectSession(v.run('fileSession'));
+  v.bar('level:E');
+  for (let k = 0; k < 6; k++) {
+    const before = v.run('liveSession.filtered.length'), dropped = v.run('liveSession.discarded');
+    v.send(40); v.api.flushBatch();
+    assert.ok(v.run('liveSession.filtered.length') > before || v.run('liveSession.discarded') > dropped, `round ${k}: Live's filtered list grows (or a trim made room)`);
+    assert.equal(v.run("liveSession.filtered.every(m => m.tag.toLowerCase().includes('bt'))"), true, 'filtered with Live\'s own query, not File\'s');
+    const [got, want] = v.counts('liveSession');
+    assert.deepEqual(got, want, `round ${k}: counts equal a recount under liveSession.query`);
+  }
+  assert.ok(v.run('liveSession.discarded') > 0, 'the trims ran (MAX_RETAINED 100)');
+});
+
+test('a file load leaves the File session stale (query null) until it renders, and keeps the File session\'s query', () => {
+  const v = boot();
+  v.api.selectSession(v.run('fileSession'));
+  v.bar('level:W+');
+  v.run('__f = fileSession.filter');
+  v.run(`discardBacklog(fileSession); resetLines(fileSession, [${JSON.stringify(fileLine({ lvl: 'WARN' }))}, ${JSON.stringify(fileLine())}]); fileSession.query = null`);
+  assert.deepEqual([v.run('shellState().stale'), v.run('fileSession.filter === __f')], [true, true]);
+  v.run('applyFilters()');
+  assert.deepEqual([v.run('shellState().stale'), v.run('fileSession.query === __f'), v.run('fileSession.filtered.length')], [false, true, 1]);
 });

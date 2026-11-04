@@ -1039,3 +1039,11 @@ test('the "N filters" popover is bounded by the viewport and scrolls, so the las
   assert.equal(queryDecl('.token-pop', 'overflow'), 'auto');
   assert.equal(queryDecl('.token-pop', 'padding'), '8px', 'the padding holds the chips\' 2 px rings (offset 2 px) inside the scrollport');
 });
+
+test('P7a: no global query state is left; every session owns its query', () => {
+  const page = read(HTML_PATH);
+  assert.doesNotMatch(page, /\b(filterGen|activeQuery)\b/);
+  for (const f of ['session.js', 'query.js', 'querybar.js', 'grid.js', 'shell.js', 'live.js', 'counts.js'])
+    assert.doesNotMatch(read(path.join(ASSETS, 'js', f)), /\b(filterGen|activeQuery)\b/, f);
+  assert.match(read(path.join(ASSETS, 'js', 'session.js')), /query: null,[^\n]*\n\s*filter: null,[^\n]*\n\s*queryText: '',[^\n]*\n\s*queryOpts: null,/);
+});

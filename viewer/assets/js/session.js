@@ -21,13 +21,16 @@
       kind,
       name: String(name),
       all: [],                    // retained lines, in arrival order
-      filtered: [],               // the lines of `all` that pass the query generation `query`
+      filtered: [],               // the lines of `all` that pass `query`
       renderedEnd: 0,             // the tbody holds filtered[renderedEnd - rows, renderedEnd)
       renderFrom: -1,             // first new filtered index of an in-progress drain; -1 = none
       domStale: false,            // the tbody lags `filtered`; the next on-screen render rebuilds it
       follow: kind === 'live',    // auto-scroll; a file session never follows
       sel: null,                  // the selected line, kept across filter changes and switches
-      query: 0,                   // filter generation `filtered` was built with
+      query: null,                // the compiled query (query.js) `filtered` and counts.lvl were built with; null until the first refilter
+      filter: null,               // the session's own applied compiled query (P7a: one per session); stale while query !== filter
+      queryText: '',              // the applied query text, and the Aa / .* modes it compiled under ({ case, regex }, frozen):
+      queryOpts: null,            // the query bar shows them when the session is shown; the page sets both at boot
       counts: null,               // incremental level, tag and app counts (counts.js); the page creates them
       scroll: { top: 0, left: 0, anchor: null, anchorTop: 0 },   // saved while another session is shown
       discarded: 0,               // lines dropped by the retention cap or the paused-backlog cap (#45)
@@ -107,7 +110,7 @@
   }
 
   // Replaces the lines of `s` and empties its view: no filtered lines, no window, no selection, no
-  // saved scroll. Follow, the query generation and the counters are the caller's business.
+  // saved scroll. Follow, the query and filter, and the counters are the caller's business.
   function reset(s, lines) {
     s.all = lines;
     s.filtered = [];
