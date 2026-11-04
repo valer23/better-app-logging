@@ -327,7 +327,11 @@ test('a file whose lines make the File session\'s regex too slow opens unfiltere
   v.run(`resetLines(fileSession, Array.from({ length: 10 }, (_, i) => (${JSON.stringify(fileLine())}))); applyFilters()`);
   // Quadratic in a word run: fine on short words, too slow on 8 000-character ones. A real clock on a shared machine: up
   // to 3 applies, so a refusal that does not repeat (the machine, not the regex) cannot fail the test.
-  for (let i = 0; i < 3 && v.run('fileSession.queryText') !== '/\\w+@\\w+/'; i++) v.bar('/\\w+@\\w+/');
+  for (let i = 0; i < 3 && v.run('fileSession.queryText') !== '/\\w+@\\w+/'; i++) {
+    // A retry here is logged, never hidden: a refusal that only passes on attempt 2 or 3 is the machine or a regression, and the log says which.
+    if (i > 0) console.log(`# real clock: /\\w+@\\w+/ refused on short lines (${v.doc.getElementById('queryErrorText').textContent}); retry ${i}`);
+    v.bar('/\\w+@\\w+/');
+  }
   assert.equal(v.run('fileSession.queryText'), '/\\w+@\\w+/', 'accepted on short lines');
   const big = JSON.stringify(Array.from({ length: 50 }, () => fileLine({ msg: 'a'.repeat(8000) })));
   v.run(`__toasts = []; ALV.ui.toast = s => { __toasts.push(s); return { id: 0, dismiss() {} }; }; loadParsedFile('big.txt', ${big})`);
@@ -343,7 +347,11 @@ test('the bar shows the cleared query after a file load drops the File session\'
   v.run(`resetLines(fileSession, Array.from({ length: 10 }, (_, i) => (${JSON.stringify(fileLine())}))); applyFilters()`);
   // Quadratic in a word run: fine on short words, too slow on 8 000-character ones. A real clock on a shared machine: up
   // to 3 applies, so a refusal that does not repeat (the machine, not the regex) cannot fail the test.
-  for (let i = 0; i < 3 && v.run('fileSession.queryText') !== '/\\w+@\\w+/'; i++) v.bar('/\\w+@\\w+/');
+  for (let i = 0; i < 3 && v.run('fileSession.queryText') !== '/\\w+@\\w+/'; i++) {
+    // A retry here is logged, never hidden: a refusal that only passes on attempt 2 or 3 is the machine or a regression, and the log says which.
+    if (i > 0) console.log(`# real clock: /\\w+@\\w+/ refused on short lines (${v.doc.getElementById('queryErrorText').textContent}); retry ${i}`);
+    v.bar('/\\w+@\\w+/');
+  }
   assert.equal(v.run('fileSession.queryText'), '/\\w+@\\w+/', 'accepted on short lines');
   const big = JSON.stringify(Array.from({ length: 50 }, () => fileLine({ msg: 'a'.repeat(8000) })));
   v.run(`__toasts = []; ALV.ui.toast = s => { __toasts.push(s); return { id: 0, dismiss() {} }; }; loadParsedFile('big.txt', ${big})`);
