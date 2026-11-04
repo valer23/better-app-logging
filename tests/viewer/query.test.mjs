@@ -784,22 +784,77 @@ test('slowRegex on a coarse clock (WebKit may step 1 ms): fine regexes are accep
 
 test('slowRegex: the probe stops at APPLY_MS per apply: the term it reaches past the cap is refused', () => {
   let t = 0;
-  const lin = { source: 'x+', test(s) { t += 1e-6 * s.length; return false; } };   // about 6 ms of probing per term
-  const q = { regexes: Array.from({ length: 30 }, (_, i) => ({ re: lin, start: i * 4, end: i * 4 + 3 })) };
+  // 10 ns a char (2 µs a 200-char line): about 1.7 ms of probing per term, so 100 terms reach the cap. Since round 3 a timing that is
+  // cheap by its bound stops at once, so a term costs far less than the 6 ms it did (1 ns a char: about 0.2 ms a term).
+  const lin = { source: 'x+', test(s) { t += 1e-5 * s.length; return false; } };
+  const q = { regexes: Array.from({ length: 100 }, (_, i) => ({ re: lin, start: i * 4, end: i * 4 + 3 })) };
   const err = Q.slowRegex(q, msgs(1000, 200), () => (t += 1e-6));
   assert.equal(err.cause, `Its regex terms take over ${Q.GUARD.APPLY_MS} ms to check on these lines`);
   assert.equal(err.reason, `${err.cause}. Use fewer regex terms`);
   assert.ok(err.start > 0 && t <= Q.GUARD.APPLY_MS + 10, `refused at the term at ${err.start}, after ${t.toFixed(0)} ms`);
 });
 
-test('slowRegex: the APPLY_MS cap counts the timings it keeps, not the wall clock: three 9 ms pauses in each of five terms refuse nothing', () => {
+test('slowRegex: the APPLY_MS cap counts the timings it keeps, not the wall clock: a 30 ms pause before each of five terms refuses nothing', () => {
   let t = 0;
-  // A pause over 10 ms reads as a slow call, conclusive and counted once (a 500 ms call must not run three times); a pause
-  // within it (9 ms here, on the 1st, 2 001st and 4 001st call of a term) is run again and the load drops out.
-  const mk = () => { let n = 0; return { source: 'x+', test(s) { t += 1e-6 * s.length; if (++n === 1 || n === 2001 || n === 4001) t += 9; return false; } }; };
+  const mk = () => { let first = true; return { source: 'x+', test(s) { t += 1e-6 * s.length; if (first) { first = false; t += 30; } return false; } }; };   // the first call of a term is preempted for 30 ms
   const q = { regexes: [0, 1, 2, 3, 4].map(i => ({ re: mk(), start: i * 4, end: i * 4 + 3 })) };
   assert.equal(Q.slowRegex(q, msgs(1000, 200), () => (t += 1e-6)), null);
   assert.ok(t > Q.GUARD.APPLY_MS, `the wall clock read ${t.toFixed(0)} ms, over the ${Q.GUARD.APPLY_MS} ms cap, and the query was still accepted`);
+});
+
+test('slowRegex: the APPLY_MS cap counts the timings it keeps, not the wall clock: three 9 ms pauses in each of five terms refuse nothing', () => {
+  let t = 0;
+  // A pause over 10 ms reads as a slow call, conclusive and counted once (a 500 ms call must not run three times); a pause
+  // within it (9 ms here, on the 1st, 501st and 1 001st call of a term, which runs about 1 800) is run again and the load drops out.
+  const mk = () => { let n = 0; return { source: 'x+', test(s) { t += 1e-6 * s.length; if (++n === 1 || n === 501 || n === 1001) t += 9; return false; } }; };
+  const q = { regexes: [0, 1, 2, 3, 4].map(i => ({ re: mk(), start: i * 4, end: i * 4 + 3 })) };
+  assert.equal(Q.slowRegex(q, msgs(1000, 200), () => (t += 1e-6)), null);
+  assert.ok(t > Q.GUARD.APPLY_MS, `the wall clock read ${t.toFixed(0)} ms, over the ${Q.GUARD.APPLY_MS} ms cap, and the query was still accepted`);
+});
+
+// R1 round 3: several linear terms on one clock (a fake one: each term's test() advances it by cost(s) ms; `step` rounds its reads
+// down, as WebKit's 1 ms clock does). `t` is the clock time the whole probe read, so the APPLY_MS budget it charged is at most `t`.
+function termClock(step, cost = s => 1e-6 * s.length) {
+  const c = { t: 0 };
+  c.now = step ? () => Math.floor((c.t += 2e-5) / step) * step : () => (c.t += 1e-6);
+  c.query = k => ({ regexes: Array.from({ length: k }, (_, i) => ({ re: { source: 'x+', test(s) { c.t += cost(s); return false; } }, start: i * 4, end: i * 4 + 3 })) });
+  return c;
+}
+
+test('slowRegex on a 1 ms clock: four and five linear terms on 1 000 x 200-char lines are accepted, the budget charged under APPLY_MS', () => {
+  // HEAD before round 3 refused both: each timing waited whole clock steps and charged them (four steps a worst-line timing,
+  // two a projection level), about 35 ms a term on WebKit's clock.
+  for (const k of [4, 5]) {
+    const c = termClock(1);
+    assert.equal(Q.slowRegex(c.query(k), msgs(1000, 200), c.now), null, `${k} terms`);
+    assert.ok(c.t < Q.GUARD.APPLY_MS, `${k} terms: the probe read the clock for ${c.t.toFixed(1)} ms, so it charged under the ${Q.GUARD.APPLY_MS} ms budget`);
+  }
+});
+
+test('slowRegex: three linear terms on a session where 100 of the 256 sampled lines are 2 000 to 4 000-char blobs are accepted on every clock step', () => {
+  for (const step of STEPS) {
+    const n = 1000, lines = msgs(n, 120);
+    for (let i = 0; i < 100; i++) lines[Math.floor(Math.floor(i * 2.56) * n / Q.GUARD.SAMPLE)] = { msg: `blob${i}: ` + 'Q'.repeat(2000 + i * 20) };   // 100 sampled lines
+    const c = termClock(step, s => 3e-5 + 3e-6 * s.length);   // 30 ns a call and 3 ns a char: what V8 takes on /time ?out/i on a blob (9.6 µs on 3 000 chars)
+    assert.equal(Q.slowRegex(c.query(3), lines, c.now), null, `step ${step}`);
+    assert.ok(c.t < 4 * Q.GUARD.APPLY_MS, `step ${step}: the probe read the clock for ${c.t.toFixed(1)} ms`);
+  }
+});
+
+test('slowRegex on a real clock rounded to 1 ms (WebKit): the dev-bench three-term query on 2 000 bench lines is accepted, the guard within 60 ms', () => {
+  const lines = Array.from({ length: 2000 }, (_, i) => ({ msg: `bench line ${i} `.padEnd(40 + ((i * 37) % 160), 'x') }));   // dev-bench.js's lines
+  const now = () => Math.floor(performance.now());
+  // A wall clock on a shared machine: up to 3 attempts, each retry logged (the guard's own cost is the outcome, so it is asserted).
+  let err = null, ms = Infinity;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const t0 = performance.now();
+    err = Q.slowRegex(Q.build('/bench\\w*/ /line\\s+\\d+/ /x+$/', {}, {}).q, lines, now);
+    ms = performance.now() - t0;
+    console.log(`# real clock, step 1 ms: the dev-bench three-term query ${err ? 'refused' : 'accepted'} in ${ms.toFixed(0)} ms (attempt ${attempt})`);
+    if (!err && ms <= 60) break;
+  }
+  assert.equal(err, null);
+  assert.ok(ms <= 60, `guardMs ${ms.toFixed(0)}`);
 });
 
 test('slowRegex: a wall-clock stop at 4 x APPLY_MS refuses the remaining terms with the same copy', () => {
@@ -989,7 +1044,8 @@ test('slowRegex: the 4 x APPLY_MS wall stop fires inside one term: the first tim
   let t = 0, calls = 0, afterJump = 0, jumped = false;
   const lin = { source: 'x+', test(s) { t += 1e-6 * s.length; calls++; if (jumped) afterJump++; return false; } };
   const q = { regexes: [{ re: lin, start: 0, end: 3 }] };
-  const err = Q.slowRegex(q, msgs(1000, 200), () => { if (!jumped && calls === 3000) { jumped = true; t += 4 * Q.GUARD.APPLY_MS + 1; } return (t += 1e-6); });
+  // The jump lands on the 1 000th call, inside the term (it runs about 1 800).
+  const err = Q.slowRegex(q, msgs(1000, 200), () => { if (!jumped && calls === 1000) { jumped = true; t += 4 * Q.GUARD.APPLY_MS + 1; } return (t += 1e-6); });
   assert.ok(err && err.cause === `Its regex terms take over ${Q.GUARD.APPLY_MS} ms to check on these lines`, JSON.stringify(err));
   assert.equal(err.reason, `${err.cause}. Use fewer regex terms`);
   assert.deepEqual([err.start, err.end], [0, 3]);

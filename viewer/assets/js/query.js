@@ -410,6 +410,10 @@
   //   after a cheap reading of the same string is a pause (call()).
   // - A coarse clock (WebKit's may step 1 ms): a timing lasts TICK_MS or four steps, whichever is longer, and counts one
   //   step less than it read, so its error leans toward accepting (up to 4/3 of a threshold), not toward refusing.
+  // - A cheap timing stops early: what a run of calls can have cost is bounded from above by what it read plus one clock step
+  //   (hiOf). Once that bound is under NOISE_MS a call, the timing's answer is known (every use reads such a cost as cheap), so
+  //   it stops there and counts at the bound, a worst-line timing, a projection level and the mean alike (the mean once its
+  //   bound passes MEAN_US and TOTAL_MS, after whole passes). A slow or borderline regex is timed as long as before.
   // - Worst line: the session's longest line, repeated to at least MIN_LEN chars, timed on prefixes doubling from START (8
   //   chars; the first doubling is predicted as degree 4). It accepts early once even a degree-4 growth from there stays under
   //   LINE_MS. Otherwise it reads the degree from each doubling (1 below NOISE_MS, at most 4), never runs a step it predicts
@@ -428,7 +432,8 @@
   //   A refusal extrapolated from a prefix is confirmed by timing that prefix once more (the worst-line probe and the projection),
   //   so a call that reads up to CONCLUSIVE_MS can run up to 3 + 3 times in one term; the wall-clock stop bounds the sum.
   // - The probe stops at APPLY_MS per call, counted as the sum of the timings it keeps (the cheapest of each call's
-  //   retries), so a load pause does not spend it: the term it reaches past that is refused. A wall-clock stop at
+  //   retries), each less one clock step (the clock's padding, not regex time: whole 1 ms steps once refused five linear
+  //   terms), so neither a load pause nor a coarse clock spends it: the term it reaches past that is refused. A wall-clock stop at
   //   4 × APPLY_MS bounds the worst wait: it is checked after every call, inside each timing, the projection and the mean, and the
   //   probe is refused with the same copy as soon as it is passed.
   // Once per filter change, never per line, per flush or per row. Not a linear engine (P16).
@@ -463,10 +468,11 @@
   //   CONCLUSIVE_MS it is slow and counts once (a 500 ms call must not run three times).
   // - With a cheap reading of this very string (`prior` within PAUSE_MS), a reading over the cap is a pause whatever its size:
   //   the string costs `prior`, so it is run again.
+  // A run that is not counted (all but the cheapest of a call's runs) is added to `at.extra`: see hiOf.
   function call(re, s, now, gap, at, prior = Infinity) {
     const cap = Math.max(gap, GUARD.PAUSE_MS), known = prior <= cap;
-    let best = Infinity;
-    for (let k = 0; k <= GUARD.RETRIES; k++) {
+    let best = Infinity, k = 0;
+    for (; k <= GUARD.RETRIES; k++) {
       re.test(s);
       const t = now(), r = t - at.t;
       at.t = t;
@@ -474,19 +480,35 @@
       if (best <= gap) break;
       if (!known && (k === 0 ? r > GUARD.CONCLUSIVE_MS : best > cap)) break;
     }
+    at.extra = (at.extra || 0) + Math.min(k, GUARD.RETRIES);
     return best;
   }
+  // The most `n` calls that read `t` in all can have cost, ms a call: the clock reads are floored, so a run of calls timed read to
+  // read costs under what it read plus one step, and each run left out of `t` (a retry) breaks that run, one more step each.
+  // A timing whose bound is under NOISE_MS a call has its answer already: every use of a cost under NOISE_MS reads it as cheap
+  // (degree 1, a next step far under STEP_MS), and an early accept from the bound is sound, as the bound is never under the cost.
+  // So it stops there and counts at that bound, however few clock steps it ran: a coarse clock never waits four steps for a cheap
+  // regex (WebKit's 1 ms clock spent about 35 ms a term on whole steps, and refused five linear terms on APPLY_MS).
+  const hiOf = (t, n, at, clk) => (t + clk.step * (1 + (at.extra || 0))) / n;
+  // The APPLY_MS budget is charged with what a timing read less one clock step: the clock's padding is not regex time.
+  const charge = (clk, t) => { clk.spent += Math.max(0, t - clk.step); };
   // The wall-clock stop (4 × APPLY_MS from the start of the probe), checked on the clock read after each call: it makes the
   // probe's loops end, and slowRegex refuses with the same copy as the per-term check.
   const walled = (clk, at) => clk.walled || (at.t - clk.began > 4 * GUARD.APPLY_MS && (clk.walled = true));
   // One timing (ms a call) of re.test(s): calls until `tick` of their own time (the clock's, unless the caller needs less), at most
   // MAX_CALLS; one clock step less than read counts (a coarse clock's error leans toward accepting). The calls run the same
-  // string, so a call that reads over the pause cap after cheaper ones is a pause (call()'s `prior`).
+  // string, so a call that reads over the pause cap after cheaper ones is a pause (call()'s `prior`). A timing that is cheap by its
+  // bound (hiOf) stops at once and returns that bound.
   function timeOnce(re, s, now, clk, tick = clk.tick) {
-    const at = { t: now() };
-    let n = 0, t = 0, ref = Infinity;
-    do { const c = call(re, s, now, clk.gap, at, ref); if (c < ref) ref = c; t += c; clk.spent += c; n++; } while (t < tick && n < GUARD.MAX_CALLS && !walled(clk, at));
-    return Math.max(0, t - clk.step) / n;
+    const at = { t: now(), extra: 0 };
+    let n = 0, t = 0, ref = Infinity, hi = Infinity;
+    do {
+      const c = call(re, s, now, clk.gap, at, ref);
+      if (c < ref) ref = c;
+      t += c; n++; hi = hiOf(t, n, at, clk);
+    } while (t < tick && hi >= GUARD.NOISE_MS && n < GUARD.MAX_CALLS && !walled(clk, at));
+    charge(clk, t);
+    return hi < GUARD.NOISE_MS ? hi : Math.max(0, t - clk.step) / n;
   }
   // The ms the worst of `lines` is predicted to cost on its whole length (0 when it is cheap), or the sum of one round when a round
   // is itself over LINE_MS. All the distinct lines over START chars are timed together, level by level, on their first `len` chars
@@ -507,19 +529,22 @@
     // One level: rounds of one call of each line, until the clock has moved two steps (and four rounds when that was cheap, so that a
     // line a clock step crossed once or twice by chance does not read as dear). null when the wall-clock stop passed, or the first
     // level is already over MEAN_US a call.
+    // A level whose round is cheap by its bound (hiOf: every line of it under NOISE_MS a call) stops there: each of its lines is
+    // then read as cheap, as a full timing would read it.
     const level = strs => {
-      const acc = new Array(strs.length).fill(0), seen = new Array(strs.length).fill(Infinity), at = { t: now() };
+      const acc = new Array(strs.length).fill(0), seen = new Array(strs.length).fill(Infinity), at = { t: now(), extra: 0 };
       let el = 0, rounds = 0, calls = 0;
       do {
         for (let i = 0; i < strs.length; i++) {
           const c = call(re, strs[i], now, clk.gap, at, seen[i]);
           if (c < seen[i]) seen[i] = c;
-          acc[i] += c; el += c; clk.spent += c; calls++;
-          if (walled(clk, at)) return null;
-          if (len === GUARD.START && el >= clk.tick && (el - clk.step) * 1000 / calls > GUARD.MEAN_US) { clk.mean = (el - clk.step) * 1000 / calls; return null; }
+          acc[i] += c; el += c; calls++;
+          if (walled(clk, at)) { charge(clk, el); return null; }
+          if (len === GUARD.START && el >= clk.tick && (el - clk.step) * 1000 / calls > GUARD.MEAN_US) { charge(clk, el); clk.mean = (el - clk.step) * 1000 / calls; return null; }
         }
         rounds++;
-      } while ((el < tick || (rounds < 4 && el < 4 * tick)) && rounds * strs.length < GUARD.MAX_CALLS);
+      } while ((el < tick || (rounds < 4 && el < 4 * tick)) && hiOf(el, rounds, at, clk) >= GUARD.NOISE_MS && rounds * strs.length < GUARD.MAX_CALLS);
+      charge(clk, el);
       return { acc, rounds, el };
     };
     // The cost of the worst of the lines `ids` of a level, ms a call: the larger of their mean (the sum of a round is exact to one
@@ -566,18 +591,22 @@
     if (ms > GUARD.LINE_MS) { clk.slowLine = ms; return 0; }
     if (clk.walled) return 0;
     if (clk.mean > GUARD.MEAN_US) return clk.mean;
-    const at = { t: now() }, t0 = at.t, seen = new Array(sample.length).fill(Infinity);
+    const at = { t: now(), extra: 0 }, t0 = at.t, seen = new Array(sample.length).fill(Infinity);
     let calls = 0, el = 0;
     const lo = () => Math.max(0, el - clk.step) * 1000 / Math.max(1, calls);
     pass: for (;;) {
       for (let i = 0; i < sample.length; i++) {
         const c = call(re, sample[i], now, clk.gap, at, seen[i]);
         if (c < seen[i]) seen[i] = c;
-        el += c; clk.spent += c; calls++;
+        el += c; calls++;
         if (walled(clk, at) || at.t - t0 > GUARD.MEAN_BUDGET_MS || (el >= clk.tick && lo() > GUARD.MEAN_US)) break pass;
       }
-      if (el >= clk.tick || calls >= GUARD.MAX_CALLS) break;
+      // After whole passes (each line run as often), the bound of the mean (hiOf, in µs) is the answer when it passes both checks:
+      // the mean cannot be over it, so it is under MEAN_US, and this session's refilter under TOTAL_MS.
+      const hi = hiOf(el, calls, at, clk) * 1000;
+      if (el >= clk.tick || calls >= GUARD.MAX_CALLS || (hi <= GUARD.MEAN_US && hi * clk.n / 1000 <= GUARD.TOTAL_MS)) break;
     }
+    charge(clk, el);
     return lo();
   }
   function slowRegex(q, lines, now) {
@@ -585,8 +614,8 @@
     if (!terms.length) return null;
     const step = clockStep(now);
     if (!step) return null;
-    const clk = { step, gap: Math.max(GUARD.GAP_MS, 2 * step), tick: Math.max(GUARD.TICK_MS, 4 * step), spent: 0, began: now(), walled: false, slowLine: 0, mean: 0 };
     const n = lines.length;
+    const clk = { step, gap: Math.max(GUARD.GAP_MS, 2 * step), tick: Math.max(GUARD.TICK_MS, 4 * step), spent: 0, began: now(), walled: false, slowLine: 0, mean: 0, n };
     let longest = '';
     for (let i = 0; i < n; i++) { const s = msgOf(lines[i]); if (s.length > longest.length) longest = s; }
     const base = longest || SYNTH, L = Math.max(base.length, GUARD.MIN_LEN);
